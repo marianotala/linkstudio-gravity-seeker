@@ -4,11 +4,14 @@
 // de 360px con los pasos, mapa y tabla de resultados. Toda la key de
 // Google vive en el servidor; aquí solo se llama a /api/*.
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import GravityMark from "./GravityMark";
+import { useSearchParams } from "next/navigation";
+import AppHeader, { type StatusTipo } from "./AppHeader";
 import ResultsTable from "./ResultsTable";
 import { CATEGORIAS, SOLO_NOMBRE } from "@/lib/categories";
+import { haversine } from "@/lib/geo";
+import { createClient } from "@/lib/supabase/client";
 import {
   parsearArchivo,
   parsearCoordenadas,
@@ -25,7 +28,9 @@ import type {
   ApiError,
   GeocodeResponse,
   Origin,
+  PerfilUsuario,
   Poi,
+  ResultadoGuardado,
   SearchMode,
   SearchRequest,
   SearchResponse,
@@ -41,7 +46,6 @@ const MapView = dynamic(() => import("./MapView"), {
 });
 
 type InputTab = "direcciones" | "coordenadas" | "archivo";
-type StatusTipo = "idle" | "busy" | "ok" | "error";
 
 const RADIOS = [
   { m: 250, label: "250 m" },
@@ -65,7 +69,11 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   return data as T;
 }
 
-export default function SeekerApp() {
+export default function SeekerApp({
+  usuario,
+}: {
+  usuario: PerfilUsuario | null;
+}) {
   // ---- estado de configuración
   const [mode, setMode] = useState<SearchMode>("origins");
   const [tab, setTab] = useState<InputTab>("direcciones");
@@ -110,6 +118,99 @@ export default function SeekerApp() {
   function reportar(tipo: StatusTipo, texto: string) {
     setStatus({ tipo, texto });
   }
+
+  // ---- cargar (?cargar=id) o duplicar (?duplicar=id) desde el historial
+  const searchParams = useSearchParams();
+  const historialRef = useRef(false);
+  useEffect(() => {
+    if (historialRef.current) return;
+    const idCargar = searchParams.get("cargar");
+    const idDuplicar = searchParams.get("duplicar");
+    const id = idCargar ?? idDuplicar;
+    if (!id) return;
+    historialRef.current = true;
+
+    (async () => {
+      setStatus({ tipo: "busy", texto: "Cargando búsqueda del historial…" });
+      const supabase = createClient();
+      const { data: busqueda, error } = await supabase
+        .from("searches")
+        .select("id, mode, params, result_count")
+        .eq("id", id)
+        .single();
+      if (error || !busqueda) {
+        setStatus({
+          tipo: "error",
+          texto: "No encontré esa búsqueda en tu historial",
+        });
+        return;
+      }
+
+      // Precargar los parámetros originales.
+      const p = busqueda.params as SearchRequest;
+      setMode(p.mode);
+      setRadio(p.radius);
+      setCategoria(p.category);
+      setNameFilter(p.nameFilter ?? "");
+      setExcludes(p.excludes ?? []);
+      if (p.mode === "origins") {
+        setOrigenes(p.centers);
+        setTab("coordenadas");
+      } else {
+        setZona(p.centers[0] ?? null);
+        setZonaQuery(p.centers[0]?.nombre ?? "");
+      }
+
+      if (!idCargar) {
+        setStatus({
+          tipo: "ok",
+          texto: "Parámetros duplicados del historial: ajusta y vuelve a buscar",
+        });
+        return;
+      }
+
+      // Cargar también los POIs guardados — sin llamar a Google.
+      const { data: filas, error: errorFilas } = await supabase
+        .from("search_results")
+        .select("*")
+        .eq("search_id", id);
+      if (errorFilas || !filas) {
+        setStatus({
+          tipo: "error",
+          texto: "No pude cargar los POIs de esa búsqueda",
+        });
+        return;
+      }
+      const cargados: Poi[] = (filas as ResultadoGuardado[]).map((r) => {
+        let mejorIdx = 0;
+        let mejorDist = Infinity;
+        p.centers.forEach((c, i) => {
+          const d = haversine(c, { lat: r.lat, lng: r.lng });
+          if (d < mejorDist) {
+            mejorDist = d;
+            mejorIdx = i;
+          }
+        });
+        return {
+          placeId: r.place_id ?? r.id,
+          nombre: r.name,
+          direccion: r.address ?? "",
+          lat: r.lat,
+          lng: r.lng,
+          types: [],
+          distancia: r.distance_m ?? Math.round(mejorDist),
+          origenIdx: mejorIdx,
+        };
+      });
+      cargados.sort((a, b) => a.distancia - b.distancia);
+      setPois(cargados);
+      setTablaColapsada(false);
+      setStatus({
+        tipo: "ok",
+        texto: `Búsqueda del historial: ${cargados.length} POIs cargados sin llamar a Google`,
+      });
+    })();
+  }, [searchParams]);
 
   // ---- paso 2: procesar orígenes (direcciones / coordenadas / archivo)
   async function procesarOrigenes() {
@@ -308,37 +409,9 @@ export default function SeekerApp() {
     "mb-2 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500";
   const pasoCls = "border-b border-linea px-5 py-4";
 
-  const dotColor =
-    status.tipo === "error"
-      ? "bg-magenta"
-      : status.tipo === "busy"
-        ? "bg-cian dot-pulso"
-        : status.tipo === "ok"
-          ? "bg-emerald-400"
-          : "bg-zinc-600";
-
   return (
     <div className="flex h-screen flex-col overflow-hidden">
-      {/* ---------- header ---------- */}
-      <header className="flex items-center justify-between border-b border-linea bg-panel px-5 py-3">
-        <div className="flex items-center gap-3">
-          <GravityMark size={30} />
-          <div>
-            <div className="font-display text-lg font-extrabold leading-tight tracking-tight text-white">
-              Gravity
-            </div>
-            <div className="font-mono text-[10px] tracking-wide text-zinc-500">
-              Seeker — point of interest intelligence · powered by Link Studio
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 rounded-full border border-linea bg-panel2 px-3 py-1.5">
-          <span className={`h-2 w-2 rounded-full ${dotColor}`} />
-          <span className="max-w-[420px] truncate font-mono text-xs text-zinc-400">
-            {status.texto}
-          </span>
-        </div>
-      </header>
+      <AppHeader usuario={usuario} status={status} />
 
       <div className="flex min-h-0 flex-1">
         {/* ---------- panel lateral ---------- */}

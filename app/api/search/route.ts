@@ -8,7 +8,8 @@ import {
 } from "@/lib/google";
 import { haversine, normalizar } from "@/lib/geo";
 import { getCategoria, SOLO_NOMBRE } from "@/lib/categories";
-import type { Poi, SearchResponse } from "@/lib/types";
+import { createClient } from "@/lib/supabase/server";
+import type { Poi, SearchRequest, SearchResponse } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,6 +61,17 @@ async function enLotes<T, R>(
 }
 
 export async function POST(req: Request) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json(
+      { error: "No autorizado. Inicia sesión." },
+      { status: 401 }
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();
@@ -158,7 +170,50 @@ export async function POST(req: Request) {
     }
     pois.sort((a, b) => a.distancia - b.distancia);
 
-    const respuesta: SearchResponse = { pois, excluidos, descartadosPorNombre };
+    // Guardar la búsqueda + resultados en el historial (RPC = una sola
+    // transacción, con RLS del usuario). Si el guardado falla, la
+    // búsqueda igual se regresa.
+    let searchId: string | null = null;
+    try {
+      const paramsGuardados: SearchRequest = {
+        mode,
+        centers,
+        radius,
+        category,
+        nameFilter,
+        excludes,
+      };
+      const etiquetaCategoria = categoria?.label ?? "Solo por nombre";
+      const { data: idGuardado, error: errorGuardado } = await supabase.rpc(
+        "guardar_busqueda",
+        {
+          p_mode: mode,
+          p_params: paramsGuardados,
+          p_results: pois.map((p) => ({
+            name: p.nombre,
+            category: etiquetaCategoria,
+            lat: p.lat,
+            lng: p.lng,
+            address: p.direccion,
+            origin_name:
+              centers[p.origenIdx]?.nombre ?? `Origen ${p.origenIdx + 1}`,
+            distance_m: p.distancia,
+            place_id: p.placeId,
+          })),
+        }
+      );
+      if (!errorGuardado) searchId = idGuardado as string;
+      else console.error("No se pudo guardar la búsqueda:", errorGuardado.message);
+    } catch (e) {
+      console.error("No se pudo guardar la búsqueda:", e);
+    }
+
+    const respuesta: SearchResponse = {
+      pois,
+      excluidos,
+      descartadosPorNombre,
+      searchId,
+    };
     return NextResponse.json(respuesta);
   } catch (e) {
     const mensaje =

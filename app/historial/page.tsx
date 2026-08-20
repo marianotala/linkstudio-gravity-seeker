@@ -1,11 +1,10 @@
-import { Suspense } from "react";
-import SeekerApp from "@/components/SeekerApp";
+import HistorialView from "@/components/HistorialView";
 import { createClient } from "@/lib/supabase/server";
 import type { PerfilUsuario } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-export default async function Home() {
+export default async function HistorialPage() {
   const supabase = createClient();
   const {
     data: { user },
@@ -26,9 +25,5 @@ export default async function Home() {
     };
   }
 
-  return (
-    <Suspense>
-      <SeekerApp usuario={perfil} />
-    </Suspense>
-  );
+  return <HistorialView usuario={perfil} />;
 }

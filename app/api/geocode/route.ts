@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { geocodeDireccion, GoogleError } from "@/lib/google";
+import { createClient } from "@/lib/supabase/server";
 import type { GeocodeResult } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -16,6 +17,17 @@ const BodySchema = z.object({
 const TAMANO_LOTE = 10;
 
 export async function POST(req: Request) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json(
+      { error: "No autorizado. Inicia sesión." },
+      { status: 401 }
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();

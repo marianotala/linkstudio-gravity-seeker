@@ -43,6 +43,38 @@ export interface SearchResponse {
   excluidos: number;
   /** POIs eliminados por el filtro estricto de nombre. */
   descartadosPorNombre: number;
+  /** id de la búsqueda guardada en el historial (null si falló el guardado). */
+  searchId: string | null;
+}
+
+export interface PerfilUsuario {
+  id: string;
+  email: string;
+  nombre: string | null;
+  rol: "admin" | "vendedor";
+}
+
+/** Fila de public.searches tal como la lee el historial. */
+export interface BusquedaGuardada {
+  id: string;
+  created_at: string;
+  mode: SearchMode;
+  params: SearchRequest;
+  result_count: number;
+}
+
+/** Fila de public.search_results. */
+export interface ResultadoGuardado {
+  id: string;
+  search_id: string;
+  name: string;
+  category: string | null;
+  lat: number;
+  lng: number;
+  address: string | null;
+  origin_name: string | null;
+  distance_m: number | null;
+  place_id: string | null;
 }
 
 export interface GeocodeRequest {
