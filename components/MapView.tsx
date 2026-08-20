@@ -15,7 +15,7 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import type { Origin, Poi, SearchMode } from "@/lib/types";
+import type { LatLng, Origin, Poi, SearchMode } from "@/lib/types";
 
 const CIAN = "#2fb9e8";
 const MAGENTA = "#f4368a";
@@ -32,10 +32,22 @@ interface MapViewProps {
   pois: Poi[];
   /** POI al que hay que volar (clic en la tabla). */
   foco: Poi | null;
+  /** Centros de celda del censo de marca (modo census). */
+  celdas?: LatLng[];
+  /** Radio de cada celda del censo, en metros. */
+  radioCelda?: number;
 }
 
 /** Ajusta la vista cuando cambian orígenes/zona/POIs, y vuela al foco. */
-function Encuadre({ mode, origenes, zona, pois, foco, radio }: MapViewProps) {
+function Encuadre({
+  mode,
+  origenes,
+  zona,
+  pois,
+  foco,
+  radio,
+  celdas,
+}: MapViewProps) {
   const map = useMap();
 
   useEffect(() => {
@@ -52,6 +64,7 @@ function Encuadre({ mode, origenes, zona, pois, foco, radio }: MapViewProps) {
     } else if (zona) {
       puntos.push([zona.lat, zona.lng]);
     }
+    (celdas ?? []).forEach((c) => puntos.push([c.lat, c.lng]));
     pois.forEach((p) => puntos.push([p.lat, p.lng]));
     if (puntos.length === 0) return;
     if (puntos.length === 1) {
@@ -61,13 +74,13 @@ function Encuadre({ mode, origenes, zona, pois, foco, radio }: MapViewProps) {
     }
     map.fitBounds(L.latLngBounds(puntos).pad(0.15));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, origenes, zona, pois, map]);
+  }, [mode, origenes, zona, pois, celdas, map]);
 
   return null;
 }
 
 export default function MapView(props: MapViewProps) {
-  const { mode, origenes, zona, radio, pois } = props;
+  const { mode, origenes, zona, radio, pois, celdas, radioCelda } = props;
 
   return (
     <MapContainer
@@ -121,7 +134,23 @@ export default function MapView(props: MapViewProps) {
           </Fragment>
         ))}
 
-      {mode === "zone" && zona && (
+      {mode === "census" &&
+        (celdas ?? []).map((c, i) => (
+          <Circle
+            key={`celda-${i}`}
+            center={[c.lat, c.lng]}
+            radius={radioCelda ?? 2000}
+            pathOptions={{
+              color: CIAN,
+              weight: 0.8,
+              opacity: 0.35,
+              fillColor: CIAN,
+              fillOpacity: 0.03,
+            }}
+          />
+        ))}
+
+      {(mode === "zone" || mode === "census") && zona && (
         <Fragment>
           <Circle
             center={[zona.lat, zona.lng]}

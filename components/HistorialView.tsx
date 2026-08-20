@@ -20,6 +20,11 @@ function etiquetaAlcance(b: BusquedaGuardada): string {
   if (b.mode === "zone") {
     return b.params.centers[0]?.nombre ?? "Zona sin nombre";
   }
+  if (b.mode === "census") {
+    const ciudad = b.params.censo?.ciudad ?? b.params.centers[0]?.nombre ?? "Ciudad";
+    const celdas = b.params.censo?.celdas;
+    return celdas ? `${ciudad} · ${celdas} celdas` : ciudad;
+  }
   const n = b.params.centers.length;
   return `${n} ${n === 1 ? "origen" : "orígenes"}`;
 }
@@ -123,10 +128,18 @@ export default function HistorialView({
                       <td className="px-3 py-2.5">
                         <span
                           className={
-                            b.mode === "origins" ? "text-cian" : "text-violeta"
+                            b.mode === "origins"
+                              ? "text-cian"
+                              : b.mode === "zone"
+                                ? "text-violeta"
+                                : "text-magenta"
                           }
                         >
-                          {b.mode === "origins" ? "Orígenes" : "Zona"}
+                          {b.mode === "origins"
+                            ? "Orígenes"
+                            : b.mode === "zone"
+                              ? "Zona"
+                              : "Censo"}
                         </span>
                       </td>
                       <td className="px-3 py-2.5">

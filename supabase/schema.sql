@@ -210,3 +210,111 @@ grant execute on function public.es_admin() to authenticated;
 
 revoke execute on function public.guardar_busqueda(text, jsonb, jsonb) from public, anon;
 grant execute on function public.guardar_busqueda(text, jsonb, jsonb) to authenticated;
+
+
+-- ============================================================
+-- MIGRACIÓN FASE 3 — censo de marca y protección de cuota
+-- (separada del esquema base; también idempotente)
+-- ============================================================
+
+-- El modo 'census' ahora es válido en searches.
+alter table public.searches drop constraint if exists searches_mode_check;
+alter table public.searches
+  add constraint searches_mode_check check (mode in ('origins', 'zone', 'census'));
+
+-- ------------------------------------------------------------
+-- usage_limits: consumo diario por usuario (búsquedas y celdas
+-- de censo). Los límites llegan por variables de entorno desde
+-- /api/search; los admin no tienen límite.
+-- ------------------------------------------------------------
+
+create table if not exists public.usage_limits (
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  date date not null default current_date,
+  searches_count int not null default 0,
+  cells_count int not null default 0,
+  primary key (user_id, date)
+);
+
+alter table public.usage_limits enable row level security;
+
+-- Solo lectura del propio consumo (o admin). Las escrituras pasan
+-- únicamente por la RPC consumir_cuota (security definer).
+drop policy if exists "usage_limits: leer propio o admin" on public.usage_limits;
+create policy "usage_limits: leer propio o admin"
+  on public.usage_limits for select
+  using (user_id = auth.uid() or public.es_admin());
+
+-- ------------------------------------------------------------
+-- RPC: consume 1 búsqueda o 1 celda de forma atómica.
+-- Regresa {permitido, searches_count, cells_count}; para admin
+-- siempre {permitido: true, admin: true} sin registrar consumo.
+-- ------------------------------------------------------------
+
+create or replace function public.consumir_cuota(
+  p_tipo text,             -- 'busqueda' | 'celda'
+  p_max_busquedas int,
+  p_max_celdas int
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v usage_limits%rowtype;
+begin
+  if v_uid is null then
+    return jsonb_build_object('permitido', false, 'motivo', 'sin_sesion');
+  end if;
+
+  if exists (select 1 from public.profiles where id = v_uid and rol = 'admin') then
+    return jsonb_build_object('permitido', true, 'admin', true);
+  end if;
+
+  insert into public.usage_limits (user_id, date)
+  values (v_uid, current_date)
+  on conflict (user_id, date) do nothing;
+
+  select * into v
+  from public.usage_limits
+  where user_id = v_uid and date = current_date
+  for update;
+
+  if p_tipo = 'celda' then
+    if v.cells_count >= p_max_celdas then
+      return jsonb_build_object(
+        'permitido', false,
+        'searches_count', v.searches_count,
+        'cells_count', v.cells_count
+      );
+    end if;
+    update public.usage_limits
+      set cells_count = cells_count + 1
+      where user_id = v_uid and date = current_date;
+    v.cells_count := v.cells_count + 1;
+  else
+    if v.searches_count >= p_max_busquedas then
+      return jsonb_build_object(
+        'permitido', false,
+        'searches_count', v.searches_count,
+        'cells_count', v.cells_count
+      );
+    end if;
+    update public.usage_limits
+      set searches_count = searches_count + 1
+      where user_id = v_uid and date = current_date;
+    v.searches_count := v.searches_count + 1;
+  end if;
+
+  return jsonb_build_object(
+    'permitido', true,
+    'searches_count', v.searches_count,
+    'cells_count', v.cells_count
+  );
+end;
+$$;
+
+revoke execute on function public.consumir_cuota(text, int, int) from public, anon;
+grant execute on function public.consumir_cuota(text, int, int) to authenticated;

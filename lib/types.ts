@@ -1,6 +1,15 @@
 // Tipos compartidos entre cliente y servidor.
 
-export type SearchMode = "origins" | "zone";
+export type SearchMode = "origins" | "zone" | "census";
+
+/** Metadata del censo de marca (modo "census"). */
+export interface CensoInfo {
+  ciudad: string;
+  tipo: "hex" | "square";
+  radioCelda: number;
+  alcance: number;
+  celdas: number;
+}
 
 export interface LatLng {
   lat: number;
@@ -35,6 +44,14 @@ export interface SearchRequest {
   category: string;
   nameFilter: string;
   excludes: string[];
+  /**
+   * Si guardar la búsqueda en el historial. Default: true, excepto en
+   * modo census (las celdas individuales no se guardan; el censo
+   * completo se guarda al final vía POST /api/searches).
+   */
+  persist?: boolean;
+  /** Solo en búsquedas census guardadas: metadata de la cuadrícula. */
+  censo?: CensoInfo;
 }
 
 export interface SearchResponse {

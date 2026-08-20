@@ -26,6 +26,60 @@ export function haversine(a: LatLng, b: LatLng): number {
 }
 
 /**
+ * Cuadrícula de celdas circulares que cubre un círculo de `alcanceM`
+ * alrededor del centro. Las celdas tienen radio `radioCeldaM` y el
+ * espaciamiento garantiza cobertura completa del plano:
+ * - hex: retícula hexagonal con separación r·√3
+ * - square: retícula cuadrada con separación r·√2
+ * Regresa los centros ordenados del centro hacia afuera.
+ */
+export function generarCuadricula(
+  center: LatLng,
+  alcanceM: number,
+  radioCeldaM: number,
+  tipo: "hex" | "square"
+): LatLng[] {
+  const latRad = (center.lat * Math.PI) / 180;
+  const mPorGradoLat = 111320;
+  const mPorGradoLng = 111320 * Math.cos(latRad);
+  const celdas: { lat: number; lng: number; d: number }[] = [];
+
+  const agregar = (xM: number, yM: number) => {
+    const d = Math.hypot(xM, yM);
+    if (d > alcanceM) return;
+    celdas.push({
+      lat: center.lat + yM / mPorGradoLat,
+      lng: center.lng + xM / mPorGradoLng,
+      d,
+    });
+  };
+
+  if (tipo === "square") {
+    const paso = radioCeldaM * Math.SQRT2;
+    const n = Math.ceil(alcanceM / paso);
+    for (let i = -n; i <= n; i++) {
+      for (let j = -n; j <= n; j++) {
+        agregar(i * paso, j * paso);
+      }
+    }
+  } else {
+    const d = radioCeldaM * Math.sqrt(3);
+    const dy = (d * Math.sqrt(3)) / 2;
+    const nFilas = Math.ceil(alcanceM / dy);
+    const nCols = Math.ceil(alcanceM / d) + 1;
+    for (let f = -nFilas; f <= nFilas; f++) {
+      const offset = f % 2 !== 0 ? d / 2 : 0;
+      for (let c = -nCols; c <= nCols; c++) {
+        agregar(c * d + offset, f * dy);
+      }
+    }
+  }
+
+  celdas.sort((a, b) => a.d - b.d);
+  return celdas.map(({ lat, lng }) => ({ lat, lng }));
+}
+
+/**
  * Polígono circular alrededor de un centro, como anillo GeoJSON
  * [lng, lat] cerrado (el primer vértice se repite al final).
  */

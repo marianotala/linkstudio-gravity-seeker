@@ -10,7 +10,7 @@ import { useSearchParams } from "next/navigation";
 import AppHeader, { type StatusTipo } from "./AppHeader";
 import ResultsTable from "./ResultsTable";
 import { CATEGORIAS, SOLO_NOMBRE } from "@/lib/categories";
-import { haversine } from "@/lib/geo";
+import { generarCuadricula, haversine } from "@/lib/geo";
 import { createClient } from "@/lib/supabase/client";
 import {
   parsearArchivo,
@@ -27,6 +27,7 @@ import {
 import type {
   ApiError,
   GeocodeResponse,
+  LatLng,
   Origin,
   PerfilUsuario,
   Poi,
@@ -55,6 +56,24 @@ const RADIOS = [
   { m: 3000, label: "3 km" },
   { m: 5000, label: "5 km" },
 ];
+
+const RADIOS_CELDA = [
+  { m: 1000, label: "1 km" },
+  { m: 1500, label: "1.5 km" },
+  { m: 2000, label: "2 km" },
+  { m: 2500, label: "2.5 km" },
+  { m: 3000, label: "3 km" },
+];
+
+const ALCANCES = [
+  { m: 5000, label: "5 km" },
+  { m: 10000, label: "10 km" },
+  { m: 15000, label: "15 km" },
+  { m: 20000, label: "20 km" },
+  { m: 30000, label: "30 km" },
+];
+
+const THROTTLE_CENSO_MS = 250;
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -103,6 +122,20 @@ export default function SeekerApp({
   const [ocupado, setOcupado] = useState(false);
   const [tablaColapsada, setTablaColapsada] = useState(false);
   const [foco, setFoco] = useState<Poi | null>(null);
+
+  // ---- estado del censo de marca
+  const [marca, setMarca] = useState("");
+  const [ciudadQuery, setCiudadQuery] = useState("");
+  const [tipoCuadricula, setTipoCuadricula] = useState<"hex" | "square">("hex");
+  const [radioCelda, setRadioCelda] = useState(2000);
+  const [alcance, setAlcance] = useState(10000);
+  const [celdas, setCeldas] = useState<LatLng[] | null>(null);
+  const [progresoCenso, setProgresoCenso] = useState<{
+    actual: number;
+    total: number;
+    pois: number;
+  } | null>(null);
+  const detenerCensoRef = useRef(false);
 
   // ---- configuración de exports
   const [radioGeocerca, setRadioGeocerca] = useState(50);
@@ -156,9 +189,19 @@ export default function SeekerApp({
       if (p.mode === "origins") {
         setOrigenes(p.centers);
         setTab("coordenadas");
-      } else {
+      } else if (p.mode === "zone") {
         setZona(p.centers[0] ?? null);
         setZonaQuery(p.centers[0]?.nombre ?? "");
+      } else {
+        // census: restaurar marca, ciudad y configuración de cuadrícula
+        setZona(p.centers[0] ?? null);
+        setMarca(p.nameFilter ?? "");
+        setCiudadQuery(p.censo?.ciudad ?? p.centers[0]?.nombre ?? "");
+        if (p.censo) {
+          setTipoCuadricula(p.censo.tipo);
+          setRadioCelda(p.censo.radioCelda);
+          setAlcance(p.censo.alcance);
+        }
       }
 
       if (!idCargar) {
@@ -337,6 +380,171 @@ export default function SeekerApp({
     }
   }
 
+  // ---- censo de marca: 1) calcular la cuadrícula y pedir confirmación
+  async function calcularCenso() {
+    const m = marca.trim();
+    const c = ciudadQuery.trim();
+    if (!m) {
+      reportar("error", "Escribe la marca a censar, p. ej. OXXO");
+      return;
+    }
+    if (!c) {
+      reportar("error", "Escribe la ciudad, p. ej. Guadalajara");
+      return;
+    }
+    setOcupado(true);
+    setFoco(null);
+    setCeldas(null);
+    setProgresoCenso(null);
+    reportar("busy", `Ubicando "${c}"…`);
+    try {
+      const { resultados } = await postJson<GeocodeResponse>("/api/geocode", {
+        direcciones: [c],
+      });
+      const r = resultados[0];
+      if (!r?.ok || r.lat === undefined || r.lng === undefined) {
+        reportar("error", r?.error ?? "No encontré esa ciudad");
+        return;
+      }
+      const centro = { lat: r.lat, lng: r.lng, nombre: r.formatted ?? c };
+      setZona(centro);
+      const cuadricula = generarCuadricula(centro, alcance, radioCelda, tipoCuadricula);
+      setCeldas(cuadricula);
+      reportar(
+        "ok",
+        `Cuadrícula lista: ${cuadricula.length} celdas = ${cuadricula.length} llamadas a Google. Confirma para ejecutar.`
+      );
+    } catch (e) {
+      reportar("error", e instanceof Error ? e.message : "Error al calcular el censo");
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  // ---- censo de marca: 2) ejecutar celda por celda con throttle
+  async function ejecutarCenso() {
+    if (!celdas || celdas.length === 0 || !zona) return;
+    const m = marca.trim();
+    setOcupado(true);
+    setFoco(null);
+    detenerCensoRef.current = false;
+    setPois([]);
+
+    const acumulados = new Map<string, Poi>();
+    let excluidosTotal = 0;
+    let descartadosTotal = 0;
+    let errorFatal: string | null = null;
+    let celdasCorridas = 0;
+
+    for (let i = 0; i < celdas.length; i++) {
+      if (detenerCensoRef.current) break;
+      try {
+        const data = await postJson<SearchResponse>("/api/search", {
+          mode: "census",
+          centers: [celdas[i]],
+          radius: radioCelda,
+          category: SOLO_NOMBRE,
+          nameFilter: m,
+          excludes,
+          persist: false,
+        } satisfies SearchRequest);
+        celdasCorridas++;
+        excluidosTotal += data.excluidos;
+        descartadosTotal += data.descartadosPorNombre;
+        for (const p of data.pois) {
+          if (!acumulados.has(p.placeId)) {
+            acumulados.set(p.placeId, {
+              ...p,
+              // distancia y origen relativos al centro de la ciudad
+              distancia: Math.round(haversine(zona, p)),
+              origenIdx: 0,
+            });
+          }
+        }
+      } catch (e) {
+        // cuota agotada u otro error del servidor: parar y conservar lo acumulado
+        errorFatal = e instanceof Error ? e.message : "Error en el censo";
+        break;
+      }
+      setProgresoCenso({ actual: i + 1, total: celdas.length, pois: acumulados.size });
+      setPois(Array.from(acumulados.values()));
+      reportar(
+        "busy",
+        `Censo: celda ${i + 1} de ${celdas.length} · ${acumulados.size} POIs acumulados`
+      );
+      if (i < celdas.length - 1) {
+        await new Promise((r) => setTimeout(r, THROTTLE_CENSO_MS));
+      }
+    }
+
+    const lista = Array.from(acumulados.values()).sort(
+      (a, b) => a.distancia - b.distancia
+    );
+    setPois(lista);
+    setContadores({
+      excluidos: excluidosTotal,
+      descartadosPorNombre: descartadosTotal,
+    });
+    setTablaColapsada(false);
+
+    // Guardar el censo completo en el historial como una sola búsqueda.
+    let guardado = false;
+    if (lista.length > 0 || celdasCorridas > 0) {
+      try {
+        const params: SearchRequest = {
+          mode: "census",
+          centers: [zona],
+          radius: alcance,
+          category: SOLO_NOMBRE,
+          nameFilter: m,
+          excludes,
+          censo: {
+            ciudad: zona.nombre ?? ciudadQuery.trim(),
+            tipo: tipoCuadricula,
+            radioCelda,
+            alcance,
+            celdas: celdasCorridas,
+          },
+        };
+        await postJson<{ searchId: string }>("/api/searches", {
+          mode: "census",
+          params,
+          results: lista.map((p) => ({
+            name: p.nombre,
+            category: `Censo: ${m}`,
+            lat: p.lat,
+            lng: p.lng,
+            address: p.direccion,
+            origin_name: zona.nombre ?? ciudadQuery.trim(),
+            distance_m: p.distancia,
+            place_id: p.placeId,
+          })),
+        });
+        guardado = true;
+      } catch (e) {
+        console.error("No se pudo guardar el censo:", e);
+      }
+    }
+
+    if (errorFatal) {
+      reportar(
+        "error",
+        `Censo detenido en la celda ${celdasCorridas + 1}: ${errorFatal} · ${lista.length} POIs conservados${guardado ? " (guardados en historial)" : ""}`
+      );
+    } else if (detenerCensoRef.current) {
+      reportar(
+        "ok",
+        `Censo detenido por ti: ${celdasCorridas} de ${celdas.length} celdas · ${lista.length} POIs${guardado ? " · guardado en historial" : ""}`
+      );
+    } else {
+      reportar(
+        "ok",
+        `Censo completo: ${lista.length} POIs de "${m}" en ${celdasCorridas} celdas${guardado ? " · guardado en historial" : ""}`
+      );
+    }
+    setOcupado(false);
+  }
+
   // ---- paso 4: buscar POIs
   async function buscar() {
     if (centrosActivos.length === 0) {
@@ -419,10 +627,10 @@ export default function SeekerApp({
           {/* 01 · modo */}
           <section className={pasoCls}>
             <label className={labelCls}>01 · Modo de búsqueda</label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <button
                 onClick={() => setMode("origins")}
-                className={`rounded-md border px-3 py-2 font-mono text-xs transition-colors ${
+                className={`rounded-md border px-2 py-2 font-mono text-[11px] transition-colors ${
                   mode === "origins"
                     ? "border-cian bg-cian/10 text-cian"
                     : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
@@ -432,13 +640,23 @@ export default function SeekerApp({
               </button>
               <button
                 onClick={() => setMode("zone")}
-                className={`rounded-md border px-3 py-2 font-mono text-xs transition-colors ${
+                className={`rounded-md border px-2 py-2 font-mono text-[11px] transition-colors ${
                   mode === "zone"
                     ? "border-violeta bg-violeta/10 text-violeta"
                     : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
                 }`}
               >
                 Por zona
+              </button>
+              <button
+                onClick={() => setMode("census")}
+                className={`rounded-md border px-2 py-2 font-mono text-[11px] transition-colors ${
+                  mode === "census"
+                    ? "border-magenta bg-magenta/10 text-magenta"
+                    : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
+                }`}
+              >
+                Censo de marca
               </button>
             </div>
           </section>
@@ -533,7 +751,7 @@ export default function SeekerApp({
                 </p>
               )}
             </section>
-          ) : (
+          ) : mode === "zone" ? (
             <section className={pasoCls}>
               <label className={labelCls}>02 · Tu zona</label>
               <input
@@ -556,9 +774,149 @@ export default function SeekerApp({
                 </p>
               )}
             </section>
+          ) : (
+            <section className={pasoCls}>
+              <label className={labelCls}>02 · Censo de marca</label>
+              <input
+                value={marca}
+                onChange={(e) => setMarca(e.target.value)}
+                placeholder="Marca · p. ej. OXXO"
+                className={inputCls}
+              />
+              <input
+                value={ciudadQuery}
+                onChange={(e) => setCiudadQuery(e.target.value)}
+                placeholder="Ciudad · p. ej. Guadalajara"
+                className={`${inputCls} mt-2`}
+              />
+
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setTipoCuadricula("hex")}
+                  className={`rounded-md border px-3 py-1.5 font-mono text-[11px] transition-colors ${
+                    tipoCuadricula === "hex"
+                      ? "border-cian bg-cian/10 text-cian"
+                      : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
+                  }`}
+                >
+                  Hexagonal
+                </button>
+                <button
+                  onClick={() => setTipoCuadricula("square")}
+                  className={`rounded-md border px-3 py-1.5 font-mono text-[11px] transition-colors ${
+                    tipoCuadricula === "square"
+                      ? "border-cian bg-cian/10 text-cian"
+                      : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
+                  }`}
+                >
+                  Cuadrada
+                </button>
+              </div>
+
+              <span className="mb-1 mt-3 block font-mono text-[10px] text-zinc-600">
+                Radio de celda
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {RADIOS_CELDA.map((r) => (
+                  <button
+                    key={r.m}
+                    onClick={() => setRadioCelda(r.m)}
+                    className={`rounded-full border px-2.5 py-0.5 font-mono text-[11px] transition-colors ${
+                      radioCelda === r.m
+                        ? "border-cian bg-cian/10 text-cian"
+                        : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
+                    }`}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+
+              <span className="mb-1 mt-3 block font-mono text-[10px] text-zinc-600">
+                Alcance desde el centro de la ciudad
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {ALCANCES.map((a) => (
+                  <button
+                    key={a.m}
+                    onClick={() => setAlcance(a.m)}
+                    className={`rounded-full border px-2.5 py-0.5 font-mono text-[11px] transition-colors ${
+                      alcance === a.m
+                        ? "border-violeta bg-violeta/10 text-violeta"
+                        : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
+                    }`}
+                  >
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                onClick={calcularCenso}
+                disabled={ocupado}
+                className="mt-4 w-full rounded-md border border-cian bg-cian/10 px-3 py-2 font-mono text-xs font-medium text-cian transition-colors hover:bg-cian/20 disabled:opacity-40"
+              >
+                Calcular celdas
+              </button>
+
+              {celdas && !progresoCenso && (
+                <div className="mt-3 rounded-md border border-magenta/40 bg-magenta/5 p-3">
+                  <p className="font-mono text-[11px] leading-relaxed text-zinc-300">
+                    Serán <span className="text-magenta">{celdas.length} celdas</span> ={" "}
+                    <span className="text-magenta">{celdas.length} llamadas</span> a
+                    Google Places (searchText), en serie con pausa de 250 ms.
+                  </p>
+                  <button
+                    onClick={ejecutarCenso}
+                    disabled={ocupado}
+                    className="mt-2 w-full rounded-md bg-magenta px-3 py-2 font-display text-xs font-extrabold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+                  >
+                    Ejecutar censo ({celdas.length} llamadas)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCeldas(null);
+                      reportar("idle", "Censo cancelado");
+                    }}
+                    disabled={ocupado}
+                    className="mt-1.5 w-full rounded-md border border-linea bg-panel2 px-3 py-1.5 font-mono text-[11px] text-zinc-400 transition-colors hover:text-zinc-200 disabled:opacity-40"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              )}
+
+              {progresoCenso && (
+                <div className="mt-3 rounded-md border border-linea bg-panel2 p-3">
+                  <div className="flex justify-between font-mono text-[11px] text-zinc-400">
+                    <span>
+                      Celda {progresoCenso.actual} de {progresoCenso.total}
+                    </span>
+                    <span className="text-magenta">{progresoCenso.pois} POIs</span>
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-fondo">
+                    <div
+                      className="h-full rounded-full bg-magenta transition-all"
+                      style={{
+                        width: `${Math.round((progresoCenso.actual / progresoCenso.total) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                  {ocupado && (
+                    <button
+                      onClick={() => (detenerCensoRef.current = true)}
+                      className="mt-2 w-full rounded-md border border-magenta/50 bg-panel px-3 py-1.5 font-mono text-[11px] text-magenta transition-colors hover:bg-magenta/10"
+                    >
+                      Detener censo
+                    </button>
+                  )}
+                </div>
+              )}
+            </section>
           )}
 
-          {/* 03 · radio */}
+          {/* 03 · radio (el censo usa radio de celda + alcance del paso 02) */}
+          {mode !== "census" && (
           <section className={pasoCls}>
             <label className={labelCls}>03 · Radio de búsqueda</label>
             <div className="flex flex-wrap gap-2">
@@ -590,10 +948,15 @@ export default function SeekerApp({
               </span>
             </div>
           </section>
+          )}
 
-          {/* 04 · qué buscar */}
+          {/* 04 · qué buscar (en censo solo aplican las exclusiones) */}
           <section className={pasoCls}>
-            <label className={labelCls}>04 · Qué buscar</label>
+            <label className={labelCls}>
+              {mode === "census" ? "03 · Exclusiones" : "04 · Qué buscar"}
+            </label>
+            {mode !== "census" && (
+            <>
             <select
               value={categoria}
               onChange={(e) => setCategoria(e.target.value)}
@@ -617,6 +980,8 @@ export default function SeekerApp({
               Filtro estricto: sin acentos ni mayúsculas, todas las palabras
               deben aparecer en el nombre.
             </p>
+            </>
+            )}
 
             <div className="mt-3">
               <input
@@ -648,6 +1013,7 @@ export default function SeekerApp({
               )}
             </div>
 
+            {mode !== "census" && (
             <button
               onClick={buscar}
               disabled={ocupado}
@@ -655,6 +1021,7 @@ export default function SeekerApp({
             >
               {ocupado ? "Buscando…" : "Buscar POIs"}
             </button>
+            )}
 
             {(pois.length > 0 ||
               contadores.excluidos > 0 ||
@@ -730,7 +1097,11 @@ export default function SeekerApp({
               </button>
               <button
                 onClick={() =>
-                  exportarGeoJsonRadiosOrigen(centrosActivos, radio, vertices)
+                  exportarGeoJsonRadiosOrigen(
+                    centrosActivos,
+                    mode === "census" ? alcance : radio,
+                    vertices
+                  )
                 }
                 disabled={centrosActivos.length === 0}
                 className="rounded-md border border-linea bg-panel2 px-3 py-2 text-left font-mono text-[11px] text-zinc-300 transition-colors hover:border-violeta hover:text-violeta disabled:opacity-30"
@@ -753,9 +1124,11 @@ export default function SeekerApp({
             mode={mode}
             origenes={origenes}
             zona={zona}
-            radio={radio}
+            radio={mode === "census" ? alcance : radio}
             pois={pois}
             foco={foco}
+            celdas={mode === "census" ? (celdas ?? undefined) : undefined}
+            radioCelda={radioCelda}
           />
           <ResultsTable
             pois={pois}
