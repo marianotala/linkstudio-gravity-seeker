@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- Favicon de Seeker: isotipo de ondas de Gravity sobre fondo oscuro -->
+  <rect width="48" height="48" rx="10" fill="#0a0a0c"/>
+  <path d="M8 19.5 Q5.6 24 8 28.5" stroke="#17607f" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <path d="M13.5 14.5 Q10 24 13.5 33.5" stroke="#1e8ab4" stroke-width="3.4" stroke-linecap="round" fill="none"/>
+  <path d="M19.5 9.5 Q15 24 19.5 38.5" stroke="#2fb9e8" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <path d="M28.5 9.5 Q33 24 28.5 38.5" stroke="#f4368a" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <path d="M34.5 14.5 Q38 24 34.5 33.5" stroke="#9d5cf0" stroke-width="3.4" stroke-linecap="round" fill="none"/>
+  <path d="M40 19.5 Q42.4 24 40 28.5" stroke="#5b3fa8" stroke-width="3" stroke-linecap="round" fill="none"/>
+</svg>
