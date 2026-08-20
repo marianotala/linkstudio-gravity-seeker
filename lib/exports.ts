@@ -1,7 +1,7 @@
 // Los 4 exports de Seeker, generados 100% en el cliente.
 // Nombres de archivo seeker_* listos para cargar en DSPs.
 
-import { circlePolygon } from "./geo";
+import { ciudadDeDireccion, circlePolygon } from "./geo";
 import type { Origin, Poi } from "./types";
 
 function descargar(nombre: string, contenido: string, mime: string) {
@@ -21,31 +21,43 @@ function csvCampo(v: string | number): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** 1) CSV de POIs (siempre con fuente; estrato solo viene de DENUE). */
-export function exportarCsv(pois: Poi[]) {
+/**
+ * 1) CSV de POIs con la relación origen↔POI: cada fila trae el origen
+ * más cercano (nombre y coordenadas) y la distancia entre ambos.
+ */
+export function exportarCsv(pois: Poi[], origenes: Origin[] = []) {
   const filas = [
     [
       "nombre",
       "direccion",
+      "ciudad",
       "lat",
       "lng",
-      "distancia_m",
       "fuente",
       "estrato",
+      "origen",
+      "origen_lat",
+      "origen_lng",
+      "distancia_m",
       "place_id",
     ].join(","),
-    ...pois.map((p) =>
-      [
+    ...pois.map((p) => {
+      const origen = origenes[p.origenIdx];
+      return [
         csvCampo(p.nombre),
         csvCampo(p.direccion),
+        csvCampo(ciudadDeDireccion(p.direccion)),
         p.lat,
         p.lng,
-        p.distancia,
         p.fuente,
         csvCampo(p.estrato ?? ""),
+        csvCampo(origen?.nombre ?? (origen ? `Origen ${p.origenIdx + 1}` : "")),
+        origen?.lat ?? "",
+        origen?.lng ?? "",
+        p.distancia,
         p.placeId,
-      ].join(",")
-    ),
+      ].join(",");
+    }),
   ];
   descargar("seeker_pois.csv", filas.join("\n"), "text/csv;charset=utf-8");
 }

@@ -205,12 +205,16 @@ export async function POST(req: Request) {
     //    aparecer en el nombre, comparando sin acentos ni puntuación
     //    ("7 eleven" atrapa "7-Eleven").
     let descartadosPorNombre = 0;
+    const detalleDescartados: string[] = [];
     if (nameFilter) {
       const tokens = normalizarComparable(nameFilter).split(" ").filter(Boolean);
       lugares = lugares.filter((p) => {
         const nombre = normalizarComparable(p.nombre);
         const pasa = tokens.every((t) => nombre.includes(t));
-        if (!pasa) descartadosPorNombre++;
+        if (!pasa) {
+          descartadosPorNombre++;
+          if (detalleDescartados.length < 300) detalleDescartados.push(p.nombre);
+        }
         return pasa;
       });
     }
@@ -219,12 +223,16 @@ export async function POST(req: Request) {
     //    comparación sin puntuación (types tipo convenience_store se
     //    comparan como "convenience store").
     let excluidos = 0;
+    const detalleExcluidos: string[] = [];
     if (excludes.length > 0) {
       const terminos = excludes.map(normalizarComparable).filter(Boolean);
       lugares = lugares.filter((p) => {
         const pajar = normalizarComparable(`${p.nombre} ${p.types.join(" ")}`);
         const fuera = terminos.some((t) => pajar.includes(t));
-        if (fuera) excluidos++;
+        if (fuera) {
+          excluidos++;
+          if (detalleExcluidos.length < 300) detalleExcluidos.push(p.nombre);
+        }
         return !fuera;
       });
     }
@@ -274,6 +282,8 @@ export async function POST(req: Request) {
         pois,
         excluidos,
         descartadosPorNombre,
+        detalleExcluidos,
+        detalleDescartados,
         searchId,
       } satisfies SearchResponse);
     }
@@ -315,6 +325,8 @@ export async function POST(req: Request) {
       pois,
       excluidos,
       descartadosPorNombre,
+      detalleExcluidos,
+      detalleDescartados,
       searchId,
     };
     return NextResponse.json(respuesta);

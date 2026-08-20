@@ -211,30 +211,50 @@ function Segmento({
   );
 }
 
-/** Tarjeta KPI con glow de color y número grande. */
+/** Tarjeta KPI con glow de color y número grande. Con onClick se vuelve
+ * interactiva (p. ej. ver la lista de excluidos/descartados). */
 function Kpi({
   titulo,
   valor,
   caption,
   glow,
   colorValor,
+  onClick,
+  activo,
 }: {
   titulo: string;
   valor: string;
   caption: string;
   glow: string;
   colorValor: string;
+  onClick?: () => void;
+  activo?: boolean;
 }) {
+  const Tag = onClick ? "button" : "div";
   return (
-    <div className={`tarjeta ${glow} px-5 py-4`}>
-      <p className="text-xs text-zinc-400">{titulo}</p>
+    <Tag
+      onClick={onClick}
+      className={`tarjeta ${glow} px-5 py-4 text-left ${
+        onClick
+          ? `transition-colors ${activo ? "!border-zinc-500" : "hover:!border-zinc-600"}`
+          : ""
+      }`}
+    >
+      <p className="flex items-center justify-between text-xs text-zinc-400">
+        {titulo}
+        {onClick && (
+          <span className="font-mono text-[9px] uppercase tracking-widest text-zinc-600">
+            {activo ? "ocultar" : "ver lista"}
+          </span>
+        )}
+      </p>
       <p
         className={`mt-1.5 font-display text-3xl font-extrabold leading-none tracking-tight ${colorValor}`}
       >
         {valor}
       </p>
       <p className="mt-2 truncate font-mono text-[10px] text-zinc-500">{caption}</p>
-    </div>
+    </Tag>
   );
 }
 
@@ -281,6 +301,14 @@ export default function SeekerApp({
     excluidos: 0,
     descartadosPorNombre: 0,
   });
+  // nombres de los eliminados, para inspección desde los KPIs
+  const [detalles, setDetalles] = useState<{
+    excluidos: string[];
+    descartados: string[];
+  }>({ excluidos: [], descartados: [] });
+  const [verLista, setVerLista] = useState<"excluidos" | "descartados" | null>(
+    null
+  );
   const [status, setStatus] = useState<{ tipo: StatusTipo; texto: string }>({
     tipo: "idle",
     texto: "Listo para buscar",
@@ -844,6 +872,8 @@ export default function SeekerApp({
     setEstratoFiltro("");
     setPois([]);
     setContadores({ excluidos: 0, descartadosPorNombre: 0 });
+    setDetalles({ excluidos: [], descartados: [] });
+    setVerLista(null);
     setFoco(null);
     setTablaColapsada(false);
     reportar("idle", "Listo para buscar");
@@ -955,6 +985,8 @@ export default function SeekerApp({
     setPois([]);
 
     const acumulados = new Map<string, Poi>();
+    const detExcluidos = new Set<string>();
+    const detDescartados = new Set<string>();
     let excluidosTotal = 0;
     let descartadosTotal = 0;
     let errorFatal: string | null = null;
@@ -978,6 +1010,12 @@ export default function SeekerApp({
         fallosSeguidos = 0;
         excluidosTotal += data.excluidos;
         descartadosTotal += data.descartadosPorNombre;
+        (data.detalleExcluidos ?? []).forEach((n) => {
+          if (detExcluidos.size < 300) detExcluidos.add(n);
+        });
+        (data.detalleDescartados ?? []).forEach((n) => {
+          if (detDescartados.size < 300) detDescartados.add(n);
+        });
         for (const p of data.pois) {
           if (!acumulados.has(p.placeId)) {
             acumulados.set(p.placeId, {
@@ -1022,6 +1060,11 @@ export default function SeekerApp({
       excluidos: excluidosTotal,
       descartadosPorNombre: descartadosTotal,
     });
+    setDetalles({
+      excluidos: Array.from(detExcluidos),
+      descartados: Array.from(detDescartados),
+    });
+    setVerLista(null);
     setTablaColapsada(false);
 
     // Guardar el censo completo en la biblioteca de censos.
@@ -1315,6 +1358,11 @@ export default function SeekerApp({
         excluidos: data.excluidos,
         descartadosPorNombre: data.descartadosPorNombre,
       });
+      setDetalles({
+        excluidos: data.detalleExcluidos ?? [],
+        descartados: data.detalleDescartados ?? [],
+      });
+      setVerLista(null);
       setTablaColapsada(false);
       const extras: string[] = [];
       if (data.excluidos > 0) extras.push(`${data.excluidos} excluidos`);
@@ -1507,6 +1555,13 @@ export default function SeekerApp({
           caption={`${excludes.length} ${excludes.length === 1 ? "exclusión activa" : "exclusiones activas"}`}
           glow="glow-magenta"
           colorValor="text-magenta"
+          onClick={
+            detalles.excluidos.length > 0
+              ? () =>
+                  setVerLista(verLista === "excluidos" ? null : "excluidos")
+              : undefined
+          }
+          activo={verLista === "excluidos"}
         />
         <Kpi
           titulo="Descartados por nombre"
@@ -1514,8 +1569,53 @@ export default function SeekerApp({
           caption="no pasaron el filtro estricto"
           glow="glow-ambar"
           colorValor="text-amber-400"
+          onClick={
+            detalles.descartados.length > 0
+              ? () =>
+                  setVerLista(
+                    verLista === "descartados" ? null : "descartados"
+                  )
+              : undefined
+          }
+          activo={verLista === "descartados"}
         />
       </div>
+
+      {/* lista de excluidos / descartados (clic en el KPI para abrir) */}
+      {verLista && (
+        <div className="tarjeta shrink-0 px-4 py-2.5">
+          <div className="flex items-center justify-between font-mono text-[11px]">
+            <span className="uppercase tracking-[0.2em] text-zinc-500">
+              {verLista === "excluidos"
+                ? `Excluidos por marca (${detalles.excluidos.length}${contadores.excluidos > detalles.excluidos.length ? ` de ${contadores.excluidos}` : ""})`
+                : `Descartados por nombre (${detalles.descartados.length}${contadores.descartadosPorNombre > detalles.descartados.length ? ` de ${contadores.descartadosPorNombre}` : ""})`}
+            </span>
+            <button
+              onClick={() => setVerLista(null)}
+              className="text-zinc-600 hover:text-zinc-300"
+            >
+              ×
+            </button>
+          </div>
+          <div className="mt-2 flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
+            {(verLista === "excluidos"
+              ? detalles.excluidos
+              : detalles.descartados
+            ).map((n, i) => (
+              <span
+                key={`${n}-${i}`}
+                className={`rounded-full border px-2 py-0.5 font-mono text-[10px] ${
+                  verLista === "excluidos"
+                    ? "border-magenta/40 text-magenta/90"
+                    : "border-amber-400/40 text-amber-400/90"
+                }`}
+              >
+                {n}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* delta de actualización de censo */}
       {deltaInfo && (
@@ -2227,7 +2327,7 @@ export default function SeekerApp({
             </div>
             <div className="grid grid-cols-1 gap-2">
               <button
-                onClick={() => exportarCsv(poisVisibles)}
+                onClick={() => exportarCsv(poisVisibles, centrosActivos)}
                 disabled={poisVisibles.length === 0}
                 className="rounded-md border border-linea bg-panel2 px-3 py-2 text-left font-mono text-[11px] text-zinc-300 transition-colors hover:border-cian hover:text-cian disabled:opacity-30"
               >

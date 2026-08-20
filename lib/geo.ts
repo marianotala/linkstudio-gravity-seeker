@@ -24,6 +24,31 @@ export function normalizarComparable(texto: string): string {
     .trim();
 }
 
+/**
+ * Extrae la ciudad de una dirección formateada (Google o DENUE).
+ * Heurística: el segmento que trae el código postal suele ser
+ * "06100 Ciudad de México" — se quita el CP; si no queda texto se toma
+ * el siguiente segmento. Fallback: el antepenúltimo segmento (antes de
+ * estado y país).
+ */
+export function ciudadDeDireccion(direccion: string): string {
+  const partes = direccion
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (partes.length === 0) return "";
+  for (let i = 0; i < partes.length; i++) {
+    const cp = partes[i].match(/\b\d{5}\b/);
+    if (cp) {
+      const resto = partes[i].replace(cp[0], "").replace(/\bCP\b\.?/i, "").trim();
+      if (resto) return resto;
+      if (partes[i + 1]) return partes[i + 1];
+    }
+  }
+  if (partes.length >= 3) return partes[partes.length - 3];
+  return partes[partes.length - 1] ?? "";
+}
+
 /** Sufijos legales que no aportan identidad de marca. */
 const SUFIJOS_LEGALES =
   /\b(sapi|sab|sa de cv|s de rl de cv|s de rl|sa|de cv|cv|sc|ac|s en c)\b/g;

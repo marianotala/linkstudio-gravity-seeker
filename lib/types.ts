@@ -129,6 +129,9 @@ export interface SearchResponse {
   excluidos: number;
   /** POIs eliminados por el filtro estricto de nombre. */
   descartadosPorNombre: number;
+  /** Nombres de los eliminados, para inspección en la UI (máx 300 c/u). */
+  detalleExcluidos: string[];
+  detalleDescartados: string[];
   /** id de la búsqueda guardada en el historial (null si falló el guardado). */
   searchId: string | null;
 }
