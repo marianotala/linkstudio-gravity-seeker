@@ -1,0 +1,26 @@
+# dependencias
+/node_modules
+
+# next.js
+/.next/
+/out/
+
+# producción
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# variables de entorno — la key de Google NUNCA se commitea
+.env.local
+.env*.local
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
