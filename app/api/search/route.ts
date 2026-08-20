@@ -6,7 +6,7 @@ import {
   searchText,
   type PlaceResult,
 } from "@/lib/google";
-import { haversine, normalizar } from "@/lib/geo";
+import { haversine, normalizarComparable } from "@/lib/geo";
 import { getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import { createClient } from "@/lib/supabase/server";
 import type { Poi, SearchRequest, SearchResponse } from "@/lib/types";
@@ -14,12 +14,48 @@ import type { Poi, SearchRequest, SearchResponse } from "@/lib/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const ViewportSchema = z
+  .object({
+    north: z.number().min(-90).max(90),
+    south: z.number().min(-90).max(90),
+    east: z.number().min(-180).max(180),
+    west: z.number().min(-180).max(180),
+  })
+  .refine((v) => v.north > v.south, { message: "Viewport inválido" });
+
 const CenterSchema = z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
   nombre: z.string().optional(),
   direccion: z.string().optional(),
+  viewport: ViewportSchema.optional(),
 });
+
+/** Viewport de respaldo (~5 km) para zonas que llegaran sin límites. */
+function viewportDeRespaldo(c: { lat: number; lng: number }) {
+  const dLat = 0.045;
+  const dLng = 0.045 / Math.max(0.2, Math.cos((c.lat * Math.PI) / 180));
+  return {
+    north: c.lat + dLat,
+    south: c.lat - dLat,
+    east: c.lng + dLng,
+    west: c.lng - dLng,
+  };
+}
+
+/** ¿El punto cae dentro del viewport (con un margen pequeño)? */
+function dentroDeViewport(
+  p: { lat: number; lng: number },
+  v: { north: number; south: number; east: number; west: number }
+): boolean {
+  const margen = 0.002;
+  return (
+    p.lat <= v.north + margen &&
+    p.lat >= v.south - margen &&
+    p.lng <= v.east + margen &&
+    p.lng >= v.west - margen
+  );
+}
 
 const BodySchema = z
   .object({
@@ -144,12 +180,20 @@ export async function POST(req: Request) {
         searchNearby(c, radius, categoria.types)
       );
       crudos = porCentro.flat();
+    } else if (mode === "zone") {
+      // Modo zona: sin radio — restricción dura a los límites reales de
+      // cada zona (viewport de Geocoding), paginado hasta 60 por zona.
+      const query = categoria ? categoria.textQuery : nameFilter;
+      const porZona = await enLotes(centers, LOTE_CENTROS, (c) =>
+        searchText(query, { rectangle: c.viewport ?? viewportDeRespaldo(c) })
+      );
+      crudos = porZona.flat();
     } else {
-      // Modo zona y búsqueda "solo por nombre": searchText con textQuery
-      // en español, paginado hasta 60 por centro.
+      // Censo y "solo por nombre" en orígenes: searchText con sesgo
+      // circular, paginado hasta 60 por centro.
       const query = categoria ? categoria.textQuery : nameFilter;
       const porCentro = await enLotes(centers, LOTE_CENTROS, (c) =>
-        searchText(query, c, radius)
+        searchText(query, { circle: { center: c, radius } })
       );
       crudos = porCentro.flat();
     }
@@ -162,32 +206,36 @@ export async function POST(req: Request) {
     let lugares = Array.from(porId.values());
 
     // 3) Filtro estricto de nombre: todas las palabras del filtro deben
-    //    aparecer en el nombre normalizado sin acentos.
+    //    aparecer en el nombre, comparando sin acentos ni puntuación
+    //    ("7 eleven" atrapa "7-Eleven").
     let descartadosPorNombre = 0;
     if (nameFilter) {
-      const tokens = normalizar(nameFilter).split(" ").filter(Boolean);
+      const tokens = normalizarComparable(nameFilter).split(" ").filter(Boolean);
       lugares = lugares.filter((p) => {
-        const nombre = normalizar(p.nombre);
+        const nombre = normalizarComparable(p.nombre);
         const pasa = tokens.every((t) => nombre.includes(t));
         if (!pasa) descartadosPorNombre++;
         return pasa;
       });
     }
 
-    // 4) Exclusiones de marca sobre nombre + types.
+    // 4) Exclusiones de marca sobre nombre + types, con la misma
+    //    comparación sin puntuación (types tipo convenience_store se
+    //    comparan como "convenience store").
     let excluidos = 0;
     if (excludes.length > 0) {
-      const terminos = excludes.map(normalizar).filter(Boolean);
+      const terminos = excludes.map(normalizarComparable).filter(Boolean);
       lugares = lugares.filter((p) => {
-        const pajar = `${normalizar(p.nombre)} ${p.types.join(" ")}`;
+        const pajar = normalizarComparable(`${p.nombre} ${p.types.join(" ")}`);
         const fuera = terminos.some((t) => pajar.includes(t));
         if (fuera) excluidos++;
         return !fuera;
       });
     }
 
-    // 5) Distancia haversine al centro más cercano y descarte fuera de
-    //    radio + 50 m de tolerancia.
+    // 5) Distancia haversine al centro más cercano. Descarte:
+    //    - orígenes/censo: fuera de radio + 50 m de tolerancia
+    //    - zona: fuera de los límites (viewport) de todas las zonas
     const pois: Poi[] = [];
     for (const p of lugares) {
       let mejorDist = Infinity;
@@ -199,7 +247,13 @@ export async function POST(req: Request) {
           mejorIdx = i;
         }
       });
-      if (mejorDist <= radius + 50) {
+      const dentro =
+        mode === "zone"
+          ? centers.some((c) =>
+              dentroDeViewport(p, c.viewport ?? viewportDeRespaldo(c))
+            )
+          : mejorDist <= radius + 50;
+      if (dentro) {
         pois.push({
           placeId: p.placeId,
           nombre: p.nombre,

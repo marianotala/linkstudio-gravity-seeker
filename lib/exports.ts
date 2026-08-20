@@ -90,7 +90,10 @@ export function exportarGeoJsonGeocercas(
   );
 }
 
-/** 4) GeoJSON de radios de origen: un Polygon circular por origen con el radio de búsqueda. */
+/**
+ * 4) GeoJSON de radios de origen: un Polygon circular por origen con el
+ * radio de búsqueda. Las zonas (con viewport) exportan su rectángulo real.
+ */
 export function exportarGeoJsonRadiosOrigen(
   origenes: Origin[],
   radioM: number,
@@ -103,11 +106,21 @@ export function exportarGeoJsonRadiosOrigen(
       properties: {
         nombre: o.nombre ?? `Origen ${i + 1}`,
         direccion: o.direccion ?? "",
-        radio_m: radioM,
+        ...(o.viewport ? {} : { radio_m: radioM }),
       },
       geometry: {
         type: "Polygon",
-        coordinates: [circlePolygon(o, radioM, vertices)],
+        coordinates: [
+          o.viewport
+            ? ([
+                [o.viewport.west, o.viewport.south],
+                [o.viewport.east, o.viewport.south],
+                [o.viewport.east, o.viewport.north],
+                [o.viewport.west, o.viewport.north],
+                [o.viewport.west, o.viewport.south],
+              ] as [number, number][])
+            : circlePolygon(o, radioM, vertices),
+        ],
       },
     })),
   };

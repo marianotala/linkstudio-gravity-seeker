@@ -157,6 +157,9 @@ export default function SeekerApp({
   const [nombreArchivo, setNombreArchivo] = useState("");
   const [origenes, setOrigenes] = useState<Origin[]>([]);
   const [zonaQuery, setZonaQuery] = useState("");
+  /** Zonas del modo zona (multi-zona, cada una con sus límites reales). */
+  const [zonas, setZonas] = useState<Origin[]>([]);
+  /** Centro de la ciudad del censo de marca. */
   const [zona, setZona] = useState<Origin | null>(null);
   const [radio, setRadio] = useState(1000);
   const [categoria, setCategoria] = useState(CATEGORIAS[0].key);
@@ -199,8 +202,9 @@ export default function SeekerApp({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const centrosActivos = useMemo<Origin[]>(
-    () => (mode === "origins" ? origenes : zona ? [zona] : []),
-    [mode, origenes, zona]
+    () =>
+      mode === "origins" ? origenes : mode === "zone" ? zonas : zona ? [zona] : [],
+    [mode, origenes, zonas, zona]
   );
 
   function reportar(tipo: StatusTipo, texto: string) {
@@ -245,8 +249,7 @@ export default function SeekerApp({
         setOrigenes(p.centers);
         setTab("coordenadas");
       } else if (p.mode === "zone") {
-        setZona(p.centers[0] ?? null);
-        setZonaQuery(p.centers[0]?.nombre ?? "");
+        setZonas(p.centers);
       } else {
         // census: restaurar marca, ciudad y configuración de cuadrícula
         setZona(p.centers[0] ?? null);
@@ -407,8 +410,9 @@ export default function SeekerApp({
     }
   }
 
-  // ---- paso 2 (modo zona): ubicar la zona
-  async function ubicarZona() {
+  // ---- paso 2 (modo zona): agregar una zona (multi-zona, sin radio:
+  //      la búsqueda se restringe a los límites reales de cada zona)
+  async function agregarZona() {
     const query = zonaQuery.trim();
     if (!query) {
       reportar("error", "Escribe una ciudad o zona, p. ej. Polanco, CDMX");
@@ -426,13 +430,53 @@ export default function SeekerApp({
         reportar("error", r?.error ?? "No encontré esa zona");
         return;
       }
-      setZona({ lat: r.lat, lng: r.lng, nombre: r.formatted ?? query });
-      reportar("ok", `Zona ubicada: ${r.formatted ?? query}`);
+      const nombre = r.formatted ?? query;
+      if (zonas.some((z) => z.nombre === nombre)) {
+        reportar("error", `"${nombre}" ya está en tus zonas`);
+        return;
+      }
+      const nuevas = [
+        ...zonas,
+        { lat: r.lat, lng: r.lng, nombre, viewport: r.viewport },
+      ];
+      setZonas(nuevas);
+      setZonaQuery("");
+      reportar(
+        "ok",
+        `${nuevas.length} ${nuevas.length === 1 ? "zona lista" : "zonas listas"} · ${nombre}`
+      );
     } catch (e) {
       reportar("error", e instanceof Error ? e.message : "Error al ubicar la zona");
     } finally {
       setOcupado(false);
     }
+  }
+
+  // ---- nueva búsqueda: limpia todo y regresa al estado inicial
+  function nuevaBusqueda() {
+    detenerCensoRef.current = true;
+    setTextDirecciones("");
+    setTextCoords("");
+    setArchivo(null);
+    setNombreArchivo("");
+    setOrigenes([]);
+    setZonaQuery("");
+    setZonas([]);
+    setZona(null);
+    setRadio(1000);
+    setCategoria(CATEGORIAS[0].key);
+    setNameFilter("");
+    setExcludes([]);
+    setExcludeInput("");
+    setMarca("");
+    setCiudadQuery("");
+    setCeldas(null);
+    setProgresoCenso(null);
+    setPois([]);
+    setContadores({ excluidos: 0, descartadosPorNombre: 0 });
+    setFoco(null);
+    setTablaColapsada(false);
+    reportar("idle", "Listo para buscar");
   }
 
   // ---- censo de marca: 1) calcular la cuadrícula y pedir confirmación
@@ -607,7 +651,7 @@ export default function SeekerApp({
         "error",
         mode === "origins"
           ? "Primero procesa tus orígenes (paso 02)"
-          : "Primero ubica la zona (paso 02)"
+          : "Primero agrega al menos una zona (paso 02)"
       );
       return;
     }
@@ -622,7 +666,7 @@ export default function SeekerApp({
       "busy",
       mode === "origins"
         ? `Buscando POIs alrededor de ${centrosActivos.length} orígenes…`
-        : "Buscando POIs en la zona…"
+        : `Buscando POIs en ${centrosActivos.length} ${centrosActivos.length === 1 ? "zona" : "zonas"}…`
     );
     try {
       const body: SearchRequest = {
@@ -657,11 +701,14 @@ export default function SeekerApp({
     }
   }
 
-  // ---- exclusiones tipo tag
+  // ---- exclusiones tipo tag: acepta varias separadas por coma
   function agregarExclusion() {
-    const valor = excludeInput.trim().toLowerCase();
-    if (!valor) return;
-    if (!excludes.includes(valor)) setExcludes([...excludes, valor]);
+    const nuevos = excludeInput
+      .split(",")
+      .map((v) => v.trim().toLowerCase())
+      .filter(Boolean)
+      .filter((v) => !excludes.includes(v));
+    if (nuevos.length > 0) setExcludes([...excludes, ...nuevos]);
     setExcludeInput("");
   }
 
@@ -692,7 +739,7 @@ export default function SeekerApp({
 
   return (
     <div className="flex h-screen flex-col gap-3 overflow-hidden bg-fondo p-3">
-      <AppHeader usuario={usuario} status={status} />
+      <AppHeader usuario={usuario} status={status} onNueva={nuevaBusqueda} />
 
       {/* ---------- barra de resumen de la búsqueda ---------- */}
       <div className="tarjeta flex shrink-0 items-center overflow-x-auto px-2 py-2.5">
@@ -720,7 +767,15 @@ export default function SeekerApp({
           />
         )}
         {mode === "zone" && (
-          <Segmento etiqueta="Zona" valor={zona?.nombre ?? "—"} />
+          <Segmento
+            etiqueta="Zonas"
+            valor={
+              zonas.length > 0
+                ? zonas.map((z) => z.nombre?.split(",")[0] ?? "zona").join(" · ")
+                : "—"
+            }
+            color={zonas.length > 0 ? "text-violeta" : "text-zinc-600"}
+          />
         )}
         {mode === "census" && (
           <>
@@ -735,10 +790,12 @@ export default function SeekerApp({
             />
           </>
         )}
-        <Segmento
-          etiqueta={mode === "census" ? "Alcance" : "Radio"}
-          valor={fmtM(mode === "census" ? alcance : radio)}
-        />
+        {mode !== "zone" && (
+          <Segmento
+            etiqueta={mode === "census" ? "Alcance" : "Radio"}
+            valor={fmtM(mode === "census" ? alcance : radio)}
+          />
+        )}
         {mode !== "census" && (
           <Segmento etiqueta="Búsqueda" valor={etiquetaCategoria} />
         )}
@@ -919,26 +976,42 @@ export default function SeekerApp({
             </section>
           ) : mode === "zone" ? (
             <section className={pasoCls}>
-              <label className={labelCls}>02 · Tu zona</label>
+              <label className={labelCls}>02 · Tus zonas</label>
               <input
                 value={zonaQuery}
                 onChange={(e) => setZonaQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && ubicarZona()}
-                placeholder="p. ej. Polanco, CDMX"
+                onKeyDown={(e) => e.key === "Enter" && agregarZona()}
+                placeholder="p. ej. Polanco, CDMX · Enter para agregar"
                 className={inputCls}
               />
               <button
-                onClick={ubicarZona}
+                onClick={agregarZona}
                 disabled={ocupado}
                 className="mt-3 w-full rounded-md border border-violeta bg-violeta/10 px-3 py-2 font-mono text-xs font-medium text-violeta transition-colors hover:bg-violeta/20 disabled:opacity-40"
               >
-                Ubicar zona
+                + Agregar zona
               </button>
-              {zona && (
-                <p className="mt-2 truncate font-mono text-[11px] text-violeta">
-                  ● {zona.nombre}
-                </p>
+              {zonas.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {zonas.map((z, i) => (
+                    <button
+                      key={`${z.nombre}-${i}`}
+                      onClick={() => setZonas(zonas.filter((_, j) => j !== i))}
+                      className="group flex max-w-full items-center gap-1 rounded-full border border-violeta/50 bg-violeta/10 px-2.5 py-0.5 font-mono text-[11px] text-violeta"
+                      title="Quitar zona"
+                    >
+                      <span className="truncate">{z.nombre}</span>
+                      <span className="text-violeta/60 group-hover:text-violeta">
+                        ×
+                      </span>
+                    </button>
+                  ))}
+                </div>
               )}
+              <p className="mt-2 font-mono text-[10px] leading-relaxed text-zinc-600">
+                Sin radio: la búsqueda se limita a los límites reales de cada
+                zona (Polanco = solo Polanco; CDMX = toda la ciudad).
+              </p>
             </section>
           ) : (
             <section className={pasoCls}>
@@ -1081,8 +1154,9 @@ export default function SeekerApp({
             </section>
           )}
 
-          {/* 03 · radio (el censo usa radio de celda + alcance del paso 02) */}
-          {mode !== "census" && (
+          {/* 03 · radio (solo orígenes: zona usa sus límites y el censo
+              usa radio de celda + alcance del paso 02) */}
+          {mode === "origins" && (
           <section className={pasoCls}>
             <label className={labelCls}>03 · Radio de búsqueda</label>
             <div className="flex flex-wrap gap-2">
@@ -1119,7 +1193,11 @@ export default function SeekerApp({
           {/* 04 · qué buscar (en censo solo aplican las exclusiones) */}
           <section className={pasoCls}>
             <label className={labelCls}>
-              {mode === "census" ? "03 · Exclusiones" : "04 · Qué buscar"}
+              {mode === "census"
+                ? "03 · Exclusiones"
+                : mode === "zone"
+                  ? "03 · Qué buscar"
+                  : "04 · Qué buscar"}
             </label>
             {mode !== "census" && (
             <>
@@ -1159,7 +1237,7 @@ export default function SeekerApp({
                     agregarExclusion();
                   }
                 }}
-                placeholder="Excluir marcas · Enter para agregar"
+                placeholder="Excluir marcas · separa con comas y Enter"
                 className={inputCls}
               />
               {excludes.length > 0 && (
@@ -1305,6 +1383,7 @@ export default function SeekerApp({
               mode={mode}
               origenes={origenes}
               zona={zona}
+              zonas={zonas}
               radio={mode === "census" ? alcance : radio}
               pois={pois}
               foco={foco}

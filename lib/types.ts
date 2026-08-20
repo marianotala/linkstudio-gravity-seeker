@@ -16,10 +16,20 @@ export interface LatLng {
   lng: number;
 }
 
-/** Un origen (PDV) o el centro de la zona. */
+/** Rectángulo geográfico (viewport de Google Geocoding). */
+export interface Viewport {
+  north: number;
+  south: number;
+  east: number;
+  west: number;
+}
+
+/** Un origen (PDV), una zona o el centro del censo. */
 export interface Origin extends LatLng {
   nombre?: string;
   direccion?: string;
+  /** Solo zonas: límites reales de la zona; la búsqueda se restringe a ellos. */
+  viewport?: Viewport;
 }
 
 /** Un punto de interés ya procesado por el servidor. */
@@ -104,6 +114,8 @@ export interface GeocodeResult {
   lat?: number;
   lng?: number;
   formatted?: string;
+  /** Límites de la zona/ciudad geocodificada (para búsqueda por zona). */
+  viewport?: Viewport;
   error?: string;
 }
 

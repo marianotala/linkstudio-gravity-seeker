@@ -14,9 +14,11 @@ export type StatusTipo = "idle" | "busy" | "ok" | "error";
 interface AppHeaderProps {
   usuario: PerfilUsuario | null;
   status?: { tipo: StatusTipo; texto: string };
+  /** Si viene, muestra el botón "Nueva búsqueda" que resetea el buscador. */
+  onNueva?: () => void;
 }
 
-export default function AppHeader({ usuario, status }: AppHeaderProps) {
+export default function AppHeader({ usuario, status, onNueva }: AppHeaderProps) {
   const router = useRouter();
   const pathname = usePathname();
 
@@ -67,6 +69,15 @@ export default function AppHeader({ usuario, status }: AppHeaderProps) {
       </div>
 
       <div className="flex shrink-0 items-center gap-3">
+        {onNueva && (
+          <button
+            onClick={onNueva}
+            className="rounded-full border border-cian/50 bg-cian/10 px-3 py-1.5 font-mono text-[11px] text-cian transition-colors hover:bg-cian/20"
+            title="Limpia orígenes, zonas, filtros y resultados"
+          >
+            + Nueva búsqueda
+          </button>
+        )}
         {status && (
           <div className="flex items-center gap-2 rounded-full border border-linea bg-panel2 px-3 py-1.5">
             <span className={`h-2 w-2 rounded-full ${dotColor}`} />

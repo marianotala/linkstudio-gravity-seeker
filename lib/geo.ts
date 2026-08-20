@@ -12,6 +12,18 @@ export function normalizar(texto: string): string {
     .trim();
 }
 
+/**
+ * Normalización para COMPARAR nombres y exclusiones: además de quitar
+ * acentos y mayúsculas, convierte la puntuación en espacios para que
+ * "7 eleven" atrape "7-Eleven" y "circulo k" atrape "Círculo-K".
+ */
+export function normalizarComparable(texto: string): string {
+  return normalizar(texto)
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const RADIO_TIERRA_M = 6371000;
 
 /** Distancia haversine en metros entre dos puntos. */

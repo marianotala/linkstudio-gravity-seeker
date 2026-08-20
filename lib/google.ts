@@ -2,7 +2,7 @@
 // Se usa únicamente desde los route handlers en /app/api/*.
 
 import "server-only";
-import type { GeocodeResult, LatLng } from "./types";
+import type { GeocodeResult, LatLng, Viewport } from "./types";
 
 const GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json";
 const NEARBY_URL = "https://places.googleapis.com/v1/places:searchNearby";
@@ -133,14 +133,20 @@ export async function searchNearby(
   return mapPlaces(data.places);
 }
 
+/** Dónde buscar con searchText: círculo (sesgo) o rectángulo (restricción dura). */
+export type AreaBusqueda =
+  | { circle: { center: LatLng; radius: number } }
+  | { rectangle: Viewport };
+
 /**
- * searchText: textQuery en español con paginación hasta 60 resultados,
- * sesgado al círculo centro+radio. (Modo zona y búsqueda por nombre.)
+ * searchText: textQuery en español con paginación hasta 60 resultados.
+ * Con círculo es un sesgo (locationBias); con rectángulo es una
+ * restricción dura (locationRestriction) a los límites de la zona.
+ * (Modo zona, censo y búsqueda por nombre.)
  */
 export async function searchText(
   textQuery: string,
-  center: LatLng,
-  radiusM: number
+  area: AreaBusqueda
 ): Promise<PlaceResult[]> {
   const resultados: PlaceResult[] = [];
   let pageToken: string | undefined;
@@ -150,13 +156,25 @@ export async function searchText(
       pageSize: 20,
       languageCode: "es",
       regionCode: "MX",
-      locationBias: {
-        circle: {
-          center: { latitude: center.lat, longitude: center.lng },
-          radius: Math.min(radiusM, 50000),
-        },
-      },
     };
+    if ("rectangle" in area) {
+      body.locationRestriction = {
+        rectangle: {
+          low: { latitude: area.rectangle.south, longitude: area.rectangle.west },
+          high: { latitude: area.rectangle.north, longitude: area.rectangle.east },
+        },
+      };
+    } else {
+      body.locationBias = {
+        circle: {
+          center: {
+            latitude: area.circle.center.lat,
+            longitude: area.circle.center.lng,
+          },
+          radius: Math.min(area.circle.radius, 50000),
+        },
+      };
+    }
     if (pageToken) body.pageToken = pageToken;
     const data = (await postPlaces(
       TEXT_URL,
@@ -185,7 +203,13 @@ export async function geocodeDireccion(
     error_message?: string;
     results?: {
       formatted_address?: string;
-      geometry?: { location?: { lat: number; lng: number } };
+      geometry?: {
+        location?: { lat: number; lng: number };
+        viewport?: {
+          northeast?: { lat: number; lng: number };
+          southwest?: { lat: number; lng: number };
+        };
+      };
     }[];
   };
 
@@ -194,11 +218,21 @@ export async function geocodeDireccion(
       const r = data.results?.[0];
       const loc = r?.geometry?.location;
       if (!loc) return { ok: false, error: "Respuesta sin coordenadas" };
+      const vp = r?.geometry?.viewport;
       return {
         ok: true,
         lat: loc.lat,
         lng: loc.lng,
         formatted: r?.formatted_address,
+        viewport:
+          vp?.northeast && vp?.southwest
+            ? {
+                north: vp.northeast.lat,
+                south: vp.southwest.lat,
+                east: vp.northeast.lng,
+                west: vp.southwest.lng,
+              }
+            : undefined,
       };
     }
     case "ZERO_RESULTS":

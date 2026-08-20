@@ -11,6 +11,7 @@ import {
   Circle,
   CircleMarker,
   Popup,
+  Rectangle,
   useMap,
 } from "react-leaflet";
 import L from "leaflet";
@@ -27,7 +28,10 @@ const CENTRO_INICIAL: [number, number] = [19.4326, -99.1332];
 interface MapViewProps {
   mode: SearchMode;
   origenes: Origin[];
+  /** Centro del censo de marca (modo census). */
   zona: Origin | null;
+  /** Zonas del modo zona: se dibujan por sus límites reales (viewport). */
+  zonas?: Origin[];
   radio: number;
   pois: Poi[];
   /** POI al que hay que volar (clic en la tabla). */
@@ -43,6 +47,7 @@ function Encuadre({
   mode,
   origenes,
   zona,
+  zonas,
   pois,
   foco,
   radio,
@@ -61,6 +66,15 @@ function Encuadre({
     const puntos: [number, number][] = [];
     if (mode === "origins") {
       origenes.forEach((o) => puntos.push([o.lat, o.lng]));
+    } else if (mode === "zone") {
+      (zonas ?? []).forEach((z) => {
+        if (z.viewport) {
+          puntos.push([z.viewport.south, z.viewport.west]);
+          puntos.push([z.viewport.north, z.viewport.east]);
+        } else {
+          puntos.push([z.lat, z.lng]);
+        }
+      });
     } else if (zona) {
       puntos.push([zona.lat, zona.lng]);
     }
@@ -74,13 +88,14 @@ function Encuadre({
     }
     map.fitBounds(L.latLngBounds(puntos).pad(0.15));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, origenes, zona, pois, celdas, map]);
+  }, [mode, origenes, zona, zonas, pois, celdas, map]);
 
   return null;
 }
 
 export default function MapView(props: MapViewProps) {
-  const { mode, origenes, zona, radio, pois, celdas, radioCelda } = props;
+  const { mode, origenes, zona, zonas, radio, pois, celdas, radioCelda } =
+    props;
 
   return (
     <MapContainer
@@ -150,7 +165,48 @@ export default function MapView(props: MapViewProps) {
           />
         ))}
 
-      {(mode === "zone" || mode === "census") && zona && (
+      {mode === "zone" &&
+        (zonas ?? []).map((z, i) => (
+          <Fragment key={`z-${i}`}>
+            {z.viewport && (
+              <Rectangle
+                bounds={[
+                  [z.viewport.south, z.viewport.west],
+                  [z.viewport.north, z.viewport.east],
+                ]}
+                pathOptions={{
+                  color: VIOLETA,
+                  weight: 1.5,
+                  opacity: 0.7,
+                  fillColor: VIOLETA,
+                  fillOpacity: 0.06,
+                  dashArray: "6 6",
+                }}
+              />
+            )}
+            <CircleMarker
+              center={[z.lat, z.lng]}
+              radius={7}
+              pathOptions={{
+                color: VIOLETA,
+                weight: 2,
+                fillColor: "#0a0a0c",
+                fillOpacity: 1,
+              }}
+            >
+              <Popup>
+                <div className="font-mono text-xs">
+                  <strong>{z.nombre ?? `Zona ${i + 1}`}</strong>
+                  <div>
+                    {z.lat.toFixed(6)}, {z.lng.toFixed(6)}
+                  </div>
+                </div>
+              </Popup>
+            </CircleMarker>
+          </Fragment>
+        ))}
+
+      {mode === "census" && zona && (
         <Fragment>
           <Circle
             center={[zona.lat, zona.lng]}
