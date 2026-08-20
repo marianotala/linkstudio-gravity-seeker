@@ -101,6 +101,19 @@ const RADIOS_TERRITORIAL = [
 
 const NARANJA = "#ff8c42";
 
+/**
+ * ¿El error de una celda debe abortar todo el censo? Solo cuota, auth
+ * o configuración: una celda que falla por timeout/red se salta y el
+ * censo continúa (hasta 5 fallas seguidas).
+ */
+function esErrorFatalDeCenso(mensaje: string): boolean {
+  return /no autorizado|límite diario|token|DENUE_TOKEN|GOOGLE_MAPS_KEY|key de google|cuota/i.test(
+    mensaje
+  );
+}
+
+const MAX_FALLOS_SEGUIDOS = 5;
+
 function denuePoiAPoi(d: DenuePoi, centro: LatLng): Poi {
   return {
     placeId: d.placeId,
@@ -946,6 +959,8 @@ export default function SeekerApp({
     let descartadosTotal = 0;
     let errorFatal: string | null = null;
     let celdasCorridas = 0;
+    let celdasFallidas = 0;
+    let fallosSeguidos = 0;
 
     for (let i = 0; i < celdas.length; i++) {
       if (detenerCensoRef.current) break;
@@ -960,6 +975,7 @@ export default function SeekerApp({
           persist: false,
         } satisfies SearchRequest);
         celdasCorridas++;
+        fallosSeguidos = 0;
         excluidosTotal += data.excluidos;
         descartadosTotal += data.descartadosPorNombre;
         for (const p of data.pois) {
@@ -973,9 +989,19 @@ export default function SeekerApp({
           }
         }
       } catch (e) {
-        // cuota agotada u otro error del servidor: parar y conservar lo acumulado
-        errorFatal = e instanceof Error ? e.message : "Error en el censo";
-        break;
+        const mensaje = e instanceof Error ? e.message : "Error en el censo";
+        // Solo cuota/auth/configuración abortan; una celda con timeout
+        // o error de red se salta y el censo sigue.
+        if (esErrorFatalDeCenso(mensaje)) {
+          errorFatal = mensaje;
+          break;
+        }
+        celdasFallidas++;
+        fallosSeguidos++;
+        if (fallosSeguidos >= MAX_FALLOS_SEGUIDOS) {
+          errorFatal = `${MAX_FALLOS_SEGUIDOS} celdas seguidas fallaron (${mensaje})`;
+          break;
+        }
       }
       setProgresoCenso({ actual: i + 1, total: celdas.length, pois: acumulados.size });
       setPois(Array.from(acumulados.values()));
@@ -1025,21 +1051,23 @@ export default function SeekerApp({
     const notaDelta = delta
       ? ` · delta: ${delta.nuevos} nuevos, ${delta.perdidos} ya no encontrados, ${delta.sinCambio} sin cambio`
       : "";
+    const notaFallidas =
+      celdasFallidas > 0 ? ` · ${celdasFallidas} celdas fallaron (saltadas)` : "";
 
     if (errorFatal) {
       reportar(
         "error",
-        `Censo detenido en la celda ${celdasCorridas + 1}: ${errorFatal} · ${lista.length} POIs conservados${guardado ? " (guardados en la biblioteca)" : ""}`
+        `Censo detenido: ${errorFatal} · ${lista.length} POIs conservados${guardado ? " (guardados en la biblioteca)" : ""}`
       );
     } else if (detenerCensoRef.current) {
       reportar(
         "ok",
-        `Censo detenido por ti: ${celdasCorridas} de ${celdas.length} celdas · ${lista.length} POIs${guardado ? " · guardado en la biblioteca" : ""}${notaDelta}`
+        `Censo detenido por ti: ${celdasCorridas} de ${celdas.length} celdas · ${lista.length} POIs${notaFallidas}${guardado ? " · guardado en la biblioteca" : ""}${notaDelta}`
       );
     } else {
       reportar(
         "ok",
-        `Censo completo: ${lista.length} POIs de "${m}" en ${celdasCorridas} celdas${guardado ? " · guardado en la biblioteca" : ""}${notaDelta}`
+        `Censo completo: ${lista.length} POIs de "${m}" en ${celdasCorridas} celdas${notaFallidas}${guardado ? " · guardado en la biblioteca" : ""}${notaDelta}`
       );
     }
     setOcupado(false);
@@ -1116,6 +1144,8 @@ export default function SeekerApp({
     const denueAcum = new Map<string, Poi>();
     let errorFatal: string | null = null;
     let celdasCorridas = 0;
+    let celdasFallidas = 0;
+    let fallosSeguidos = 0;
 
     for (let i = 0; i < celdas.length; i++) {
       if (detenerCensoRef.current) break;
@@ -1157,9 +1187,19 @@ export default function SeekerApp({
           }
         }
         celdasCorridas++;
+        fallosSeguidos = 0;
       } catch (e) {
-        errorFatal = e instanceof Error ? e.message : "Error en el censo";
-        break;
+        const mensaje = e instanceof Error ? e.message : "Error en el censo";
+        if (esErrorFatalDeCenso(mensaje)) {
+          errorFatal = mensaje;
+          break;
+        }
+        celdasFallidas++;
+        fallosSeguidos++;
+        if (fallosSeguidos >= MAX_FALLOS_SEGUIDOS) {
+          errorFatal = `${MAX_FALLOS_SEGUIDOS} consultas seguidas fallaron (${mensaje})`;
+          break;
+        }
       }
       const acumTotal = googleAcum.size + denueAcum.size;
       setProgresoCenso({ actual: i + 1, total: celdas.length, pois: acumTotal });
@@ -1217,6 +1257,10 @@ export default function SeekerApp({
     const notaDelta = delta
       ? ` · delta: ${delta.nuevos} nuevos, ${delta.perdidos} ya no encontrados, ${delta.sinCambio} sin cambio`
       : "";
+    const notaFallidas =
+      celdasFallidas > 0
+        ? ` · ${celdasFallidas} consultas fallaron (saltadas)`
+        : "";
 
     if (errorFatal) {
       reportar(
@@ -1226,7 +1270,7 @@ export default function SeekerApp({
     } else {
       reportar(
         "ok",
-        `Censo territorial completo: ${lista.length} establecimientos en ${celdasCorridas} consultas${cruzados > 0 ? ` · ${cruzados} confirmados por ambas fuentes` : ""}${guardado ? " · guardado en la biblioteca" : ""}${notaDelta}`
+        `Censo territorial completo: ${lista.length} establecimientos en ${celdasCorridas} consultas${notaFallidas}${cruzados > 0 ? ` · ${cruzados} confirmados por ambas fuentes` : ""}${guardado ? " · guardado en la biblioteca" : ""}${notaDelta}`
       );
     }
     setOcupado(false);

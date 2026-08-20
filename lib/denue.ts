@@ -70,7 +70,27 @@ export async function denueBuscar(
   const radio = Math.min(Math.max(Math.round(radioM), 100), DENUE_RADIO_MAX_M);
   const url = `${DENUE_BASE}/Buscar/${cond}/${lat.toFixed(6)},${lng.toFixed(6)}/${radio}/${token}`;
 
-  const res = await fetch(url, { cache: "no-store" });
+  // DENUE a veces tarda o corta la conexión: timeout de 15 s y un
+  // reintento antes de reportar la celda como fallida.
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      res = await fetch(url, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000),
+      });
+    } catch {
+      throw new DenueError(
+        "DENUE no respondió a tiempo en esta consulta (timeout)."
+      );
+    }
+  }
   const texto = await res.text();
 
   if (!res.ok) {
