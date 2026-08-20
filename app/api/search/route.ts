@@ -84,10 +84,6 @@ const BodySchema = z
   .refine((b) => b.mode !== "census" || b.centers.length === 1, {
     message: "El modo censo procesa una celda por llamada",
     path: ["centers"],
-  })
-  .refine((b) => b.mode !== "census" || b.nameFilter.length > 0, {
-    message: "El censo necesita la marca en nameFilter",
-    path: ["nameFilter"],
   });
 
 // Límites diarios por usuario (los admin no tienen límite).
@@ -263,6 +259,7 @@ export async function POST(req: Request) {
           types: p.types,
           distancia: Math.round(mejorDist),
           origenIdx: mejorIdx,
+          fuente: "google",
         });
       }
     }

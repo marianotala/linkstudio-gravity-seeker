@@ -1,6 +1,9 @@
 // Tipos compartidos entre cliente y servidor.
 
-export type SearchMode = "origins" | "zone" | "census";
+export type SearchMode = "origins" | "zone" | "census" | "territorial";
+
+/** Fuente de un POI: Google Places, DENUE (INEGI) o ambas (match cruzado). */
+export type Fuente = "google" | "denue" | "ambas";
 
 /** Metadata del censo de marca (modo "census"). */
 export interface CensoInfo {
@@ -34,6 +37,7 @@ export interface Origin extends LatLng {
 
 /** Un punto de interés ya procesado por el servidor. */
 export interface Poi {
+  /** place_id de Google o "d:{Id}" de DENUE. */
   placeId: string;
   nombre: string;
   direccion: string;
@@ -44,6 +48,61 @@ export interface Poi {
   distancia: number;
   /** Índice del centro más cercano dentro de centers[]. */
   origenIdx: number;
+  /** Fuente del dato. Obligatorio en todo el sistema. */
+  fuente: Fuente;
+  /** Solo DENUE: estrato de personal ocupado (p. ej. "0 a 5 personas"). */
+  estrato?: string | null;
+  /** Solo DENUE: razón social y clase de actividad SCIAN. */
+  razonSocial?: string | null;
+  actividad?: string | null;
+}
+
+/** Establecimiento crudo que regresa /api/denue. */
+export interface DenuePoi {
+  placeId: string; // "d:{Id}"
+  nombre: string;
+  razonSocial: string;
+  actividad: string;
+  estrato: string;
+  direccion: string;
+  lat: number;
+  lng: number;
+}
+
+/** Fila de public.censuses (biblioteca de censos). */
+export interface Censo {
+  id: string;
+  user_id: string;
+  created_at: string;
+  tipo: "marca" | "territorial";
+  marca_o_categoria: string;
+  alcance_descripcion: string;
+  fuente: Fuente;
+  poi_count: number;
+  params: Record<string, unknown>;
+  /** Embebido vía FK cuando se consulta con join a profiles. */
+  profiles?: { email: string; nombre: string | null } | null;
+}
+
+/** Fila de public.census_pois. */
+export interface CensoPoi {
+  id: string;
+  census_id: string;
+  place_key: string;
+  fuente: Fuente;
+  name: string;
+  lat: number;
+  lng: number;
+  address: string | null;
+  estrato: string | null;
+  extra: Record<string, unknown> | null;
+}
+
+/** Resumen del delta al re-correr un censo. */
+export interface DeltaCenso {
+  nuevos: number;
+  perdidos: number;
+  sinCambio: number;
 }
 
 export interface SearchRequest {

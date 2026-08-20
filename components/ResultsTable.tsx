@@ -47,6 +47,8 @@ export default function ResultsTable({
                 <th className="px-4 py-2 font-medium">#</th>
                 <th className="px-2 py-2 font-medium">Nombre</th>
                 <th className="px-2 py-2 font-medium">Dirección</th>
+                <th className="px-2 py-2 font-medium">Fuente</th>
+                <th className="px-2 py-2 font-medium">Estrato</th>
                 <th className="px-2 py-2 font-medium text-right">Dist. (m)</th>
                 <th className="px-2 py-2 font-medium">Origen</th>
                 <th className="px-4 py-2 font-medium text-right">Lat, Lng</th>
@@ -69,6 +71,26 @@ export default function ResultsTable({
                     <td className="px-2 py-1.5">{p.nombre}</td>
                     <td className="max-w-[280px] truncate px-2 py-1.5 text-zinc-500">
                       {p.direccion}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <span
+                        className={
+                          p.fuente === "denue"
+                            ? "text-[#ff8c42]"
+                            : p.fuente === "ambas"
+                              ? "text-emerald-400"
+                              : "text-magenta"
+                        }
+                      >
+                        {p.fuente === "denue"
+                          ? "DENUE"
+                          : p.fuente === "ambas"
+                            ? "Ambas"
+                            : "Google"}
+                      </span>
+                    </td>
+                    <td className="max-w-[130px] truncate px-2 py-1.5 text-zinc-500">
+                      {p.estrato ?? "—"}
                     </td>
                     <td className="px-2 py-1.5 text-right text-cian">
                       {p.distancia}

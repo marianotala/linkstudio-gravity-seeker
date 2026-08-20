@@ -21,10 +21,19 @@ function csvCampo(v: string | number): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** 1) CSV de POIs. */
+/** 1) CSV de POIs (siempre con fuente; estrato solo viene de DENUE). */
 export function exportarCsv(pois: Poi[]) {
   const filas = [
-    ["nombre", "direccion", "lat", "lng", "distancia_m", "place_id"].join(","),
+    [
+      "nombre",
+      "direccion",
+      "lat",
+      "lng",
+      "distancia_m",
+      "fuente",
+      "estrato",
+      "place_id",
+    ].join(","),
     ...pois.map((p) =>
       [
         csvCampo(p.nombre),
@@ -32,6 +41,8 @@ export function exportarCsv(pois: Poi[]) {
         p.lat,
         p.lng,
         p.distancia,
+        p.fuente,
+        csvCampo(p.estrato ?? ""),
         p.placeId,
       ].join(",")
     ),
@@ -49,6 +60,8 @@ export function exportarGeoJsonPuntos(pois: Poi[]) {
         nombre: p.nombre,
         direccion: p.direccion,
         distancia_m: p.distancia,
+        fuente: p.fuente,
+        estrato: p.estrato ?? null,
         place_id: p.placeId,
       },
       geometry: { type: "Point", coordinates: [p.lng, p.lat] },
@@ -75,6 +88,8 @@ export function exportarGeoJsonGeocercas(
         nombre: p.nombre,
         direccion: p.direccion,
         radio_m: radioM,
+        fuente: p.fuente,
+        estrato: p.estrato ?? null,
         place_id: p.placeId,
       },
       geometry: {

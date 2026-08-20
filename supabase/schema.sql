@@ -318,3 +318,132 @@ $$;
 
 revoke execute on function public.consumir_cuota(text, int, int) from public, anon;
 grant execute on function public.consumir_cuota(text, int, int) to authenticated;
+
+
+-- ============================================================
+-- MIGRACIÓN FASE 4 — biblioteca de censos (marca y territorial)
+-- ============================================================
+
+create table if not exists public.censuses (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  tipo text not null check (tipo in ('marca', 'territorial')),
+  marca_o_categoria text not null,
+  alcance_descripcion text not null,
+  fuente text not null check (fuente in ('google', 'denue', 'ambas')),
+  poi_count int not null default 0,
+  params jsonb not null
+);
+
+create table if not exists public.census_pois (
+  id uuid primary key default gen_random_uuid(),
+  census_id uuid not null references public.censuses (id) on delete cascade,
+  place_key text not null,
+  fuente text not null check (fuente in ('google', 'denue', 'ambas')),
+  name text not null,
+  lat double precision not null,
+  lng double precision not null,
+  address text,
+  estrato text,
+  extra jsonb
+);
+
+create index if not exists censuses_user_id_created_at_idx
+  on public.censuses (user_id, created_at desc);
+create index if not exists census_pois_census_id_idx
+  on public.census_pois (census_id);
+
+alter table public.censuses enable row level security;
+alter table public.census_pois enable row level security;
+
+drop policy if exists "censuses: leer propios o admin" on public.censuses;
+create policy "censuses: leer propios o admin"
+  on public.censuses for select
+  using (user_id = auth.uid() or public.es_admin());
+
+drop policy if exists "censuses: insertar propios" on public.censuses;
+create policy "censuses: insertar propios"
+  on public.censuses for insert
+  with check (user_id = auth.uid());
+
+drop policy if exists "censuses: borrar propios" on public.censuses;
+create policy "censuses: borrar propios"
+  on public.censuses for delete
+  using (user_id = auth.uid());
+
+drop policy if exists "census_pois: leer propios o admin" on public.census_pois;
+create policy "census_pois: leer propios o admin"
+  on public.census_pois for select
+  using (
+    exists (
+      select 1 from public.censuses c
+      where c.id = census_id and (c.user_id = auth.uid() or public.es_admin())
+    )
+  );
+
+drop policy if exists "census_pois: insertar en censos propios" on public.census_pois;
+create policy "census_pois: insertar en censos propios"
+  on public.census_pois for insert
+  with check (
+    exists (
+      select 1 from public.censuses c
+      where c.id = census_id and c.user_id = auth.uid()
+    )
+  );
+
+drop policy if exists "census_pois: borrar de censos propios" on public.census_pois;
+create policy "census_pois: borrar de censos propios"
+  on public.census_pois for delete
+  using (
+    exists (
+      select 1 from public.censuses c
+      where c.id = census_id and c.user_id = auth.uid()
+    )
+  );
+
+-- RPC: guarda censo + POIs en UNA transacción (security invoker: RLS aplica).
+create or replace function public.guardar_censo(
+  p_tipo text,
+  p_marca_o_categoria text,
+  p_alcance_descripcion text,
+  p_fuente text,
+  p_params jsonb,
+  p_pois jsonb
+)
+returns uuid
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_census_id uuid;
+begin
+  insert into public.censuses
+    (user_id, tipo, marca_o_categoria, alcance_descripcion, fuente, poi_count, params)
+  values (
+    auth.uid(), p_tipo, p_marca_o_categoria, p_alcance_descripcion, p_fuente,
+    coalesce(jsonb_array_length(p_pois), 0), p_params
+  )
+  returning id into v_census_id;
+
+  insert into public.census_pois
+    (census_id, place_key, fuente, name, lat, lng, address, estrato, extra)
+  select
+    v_census_id,
+    r ->> 'place_key',
+    r ->> 'fuente',
+    r ->> 'name',
+    (r ->> 'lat')::double precision,
+    (r ->> 'lng')::double precision,
+    r ->> 'address',
+    r ->> 'estrato',
+    r -> 'extra'
+  from jsonb_array_elements(coalesce(p_pois, '[]'::jsonb)) as r;
+
+  return v_census_id;
+end;
+$$;
+
+revoke execute on function public.guardar_censo(text, text, text, text, jsonb, jsonb) from public, anon;
+grant execute on function public.guardar_censo(text, text, text, text, jsonb, jsonb) to authenticated;

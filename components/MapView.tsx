@@ -21,6 +21,15 @@ import type { LatLng, Origin, Poi, SearchMode } from "@/lib/types";
 const CIAN = "#2fb9e8";
 const MAGENTA = "#f4368a";
 const VIOLETA = "#9d5cf0";
+const NARANJA = "#ff8c42"; // POIs de DENUE (INEGI)
+
+/** Color del POI según su fuente: Google magenta, DENUE naranja,
+ * "ambas" (match cruzado) magenta con borde naranja. */
+function colorPoi(fuente: string): { color: string; fillColor: string } {
+  if (fuente === "denue") return { color: NARANJA, fillColor: NARANJA };
+  if (fuente === "ambas") return { color: NARANJA, fillColor: MAGENTA };
+  return { color: MAGENTA, fillColor: MAGENTA };
+}
 
 // Centro inicial: CDMX
 const CENTRO_INICIAL: [number, number] = [19.4326, -99.1332];
@@ -149,7 +158,7 @@ export default function MapView(props: MapViewProps) {
           </Fragment>
         ))}
 
-      {mode === "census" &&
+      {(mode === "census" || mode === "territorial") &&
         (celdas ?? []).map((c, i) => (
           <Circle
             key={`celda-${i}`}
@@ -206,20 +215,22 @@ export default function MapView(props: MapViewProps) {
           </Fragment>
         ))}
 
-      {mode === "census" && zona && (
+      {(mode === "census" || mode === "territorial") && zona && (
         <Fragment>
-          <Circle
-            center={[zona.lat, zona.lng]}
-            radius={radio}
-            pathOptions={{
-              color: VIOLETA,
-              weight: 1.5,
-              opacity: 0.7,
-              fillColor: VIOLETA,
-              fillOpacity: 0.07,
-              dashArray: "6 6",
-            }}
-          />
+          {radio > 0 && (
+            <Circle
+              center={[zona.lat, zona.lng]}
+              radius={radio}
+              pathOptions={{
+                color: VIOLETA,
+                weight: 1.5,
+                opacity: 0.7,
+                fillColor: VIOLETA,
+                fillOpacity: 0.07,
+                dashArray: "6 6",
+              }}
+            />
+          )}
           <CircleMarker
             center={[zona.lat, zona.lng]}
             radius={7}
@@ -242,29 +253,37 @@ export default function MapView(props: MapViewProps) {
         </Fragment>
       )}
 
-      {pois.map((p) => (
-        <CircleMarker
-          key={p.placeId}
-          center={[p.lat, p.lng]}
-          radius={5}
-          pathOptions={{
-            color: MAGENTA,
-            weight: 1.5,
-            fillColor: MAGENTA,
-            fillOpacity: 0.75,
-          }}
-        >
-          <Popup>
-            <div className="font-mono text-xs max-w-[220px]">
-              <strong>{p.nombre}</strong>
-              <div>{p.direccion}</div>
-              <div>
-                {p.lat.toFixed(6)}, {p.lng.toFixed(6)} · {p.distancia} m
+      {pois.map((p) => {
+        const c = colorPoi(p.fuente);
+        return (
+          <CircleMarker
+            key={p.placeId}
+            center={[p.lat, p.lng]}
+            radius={5}
+            pathOptions={{
+              color: c.color,
+              weight: p.fuente === "ambas" ? 2 : 1.5,
+              fillColor: c.fillColor,
+              fillOpacity: 0.75,
+            }}
+          >
+            <Popup>
+              <div className="font-mono text-xs max-w-[220px]">
+                <strong>{p.nombre}</strong>
+                <div>{p.direccion}</div>
+                <div>
+                  {p.lat.toFixed(6)}, {p.lng.toFixed(6)} · {p.distancia} m
+                </div>
+                <div>
+                  fuente: {p.fuente.toUpperCase()}
+                  {p.estrato ? ` · ${p.estrato}` : ""}
+                </div>
+                {p.actividad && <div>{p.actividad}</div>}
               </div>
-            </div>
-          </Popup>
-        </CircleMarker>
-      ))}
+            </Popup>
+          </CircleMarker>
+        );
+      })}
 
       <Encuadre {...props} />
     </MapContainer>

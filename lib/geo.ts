@@ -24,6 +24,73 @@ export function normalizarComparable(texto: string): string {
     .trim();
 }
 
+/** Sufijos legales que no aportan identidad de marca. */
+const SUFIJOS_LEGALES =
+  /\b(sapi|sab|sa de cv|s de rl de cv|s de rl|sa|de cv|cv|sc|ac|s en c)\b/g;
+
+/**
+ * Normaliza un nombre comercial para COMPARAR entre fuentes: sin
+ * acentos, sin puntuación y sin sufijos legales (SA DE CV, S DE RL…).
+ */
+export function normalizarNombreComercial(nombre: string): string {
+  return normalizarComparable(nombre)
+    .replace(SUFIJOS_LEGALES, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Similitud de texto entre 0 y 1 (coeficiente de Dice sobre bigramas).
+ * No exige igualdad exacta: "oxxo napoles" vs "oxxo nap" ≈ alto.
+ */
+export function similitudTexto(a: string, b: string): number {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const bigramas = (s: string) => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < s.length - 1; i++) {
+      const bg = s.slice(i, i + 2);
+      m.set(bg, (m.get(bg) ?? 0) + 1);
+    }
+    return m;
+  };
+  const ba = bigramas(a);
+  const bb = bigramas(b);
+  let inter = 0;
+  let totalA = 0;
+  let totalB = 0;
+  ba.forEach((n) => (totalA += n));
+  bb.forEach((n) => (totalB += n));
+  ba.forEach((n, bg) => {
+    const nb = bb.get(bg);
+    if (nb) inter += Math.min(n, nb);
+  });
+  if (totalA + totalB === 0) return 0;
+  return (2 * inter) / (totalA + totalB);
+}
+
+/** Umbrales de la regla de dedupe cruzado Google×DENUE. */
+export const DEDUPE_CRUZADO_METROS = 75;
+export const DEDUPE_CRUZADO_SIMILITUD = 0.6;
+
+/**
+ * ¿Dos POIs de fuentes distintas son el mismo establecimiento?
+ * Regla obligatoria: distan < 75 m Y sus nombres normalizados (sin
+ * acentos ni sufijos legales) son similares — contención de uno en otro
+ * o similitud de texto ≥ 0.6. Nunca mezclar fuentes sin esta regla.
+ */
+export function esMismoEstablecimiento(
+  a: { lat: number; lng: number; nombre: string },
+  b: { lat: number; lng: number; nombre: string }
+): boolean {
+  if (haversine(a, b) >= DEDUPE_CRUZADO_METROS) return false;
+  const na = normalizarNombreComercial(a.nombre);
+  const nb = normalizarNombreComercial(b.nombre);
+  if (!na || !nb) return false;
+  if (na.includes(nb) || nb.includes(na)) return true;
+  return similitudTexto(na, nb) >= DEDUPE_CRUZADO_SIMILITUD;
+}
+
 const RADIO_TIERRA_M = 6371000;
 
 /** Distancia haversine en metros entre dos puntos. */
