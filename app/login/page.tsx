@@ -56,7 +56,7 @@ export default function LoginPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-fondo px-4">
-      <div className="w-full max-w-sm rounded-xl border border-linea bg-panel p-8">
+      <div className="tarjeta glow-cian w-full max-w-sm p-8">
         <div className="mb-8 flex flex-col items-center text-center">
           <GravityMark size={56} />
           <h1 className="mt-4 font-display text-3xl font-extrabold tracking-tight text-white">

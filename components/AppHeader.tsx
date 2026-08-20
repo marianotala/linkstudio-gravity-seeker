@@ -38,12 +38,14 @@ export default function AppHeader({ usuario, status }: AppHeaderProps) {
           : "bg-zinc-600";
 
   const navCls = (activo: boolean) =>
-    `rounded-md px-2.5 py-1 font-mono text-[11px] transition-colors ${
-      activo ? "bg-cian/10 text-cian" : "text-zinc-500 hover:text-zinc-300"
+    `rounded-full border px-3 py-1 font-mono text-[11px] transition-colors ${
+      activo
+        ? "border-cian/50 bg-cian/10 text-cian"
+        : "border-transparent text-zinc-500 hover:text-zinc-300"
     }`;
 
   return (
-    <header className="flex items-center justify-between gap-3 border-b border-linea bg-panel px-5 py-3">
+    <header className="tarjeta glow-cian flex items-center justify-between gap-3 px-5 py-3">
       <div className="flex min-w-0 items-center gap-3">
         <GravityMark size={30} />
         <div className="min-w-0">

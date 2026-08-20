@@ -29,6 +29,49 @@ body {
   background: transparent;
 }
 
+/* Tarjetas estilo dashboard: borde suave, esquinas amplias y un glow
+   radial de color en la esquina superior derecha */
+.tarjeta {
+  border-radius: 1rem;
+  border: 1px solid #26262e;
+  background-color: #101014;
+}
+.glow-cian {
+  background-image: radial-gradient(
+    120% 120% at 100% 0%,
+    rgba(47, 185, 232, 0.14),
+    transparent 55%
+  );
+}
+.glow-magenta {
+  background-image: radial-gradient(
+    120% 120% at 100% 0%,
+    rgba(244, 54, 138, 0.14),
+    transparent 55%
+  );
+}
+.glow-violeta {
+  background-image: radial-gradient(
+    120% 120% at 100% 0%,
+    rgba(157, 92, 240, 0.14),
+    transparent 55%
+  );
+}
+.glow-verde {
+  background-image: radial-gradient(
+    120% 120% at 100% 0%,
+    rgba(52, 211, 153, 0.12),
+    transparent 55%
+  );
+}
+.glow-ambar {
+  background-image: radial-gradient(
+    120% 120% at 100% 0%,
+    rgba(251, 191, 36, 0.12),
+    transparent 55%
+  );
+}
+
 /* Punto de estatus animado del header */
 @keyframes pulso {
   0%,

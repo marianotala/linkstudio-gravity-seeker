@@ -75,6 +75,61 @@ const ALCANCES = [
 
 const THROTTLE_CENSO_MS = 250;
 
+function fmtM(m: number): string {
+  return m >= 1000 ? `${m / 1000} km` : `${m} m`;
+}
+
+/** Segmento de la barra de resumen: etiqueta mono arriba, valor abajo. */
+function Segmento({
+  etiqueta,
+  valor,
+  color,
+}: {
+  etiqueta: string;
+  valor: string;
+  color?: string;
+}) {
+  return (
+    <div className="flex min-w-0 shrink-0 flex-col gap-0.5 border-r border-linea px-4 py-0.5 last:border-r-0">
+      <span className="font-mono text-[9px] uppercase tracking-[0.22em] text-zinc-500">
+        {etiqueta}
+      </span>
+      <span
+        className={`max-w-[300px] truncate text-sm font-semibold ${color ?? "text-white"}`}
+      >
+        {valor}
+      </span>
+    </div>
+  );
+}
+
+/** Tarjeta KPI con glow de color y número grande. */
+function Kpi({
+  titulo,
+  valor,
+  caption,
+  glow,
+  colorValor,
+}: {
+  titulo: string;
+  valor: string;
+  caption: string;
+  glow: string;
+  colorValor: string;
+}) {
+  return (
+    <div className={`tarjeta ${glow} px-5 py-4`}>
+      <p className="text-xs text-zinc-400">{titulo}</p>
+      <p
+        className={`mt-1.5 font-display text-3xl font-extrabold leading-none tracking-tight ${colorValor}`}
+      >
+        {valor}
+      </p>
+      <p className="mt-2 truncate font-mono text-[10px] text-zinc-500">{caption}</p>
+    </div>
+  );
+}
+
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
@@ -617,13 +672,124 @@ export default function SeekerApp({
     "mb-2 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500";
   const pasoCls = "border-b border-linea px-5 py-4";
 
+  // ---- datos derivados para la barra de resumen y los KPIs
+  const etiquetaCategoria =
+    categoria === SOLO_NOMBRE
+      ? nameFilter.trim()
+        ? `Nombre: "${nameFilter.trim()}"`
+        : "Solo por nombre"
+      : (CATEGORIAS.find((c) => c.key === categoria)?.label ?? categoria);
+  const chipMapa =
+    mode === "census"
+      ? marca.trim()
+        ? `Censo: ${marca.trim()}`
+        : "Censo de marca"
+      : etiquetaCategoria;
+  const distanciaPromedio =
+    pois.length > 0
+      ? Math.round(pois.reduce((s, p) => s + p.distancia, 0) / pois.length)
+      : null;
+
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex h-screen flex-col gap-3 overflow-hidden bg-fondo p-3">
       <AppHeader usuario={usuario} status={status} />
 
-      <div className="flex min-h-0 flex-1">
+      {/* ---------- barra de resumen de la búsqueda ---------- */}
+      <div className="tarjeta flex shrink-0 items-center overflow-x-auto px-2 py-2.5">
+        <Segmento
+          etiqueta="Modo"
+          valor={
+            mode === "origins"
+              ? "Orígenes"
+              : mode === "zone"
+                ? "Zona"
+                : "Censo de marca"
+          }
+          color={
+            mode === "origins"
+              ? "text-cian"
+              : mode === "zone"
+                ? "text-violeta"
+                : "text-magenta"
+          }
+        />
+        {mode === "origins" && (
+          <Segmento
+            etiqueta="Orígenes"
+            valor={origenes.length > 0 ? `${origenes.length} listos` : "—"}
+          />
+        )}
+        {mode === "zone" && (
+          <Segmento etiqueta="Zona" valor={zona?.nombre ?? "—"} />
+        )}
+        {mode === "census" && (
+          <>
+            <Segmento etiqueta="Marca" valor={marca.trim() || "—"} />
+            <Segmento
+              etiqueta="Ciudad"
+              valor={zona?.nombre ?? (ciudadQuery.trim() || "—")}
+            />
+            <Segmento
+              etiqueta="Cuadrícula"
+              valor={`${tipoCuadricula === "hex" ? "Hexagonal" : "Cuadrada"} · celda ${fmtM(radioCelda)}`}
+            />
+          </>
+        )}
+        <Segmento
+          etiqueta={mode === "census" ? "Alcance" : "Radio"}
+          valor={fmtM(mode === "census" ? alcance : radio)}
+        />
+        {mode !== "census" && (
+          <Segmento etiqueta="Búsqueda" valor={etiquetaCategoria} />
+        )}
+        <Segmento
+          etiqueta="Exclusiones"
+          valor={excludes.length > 0 ? excludes.join(", ") : "—"}
+          color={excludes.length > 0 ? "text-magenta" : "text-zinc-600"}
+        />
+      </div>
+
+      {/* ---------- KPIs ---------- */}
+      <div className="grid shrink-0 grid-cols-2 gap-3 xl:grid-cols-4">
+        <Kpi
+          titulo="POIs encontrados"
+          valor={String(pois.length)}
+          caption={
+            mode === "census"
+              ? progresoCenso
+                ? `censo: celda ${progresoCenso.actual} de ${progresoCenso.total}`
+                : "censo de marca por cuadrícula"
+              : `en ${centrosActivos.length} ${centrosActivos.length === 1 ? "centro activo" : "centros activos"}`
+          }
+          glow="glow-cian"
+          colorValor="text-white"
+        />
+        <Kpi
+          titulo="Distancia promedio"
+          valor={distanciaPromedio !== null ? `${distanciaPromedio} m` : "—"}
+          caption="al centro más cercano"
+          glow="glow-verde"
+          colorValor="text-emerald-400"
+        />
+        <Kpi
+          titulo="Excluidos por marca"
+          valor={String(contadores.excluidos)}
+          caption={`${excludes.length} ${excludes.length === 1 ? "exclusión activa" : "exclusiones activas"}`}
+          glow="glow-magenta"
+          colorValor="text-magenta"
+        />
+        <Kpi
+          titulo="Descartados por nombre"
+          valor={String(contadores.descartadosPorNombre)}
+          caption="no pasaron el filtro estricto"
+          glow="glow-ambar"
+          colorValor="text-amber-400"
+        />
+      </div>
+
+      <div className="flex min-h-0 flex-1 gap-3">
         {/* ---------- panel lateral ---------- */}
-        <aside className="w-[360px] shrink-0 overflow-y-auto border-r border-linea bg-panel">
+        <aside className="tarjeta w-[360px] shrink-0 overflow-y-auto">
           {/* 01 · modo */}
           <section className={pasoCls}>
             <label className={labelCls}>01 · Modo de búsqueda</label>
@@ -1119,25 +1285,41 @@ export default function SeekerApp({
         </aside>
 
         {/* ---------- mapa + tabla ---------- */}
-        <main className="relative min-w-0 flex-1">
-          <MapView
-            mode={mode}
-            origenes={origenes}
-            zona={zona}
-            radio={mode === "census" ? alcance : radio}
-            pois={pois}
-            foco={foco}
-            celdas={mode === "census" ? (celdas ?? undefined) : undefined}
-            radioCelda={radioCelda}
-          />
-          <ResultsTable
-            pois={pois}
-            origenes={centrosActivos}
-            colapsada={tablaColapsada}
-            onToggle={() => setTablaColapsada(!tablaColapsada)}
-            onSeleccionar={(p) => setFoco(p)}
-            seleccionado={foco}
-          />
+        <main className="tarjeta flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex shrink-0 items-start justify-between gap-3 px-5 pb-3 pt-4">
+            <div className="min-w-0">
+              <h2 className="font-display text-base font-extrabold tracking-tight text-white">
+                Mapa de resultados
+              </h2>
+              <p className="truncate font-mono text-[10px] text-zinc-500">
+                orígenes en cian · zona en violeta · POIs en magenta · clic en
+                una fila de la tabla para hacer zoom
+              </p>
+            </div>
+            <span className="shrink-0 rounded-full border border-linea bg-panel2 px-3 py-1 font-mono text-[10px] text-zinc-400">
+              {chipMapa}
+            </span>
+          </div>
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+            <MapView
+              mode={mode}
+              origenes={origenes}
+              zona={zona}
+              radio={mode === "census" ? alcance : radio}
+              pois={pois}
+              foco={foco}
+              celdas={mode === "census" ? (celdas ?? undefined) : undefined}
+              radioCelda={radioCelda}
+            />
+            <ResultsTable
+              pois={pois}
+              origenes={centrosActivos}
+              colapsada={tablaColapsada}
+              onToggle={() => setTablaColapsada(!tablaColapsada)}
+              onSeleccionar={(p) => setFoco(p)}
+              seleccionado={foco}
+            />
+          </div>
         </main>
       </div>
     </div>

@@ -62,18 +62,28 @@ export default function HistorialView({
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex h-screen flex-col gap-3 overflow-hidden bg-fondo p-3">
       <AppHeader usuario={usuario} />
 
-      <main className="flex-1 overflow-y-auto px-6 py-6">
-        <div className="mx-auto max-w-5xl">
-          <h1 className="font-display text-xl font-extrabold tracking-tight text-white">
-            Historial de búsquedas
-          </h1>
-          <p className="mt-1 font-mono text-[11px] text-zinc-500">
-            Abre una búsqueda para ver sus POIs en el mapa y re-exportar sin
-            llamar a Google, o duplícala para ajustar los parámetros.
-          </p>
+      <main className="min-h-0 flex-1 overflow-y-auto">
+        <div className="tarjeta glow-violeta mx-auto max-w-5xl px-6 py-6">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h1 className="font-display text-xl font-extrabold tracking-tight text-white">
+                Historial de búsquedas
+              </h1>
+              <p className="mt-1 font-mono text-[11px] text-zinc-500">
+                Abre una búsqueda para ver sus POIs en el mapa y re-exportar
+                sin llamar a Google, o duplícala para ajustar los parámetros.
+              </p>
+            </div>
+            {!cargando && !error && (
+              <span className="shrink-0 rounded-full border border-linea bg-panel2 px-3 py-1 font-mono text-[10px] text-zinc-400">
+                {busquedas.length}{" "}
+                {busquedas.length === 1 ? "búsqueda" : "búsquedas"}
+              </span>
+            )}
+          </div>
 
           {cargando && (
             <p className="mt-8 font-mono text-xs text-zinc-500">
@@ -99,7 +109,7 @@ export default function HistorialView({
           )}
 
           {busquedas.length > 0 && (
-            <div className="mt-6 overflow-hidden rounded-lg border border-linea">
+            <div className="mt-6 overflow-hidden rounded-xl border border-linea">
               <table className="w-full text-left font-mono text-xs">
                 <thead className="bg-panel2 text-zinc-500">
                   <tr>
