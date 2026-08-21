@@ -10,13 +10,14 @@ import {
   TileLayer,
   Circle,
   CircleMarker,
+  GeoJSON,
   Popup,
   Rectangle,
   useMap,
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import type { LatLng, Origin, Poi, SearchMode } from "@/lib/types";
+import type { AgebGeo, LatLng, Origin, Poi, SearchMode } from "@/lib/types";
 
 const CIAN = "#2fb9e8";
 const MAGENTA = "#f4368a";
@@ -49,6 +50,8 @@ interface MapViewProps {
   celdas?: LatLng[];
   /** Radio de cada celda del censo, en metros. */
   radioCelda?: number;
+  /** Capa demográfica: AGEBs que intersectan las geocercas. */
+  agebs?: AgebGeo[] | null;
 }
 
 /** Ajusta la vista cuando cambian orígenes/zona/POIs, y vuela al foco. */
@@ -103,8 +106,17 @@ function Encuadre({
 }
 
 export default function MapView(props: MapViewProps) {
-  const { mode, origenes, zona, zonas, radio, pois, celdas, radioCelda } =
-    props;
+  const {
+    mode,
+    origenes,
+    zona,
+    zonas,
+    radio,
+    pois,
+    celdas,
+    radioCelda,
+    agebs,
+  } = props;
 
   return (
     <MapContainer
@@ -157,6 +169,27 @@ export default function MapView(props: MapViewProps) {
             </CircleMarker>
           </Fragment>
         ))}
+
+      {/* capa demográfica: choropleth violeta por AGEB (opacidad ∝ NSE proxy) */}
+      {(agebs ?? []).map((a) => (
+        <GeoJSON
+          key={a.cvegeo}
+          data={a.geometria as unknown as GeoJSON.GeoJsonObject}
+          style={{
+            color: VIOLETA,
+            weight: 0.7,
+            opacity: 0.5,
+            fillColor: VIOLETA,
+            fillOpacity: 0.08 + 0.45 * ((a.nse_proxy ?? 30) / 100),
+          }}
+          onEachFeature={(_f, layer) => {
+            layer.bindTooltip(
+              `<div style="font-family:monospace;font-size:11px">AGEB ${a.cvegeo}<br/>población: ${a.pobtot?.toLocaleString("es-MX") ?? "—"}<br/>NSE proxy: ${a.nse_proxy ?? "—"}</div>`,
+              { sticky: true }
+            );
+          }}
+        />
+      ))}
 
       {(mode === "census" || mode === "territorial") &&
         (celdas ?? []).map((c, i) => (

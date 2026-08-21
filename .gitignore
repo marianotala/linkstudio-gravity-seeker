@@ -24,3 +24,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# datos de INEGI descargados manualmente (pesados) y deps del script
+/data/*
+!/data/README.md
+/scripts/ingesta-ageb/node_modules

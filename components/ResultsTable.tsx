@@ -13,6 +13,8 @@ interface ResultsTableProps {
   onToggle: () => void;
   onSeleccionar: (poi: Poi) => void;
   seleccionado: Poi | null;
+  /** Universo residencial de la geocerca de cada origen (por índice). */
+  poblacionPorOrigen?: (number | null)[];
 }
 
 export default function ResultsTable({
@@ -22,6 +24,7 @@ export default function ResultsTable({
   onToggle,
   onSeleccionar,
   seleccionado,
+  poblacionPorOrigen,
 }: ResultsTableProps) {
   if (pois.length === 0) return null;
 
@@ -52,6 +55,7 @@ export default function ResultsTable({
                 <th className="px-2 py-2 font-medium">Estrato</th>
                 <th className="px-2 py-2 font-medium text-right">Dist. (m)</th>
                 <th className="px-2 py-2 font-medium">Origen</th>
+                <th className="px-2 py-2 font-medium text-right">Población</th>
                 <th className="px-4 py-2 font-medium text-right">Lat, Lng</th>
               </tr>
             </thead>
@@ -104,6 +108,14 @@ export default function ResultsTable({
                     </td>
                     <td className="max-w-[160px] truncate px-2 py-1.5 text-zinc-500">
                       {origen?.nombre ?? `Origen ${p.origenIdx + 1}`}
+                    </td>
+                    <td
+                      className="px-2 py-1.5 text-right text-violeta"
+                      title="Universo residencial de la geocerca de este origen (Censo 2020)"
+                    >
+                      {poblacionPorOrigen?.[p.origenIdx] != null
+                        ? poblacionPorOrigen[p.origenIdx]!.toLocaleString("es-MX")
+                        : "—"}
                     </td>
                     <td className="px-4 py-1.5 text-right text-zinc-500">
                       {p.lat.toFixed(5)}, {p.lng.toFixed(5)}

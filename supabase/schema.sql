@@ -447,3 +447,270 @@ $$;
 
 revoke execute on function public.guardar_censo(text, text, text, text, jsonb, jsonb) from public, anon;
 grant execute on function public.guardar_censo(text, text, text, text, jsonb, jsonb) to authenticated;
+
+
+-- ============================================================
+-- MIGRACIÓN FASE 5 — PostGIS, AGEBs del Censo 2020 y universos
+-- ============================================================
+
+create extension if not exists postgis with schema extensions;
+
+-- AGEBs urbanas del Censo de Población y Vivienda 2020 (INEGI).
+-- Se cargan con scripts/ingesta-ageb, una vez por entidad.
+create table if not exists public.agebs (
+  cvegeo text primary key,          -- EE+MMM+LLLL+AAAA (13 chars)
+  entidad text not null,            -- clave de entidad "09", "15", …
+  municipio text not null,
+  pobtot int,
+  p_18ymas int,
+  p_18a24 int,
+  p_60ymas int,
+  graproes numeric,                 -- grado promedio de escolaridad
+  tvivhab int,                      -- viviendas habitadas
+  vph_autom int,
+  vph_inter int,
+  vph_pc int,
+  nse_proxy numeric,                -- índice socioeconómico aproximado 0-100 (proxy censal)
+  geom extensions.geometry(MultiPolygon, 4326) not null
+);
+
+create index if not exists agebs_geom_gix on public.agebs using gist (geom);
+create index if not exists agebs_entidad_idx on public.agebs (entidad);
+
+alter table public.agebs enable row level security;
+
+drop policy if exists "agebs: leer autenticados" on public.agebs;
+create policy "agebs: leer autenticados"
+  on public.agebs for select
+  to authenticated
+  using (true);
+
+alter table public.searches add column if not exists universos jsonb;
+alter table public.censuses add column if not exists universos jsonb;
+
+-- ------------------------------------------------------------
+-- RPC calcular_universos: interpolación areal sobre la UNIÓN de
+-- geocercas (círculos {lat,lng,radio_m} o rectángulos {viewport}).
+-- La unión evita contar doble los traslapes.
+-- ------------------------------------------------------------
+
+create or replace function public.calcular_universos(
+  p_geocercas jsonb,
+  p_incluir_agebs boolean default false
+)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v_n int;
+  v_total jsonb;
+  v_por jsonb := '[]'::jsonb;
+  v_agebs jsonb := null;
+  v_count_agebs int;
+begin
+  v_n := coalesce(jsonb_array_length(p_geocercas), 0);
+  if v_n = 0 or v_n > 2000 then
+    return jsonb_build_object('disponible', false, 'motivo', 'geocercas_invalidas');
+  end if;
+
+  with gc as (
+    select
+      coalesce(g.value->>'id', g.ordinality::text) as gid,
+      case
+        when g.value ? 'viewport' then ST_MakeEnvelope(
+          (g.value->'viewport'->>'west')::float,
+          (g.value->'viewport'->>'south')::float,
+          (g.value->'viewport'->>'east')::float,
+          (g.value->'viewport'->>'north')::float, 4326)
+        else (ST_Buffer(
+          ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+          least(greatest((g.value->>'radio_m')::float, 10), 100000)
+        ))::geometry
+      end as geom
+    from jsonb_array_elements(p_geocercas) with ordinality as g
+  ),
+  un as (select ST_Union(geom) as geom from gc),
+  inter as (
+    select a.cvegeo, a.pobtot, a.p_18ymas, a.p_18a24, a.p_60ymas,
+           a.tvivhab, a.nse_proxy,
+           ST_Area(ST_Intersection(a.geom, un.geom)::geography)
+             / nullif(ST_Area(a.geom::geography), 0) as frac
+    from public.agebs a, un
+    where un.geom is not null and a.geom && un.geom and ST_Intersects(a.geom, un.geom)
+  )
+  select count(*),
+    jsonb_build_object(
+      'poblacion',  round(coalesce(sum(pobtot * frac), 0))::int,
+      'adultos18',  round(coalesce(sum(p_18ymas * frac), 0))::int,
+      'viviendas',  round(coalesce(sum(tvivhab * frac), 0))::int,
+      'nse_proxy',  round((sum(nse_proxy * coalesce(pobtot,0) * frac)
+                      / nullif(sum(case when nse_proxy is not null then coalesce(pobtot,0) * frac end), 0))::numeric, 1),
+      'pct_18a24',  round((100.0 * sum(p_18a24 * frac) / nullif(sum(pobtot * frac), 0))::numeric, 1),
+      'pct_60ymas', round((100.0 * sum(p_60ymas * frac) / nullif(sum(pobtot * frac), 0))::numeric, 1)
+    )
+  into v_count_agebs, v_total
+  from inter where frac > 0;
+
+  if coalesce(v_count_agebs, 0) = 0 then
+    return jsonb_build_object('disponible', false, 'motivo', 'sin_agebs');
+  end if;
+
+  if v_n <= 200 then
+    with gc as (
+      select
+        coalesce(g.value->>'id', g.ordinality::text) as gid,
+        g.ordinality as orden,
+        case
+          when g.value ? 'viewport' then ST_MakeEnvelope(
+            (g.value->'viewport'->>'west')::float,
+            (g.value->'viewport'->>'south')::float,
+            (g.value->'viewport'->>'east')::float,
+            (g.value->'viewport'->>'north')::float, 4326)
+          else (ST_Buffer(
+            ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+            least(greatest((g.value->>'radio_m')::float, 10), 100000)
+          ))::geometry
+        end as geom
+      from jsonb_array_elements(p_geocercas) with ordinality as g
+    ),
+    porg as (
+      select gc.gid, gc.orden,
+        round(coalesce(sum(a.pobtot * ST_Area(ST_Intersection(a.geom, gc.geom)::geography) / nullif(ST_Area(a.geom::geography),0)), 0))::int as poblacion,
+        round(coalesce(sum(a.p_18ymas * ST_Area(ST_Intersection(a.geom, gc.geom)::geography) / nullif(ST_Area(a.geom::geography),0)), 0))::int as adultos18,
+        round((sum(a.nse_proxy * coalesce(a.pobtot,0) * ST_Area(ST_Intersection(a.geom, gc.geom)::geography) / nullif(ST_Area(a.geom::geography),0))
+          / nullif(sum(case when a.nse_proxy is not null then coalesce(a.pobtot,0) * ST_Area(ST_Intersection(a.geom, gc.geom)::geography) / nullif(ST_Area(a.geom::geography),0) end), 0))::numeric, 1) as nse_proxy
+      from gc
+      left join public.agebs a on a.geom && gc.geom and ST_Intersects(a.geom, gc.geom)
+      group by gc.gid, gc.orden
+    )
+    select coalesce(jsonb_agg(jsonb_build_object(
+      'id', gid, 'poblacion', poblacion, 'adultos18', adultos18, 'nse_proxy', nse_proxy
+    ) order by orden), '[]'::jsonb)
+    into v_por from porg;
+  end if;
+
+  if p_incluir_agebs then
+    with gc as (
+      select case
+        when g.value ? 'viewport' then ST_MakeEnvelope(
+          (g.value->'viewport'->>'west')::float,
+          (g.value->'viewport'->>'south')::float,
+          (g.value->'viewport'->>'east')::float,
+          (g.value->'viewport'->>'north')::float, 4326)
+        else (ST_Buffer(
+          ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+          least(greatest((g.value->>'radio_m')::float, 10), 100000)
+        ))::geometry
+      end as geom
+      from jsonb_array_elements(p_geocercas) with ordinality as g
+    ),
+    un as (select ST_Union(geom) as geom from gc),
+    sel as (
+      select a.cvegeo, a.pobtot, a.nse_proxy, a.geom
+      from public.agebs a, un
+      where a.geom && un.geom and ST_Intersects(a.geom, un.geom)
+      order by a.pobtot desc nulls last
+      limit 1500
+    )
+    select jsonb_agg(jsonb_build_object(
+      'cvegeo', cvegeo, 'pobtot', pobtot, 'nse_proxy', nse_proxy,
+      'geometria', ST_AsGeoJSON(geom, 5)::jsonb
+    ))
+    into v_agebs from sel;
+  end if;
+
+  return jsonb_build_object(
+    'disponible', true,
+    'agebs', v_count_agebs,
+    'total', v_total,
+    'por_geocerca', v_por,
+    'agebs_geo', v_agebs
+  );
+end;
+$$;
+
+revoke execute on function public.calcular_universos(jsonb, boolean) from public, anon;
+grant execute on function public.calcular_universos(jsonb, boolean) to authenticated;
+
+-- guardar_busqueda y guardar_censo ahora aceptan universos (se
+-- recrean con el parámetro nuevo; el default null mantiene compatibilidad).
+
+drop function if exists public.guardar_busqueda(text, jsonb, jsonb);
+create or replace function public.guardar_busqueda(
+  p_mode text,
+  p_params jsonb,
+  p_results jsonb,
+  p_universos jsonb default null
+)
+returns uuid
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_search_id uuid;
+begin
+  insert into public.searches (user_id, mode, params, result_count, universos)
+  values (auth.uid(), p_mode, p_params, coalesce(jsonb_array_length(p_results), 0), p_universos)
+  returning id into v_search_id;
+
+  insert into public.search_results
+    (search_id, name, category, lat, lng, address, origin_name, distance_m, place_id)
+  select
+    v_search_id,
+    r ->> 'name', r ->> 'category',
+    (r ->> 'lat')::double precision, (r ->> 'lng')::double precision,
+    r ->> 'address', r ->> 'origin_name', (r ->> 'distance_m')::int, r ->> 'place_id'
+  from jsonb_array_elements(coalesce(p_results, '[]'::jsonb)) as r;
+
+  return v_search_id;
+end;
+$$;
+
+revoke execute on function public.guardar_busqueda(text, jsonb, jsonb, jsonb) from public, anon;
+grant execute on function public.guardar_busqueda(text, jsonb, jsonb, jsonb) to authenticated;
+
+drop function if exists public.guardar_censo(text, text, text, text, jsonb, jsonb);
+create or replace function public.guardar_censo(
+  p_tipo text,
+  p_marca_o_categoria text,
+  p_alcance_descripcion text,
+  p_fuente text,
+  p_params jsonb,
+  p_pois jsonb,
+  p_universos jsonb default null
+)
+returns uuid
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_census_id uuid;
+begin
+  insert into public.censuses
+    (user_id, tipo, marca_o_categoria, alcance_descripcion, fuente, poi_count, params, universos)
+  values (
+    auth.uid(), p_tipo, p_marca_o_categoria, p_alcance_descripcion, p_fuente,
+    coalesce(jsonb_array_length(p_pois), 0), p_params, p_universos
+  )
+  returning id into v_census_id;
+
+  insert into public.census_pois
+    (census_id, place_key, fuente, name, lat, lng, address, estrato, extra)
+  select
+    v_census_id,
+    r ->> 'place_key', r ->> 'fuente', r ->> 'name',
+    (r ->> 'lat')::double precision, (r ->> 'lng')::double precision,
+    r ->> 'address', r ->> 'estrato', r -> 'extra'
+  from jsonb_array_elements(coalesce(p_pois, '[]'::jsonb)) as r;
+
+  return v_census_id;
+end;
+$$;
+
+revoke execute on function public.guardar_censo(text, text, text, text, jsonb, jsonb, jsonb) from public, anon;
+grant execute on function public.guardar_censo(text, text, text, text, jsonb, jsonb, jsonb) to authenticated;

@@ -1,0 +1,17 @@
+{
+  "name": "seeker-ingesta-ageb",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Carga AGEBs urbanas (Marco Geoestadístico 2020) + Censo 2020 de INEGI a PostGIS (Supabase)",
+  "scripts": {
+    "ingesta": "node index.mjs"
+  },
+  "dependencies": {
+    "@turf/simplify": "^7.1.0",
+    "papaparse": "^5.5.3",
+    "pg": "^8.13.1",
+    "proj4": "^2.15.0",
+    "shapefile": "^0.6.6"
+  }
+}

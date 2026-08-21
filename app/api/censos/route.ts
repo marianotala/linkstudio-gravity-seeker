@@ -26,6 +26,7 @@ const BodySchema = z.object({
   fuente: z.enum(["google", "denue", "ambas"]),
   params: z.record(z.unknown()),
   pois: z.array(PoiSchema).max(20000, "Máximo 20,000 POIs por censo"),
+  universos: z.record(z.unknown()).nullish(),
 });
 
 export async function POST(req: Request) {
@@ -55,8 +56,15 @@ export async function POST(req: Request) {
     );
   }
 
-  const { tipo, marca_o_categoria, alcance_descripcion, fuente, params, pois } =
-    parsed.data;
+  const {
+    tipo,
+    marca_o_categoria,
+    alcance_descripcion,
+    fuente,
+    params,
+    pois,
+    universos,
+  } = parsed.data;
 
   const { data: censusId, error } = await supabase.rpc("guardar_censo", {
     p_tipo: tipo,
@@ -65,6 +73,7 @@ export async function POST(req: Request) {
     p_fuente: fuente,
     p_params: params,
     p_pois: pois,
+    p_universos: universos ?? null,
   });
   if (error) {
     console.error("No se pudo guardar el censo:", error.message);

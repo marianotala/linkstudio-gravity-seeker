@@ -9,7 +9,14 @@ import {
 import { haversine, normalizarComparable } from "@/lib/geo";
 import { getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import { createClient } from "@/lib/supabase/server";
-import type { Poi, SearchRequest, SearchResponse } from "@/lib/types";
+import { calcularUniversos } from "@/lib/universos";
+import type {
+  GeocercaUniverso,
+  Poi,
+  SearchRequest,
+  SearchResponse,
+  Universos,
+} from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -287,6 +294,20 @@ export async function POST(req: Request) {
         searchId,
       } satisfies SearchResponse);
     }
+
+    // Universos demográficos sobre las geocercas de la búsqueda:
+    // orígenes = círculos con su radio; zona = rectángulos (viewport).
+    // Nunca bloquea los POIs: si falla, universos.disponible = false.
+    let universos: Universos | undefined;
+    if (pois.length > 0) {
+      const geocercas: GeocercaUniverso[] = centers.map((c, i) =>
+        mode === "zone"
+          ? { id: c.nombre ?? String(i), viewport: c.viewport ?? viewportDeRespaldo(c) }
+          : { id: c.nombre ?? String(i), lat: c.lat, lng: c.lng, radio_m: radius }
+      );
+      universos = await calcularUniversos(supabase, geocercas);
+    }
+
     try {
       const paramsGuardados: SearchRequest = {
         mode,
@@ -302,6 +323,7 @@ export async function POST(req: Request) {
         {
           p_mode: mode,
           p_params: paramsGuardados,
+          p_universos: universos ?? null,
           p_results: pois.map((p) => ({
             name: p.nombre,
             category: etiquetaCategoria,
@@ -327,6 +349,7 @@ export async function POST(req: Request) {
       descartadosPorNombre,
       detalleExcluidos,
       detalleDescartados,
+      universos,
       searchId,
     };
     return NextResponse.json(respuesta);

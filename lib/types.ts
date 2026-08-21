@@ -80,6 +80,7 @@ export interface Censo {
   fuente: Fuente;
   poi_count: number;
   params: Record<string, unknown>;
+  universos?: Universos | null;
   /** Embebido vía FK cuando se consulta con join a profiles. */
   profiles?: { email: string; nombre: string | null } | null;
 }
@@ -103,6 +104,63 @@ export interface DeltaCenso {
   nuevos: number;
   perdidos: number;
   sinCambio: number;
+}
+
+// ------------------------------------------------------------------
+// Universos demográficos (Censo 2020 INEGI, AGEB urbana)
+// ------------------------------------------------------------------
+
+/** Geocerca para calcular universos: círculo o rectángulo (viewport). */
+export interface GeocercaUniverso {
+  id: string;
+  lat?: number;
+  lng?: number;
+  radio_m?: number;
+  viewport?: Viewport;
+}
+
+export interface UniversoPorGeocerca {
+  id: string;
+  poblacion: number;
+  adultos18: number;
+  nse_proxy: number | null;
+}
+
+/** AGEB para el choropleth de la capa demográfica. */
+export interface AgebGeo {
+  cvegeo: string;
+  pobtot: number | null;
+  nse_proxy: number | null;
+  geometria: Record<string, unknown>; // GeoJSON geometry
+}
+
+export interface Universos {
+  disponible: boolean;
+  /** Cuando disponible=false: explicación en español. */
+  mensaje?: string;
+  /** Etiqueta de fuente y método — siempre presente cuando disponible. */
+  fuente?: string;
+  agebs?: number;
+  residencial?: {
+    poblacion: number;
+    adultos18: number;
+    viviendas: number;
+  };
+  /** Estimado: 18+ × factor smartphone × factor match. */
+  direccionable?: {
+    dispositivos: number;
+    factorSmartphone: number;
+    factorMatch: number;
+  };
+  perfil?: {
+    /** Índice socioeconómico aproximado (proxy censal), 0-100. NO es NSE AMAI. */
+    nseProxy: number | null;
+    pct18a24: number | null;
+    pct60ymas: number | null;
+  };
+  porGeocerca?: UniversoPorGeocerca[];
+  /** Solo cuando se pide la capa demográfica. */
+  agebsGeo?: AgebGeo[];
 }
 
 export interface SearchRequest {
@@ -132,6 +190,8 @@ export interface SearchResponse {
   /** Nombres de los eliminados, para inspección en la UI (máx 300 c/u). */
   detalleExcluidos: string[];
   detalleDescartados: string[];
+  /** Universos demográficos sobre las geocercas de la búsqueda. */
+  universos?: Universos;
   /** id de la búsqueda guardada en el historial (null si falló el guardado). */
   searchId: string | null;
 }

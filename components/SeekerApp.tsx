@@ -9,6 +9,7 @@ import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import AppHeader, { type StatusTipo } from "./AppHeader";
 import ResultsTable from "./ResultsTable";
+import UniversosPanel from "./UniversosPanel";
 import { CATEGORIAS, getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import {
   esMismoEstablecimiento,
@@ -31,12 +32,14 @@ import {
   exportarGeoJsonRadiosOrigen,
 } from "@/lib/exports";
 import type {
+  AgebGeo,
   ApiError,
   Censo,
   CensoPoi,
   DeltaCenso,
   DenuePoi,
   Fuente,
+  GeocercaUniverso,
   GeocodeResponse,
   LatLng,
   Origin,
@@ -46,6 +49,7 @@ import type {
   SearchMode,
   SearchRequest,
   SearchResponse,
+  Universos,
   Viewport,
 } from "@/lib/types";
 
@@ -352,6 +356,14 @@ export default function SeekerApp({
   // ---- filtro por estrato (DENUE)
   const [estratoFiltro, setEstratoFiltro] = useState("");
 
+  // ---- universos demográficos y capa AGEB
+  const [universos, setUniversos] = useState<Universos | null>(null);
+  const [capaDemografica, setCapaDemografica] = useState(false);
+  const [agebsGeo, setAgebsGeo] = useState<AgebGeo[] | null>(null);
+  const [cargandoCapa, setCargandoCapa] = useState(false);
+  /** Geocercas de la última búsqueda, para el choropleth bajo demanda. */
+  const geocercasRef = useRef<GeocercaUniverso[] | null>(null);
+
   // ---- configuración de exports
   const [radioGeocerca, setRadioGeocerca] = useState(50);
   const [vertices, setVertices] = useState(12);
@@ -603,6 +615,7 @@ export default function SeekerApp({
 
       setPois(cargados);
       setFechaCensoUsado(c.created_at);
+      setUniversos((c.universos as Universos | null) ?? null);
       setTablaColapsada(false);
       setStatus({
         tipo: "ok",
@@ -692,6 +705,7 @@ export default function SeekerApp({
       dentro.sort((a, b) => a.distancia - b.distancia);
       setPois(dentro);
       setContadores({ excluidos: 0, descartadosPorNombre: 0 });
+      setUniversos((censoSugerido.universos as Universos | null) ?? null);
       setFechaCensoUsado(censoSugerido.created_at);
       setTablaColapsada(false);
       reportar(
@@ -874,9 +888,38 @@ export default function SeekerApp({
     setContadores({ excluidos: 0, descartadosPorNombre: 0 });
     setDetalles({ excluidos: [], descartados: [] });
     setVerLista(null);
+    setUniversos(null);
+    setCapaDemografica(false);
+    setAgebsGeo(null);
+    geocercasRef.current = null;
     setFoco(null);
     setTablaColapsada(false);
     reportar("idle", "Listo para buscar");
+  }
+
+  // ---- universos de un censo: geocercas por POI (radio de geocerca)
+  async function calcularUniversosDeCenso(lista: Poi[]): Promise<Universos | null> {
+    if (lista.length === 0) return null;
+    try {
+      const geocercas: GeocercaUniverso[] = lista.slice(0, 2000).map((p) => ({
+        id: p.placeId,
+        lat: p.lat,
+        lng: p.lng,
+        radio_m: radioGeocerca,
+      }));
+      geocercasRef.current = geocercas;
+      const { universos: u } = await postJson<{ universos: Universos }>(
+        "/api/universos",
+        { geocercas }
+      );
+      setUniversos(u);
+      setAgebsGeo(null);
+      setCapaDemografica(false);
+      return u;
+    } catch (e) {
+      console.error("No se pudieron calcular universos del censo:", e);
+      return null;
+    }
   }
 
   // ---- guardar un censo en la biblioteca y calcular delta si es actualización
@@ -887,6 +930,7 @@ export default function SeekerApp({
     fuente: Fuente;
     params: Record<string, unknown>;
     lista: Poi[];
+    universos?: Universos | null;
   }): Promise<{ guardado: boolean; delta: DeltaCenso | null }> {
     let guardado = false;
     let delta: DeltaCenso | null = null;
@@ -897,6 +941,7 @@ export default function SeekerApp({
         alcance_descripcion: args.alcanceDescripcion,
         fuente: args.fuente,
         params: args.params,
+        universos: args.universos ?? null,
         pois: args.lista.map((p) => ({
           place_key: p.placeId,
           fuente: p.fuente,
@@ -1067,12 +1112,14 @@ export default function SeekerApp({
     setVerLista(null);
     setTablaColapsada(false);
 
-    // Guardar el censo completo en la biblioteca de censos.
+    // Universos sobre las geocercas por POI + guardado en la biblioteca.
+    const universosCenso = await calcularUniversosDeCenso(lista);
     let guardado = false;
     let delta: DeltaCenso | null = null;
     if (lista.length > 0 || celdasCorridas > 0) {
       const r = await guardarCensoEnBiblioteca({
         tipo: "marca",
+        universos: universosCenso,
         marcaOCategoria: m,
         alcanceDescripcion: `${(zona.nombre ?? ciudadQuery.trim()).split(",")[0]} · ${fmtM(alcance)} · ${celdasCorridas} celdas`,
         fuente: "google",
@@ -1270,12 +1317,14 @@ export default function SeekerApp({
     setContadores({ excluidos: 0, descartadosPorNombre: 0 });
     setTablaColapsada(false);
 
+    const universosCenso = await calcularUniversosDeCenso(lista);
     let guardado = false;
     let delta: DeltaCenso | null = null;
     if (lista.length > 0 || celdasCorridas > 0) {
       const lugarCorto = (terCentro.nombre ?? terLugarQuery).split(",")[0];
       const r = await guardarCensoEnBiblioteca({
         tipo: "territorial",
+        universos: universosCenso,
         marcaOCategoria: cat.label,
         alcanceDescripcion:
           terAlcanceTipo === "ciudad"
@@ -1363,6 +1412,15 @@ export default function SeekerApp({
         descartados: data.detalleDescartados ?? [],
       });
       setVerLista(null);
+      // universos calculados por el servidor + geocercas para el choropleth
+      setUniversos(data.universos ?? null);
+      setAgebsGeo(null);
+      setCapaDemografica(false);
+      geocercasRef.current = centrosActivos.map((c, i) =>
+        mode === "zone"
+          ? { id: c.nombre ?? String(i), viewport: c.viewport }
+          : { id: c.nombre ?? String(i), lat: c.lat, lng: c.lng, radio_m: radio }
+      );
       setTablaColapsada(false);
       const extras: string[] = [];
       if (data.excluidos > 0) extras.push(`${data.excluidos} excluidos`);
@@ -1378,6 +1436,39 @@ export default function SeekerApp({
       reportar("error", e instanceof Error ? e.message : "Error al buscar POIs");
     } finally {
       setOcupado(false);
+    }
+  }
+
+  // ---- capa demográfica (choropleth de AGEBs, bajo demanda)
+  async function toggleCapaDemografica() {
+    if (capaDemografica) {
+      setCapaDemografica(false);
+      return;
+    }
+    if (!geocercasRef.current || geocercasRef.current.length === 0) {
+      reportar("error", "Corre una búsqueda primero para ver la capa demográfica");
+      return;
+    }
+    setCapaDemografica(true);
+    if (!agebsGeo) {
+      setCargandoCapa(true);
+      try {
+        const { universos: u } = await postJson<{ universos: Universos }>(
+          "/api/universos",
+          { geocercas: geocercasRef.current, incluirAgebs: true }
+        );
+        if (u.disponible && u.agebsGeo) {
+          setAgebsGeo(u.agebsGeo);
+        } else {
+          setCapaDemografica(false);
+          reportar("error", u.mensaje ?? "Capa demográfica no disponible");
+        }
+      } catch (e) {
+        setCapaDemografica(false);
+        reportar("error", e instanceof Error ? e.message : "Error al cargar la capa");
+      } finally {
+        setCargandoCapa(false);
+      }
     }
   }
 
@@ -1418,6 +1509,12 @@ export default function SeekerApp({
     pois.length > 0
       ? Math.round(pois.reduce((s, p) => s + p.distancia, 0) / pois.length)
       : null;
+  // población por origen (solo aplica en orígenes/zona, donde el
+  // desglose por geocerca corresponde 1:1 con los centros)
+  const poblacionPorOrigen =
+    (mode === "origins" || mode === "zone") && universos?.disponible
+      ? (universos.porGeocerca ?? []).map((g) => g.poblacion)
+      : undefined;
 
   return (
     <div className="flex h-screen flex-col gap-3 overflow-hidden bg-fondo p-3">
@@ -2327,7 +2424,7 @@ export default function SeekerApp({
             </div>
             <div className="grid grid-cols-1 gap-2">
               <button
-                onClick={() => exportarCsv(poisVisibles, centrosActivos)}
+                onClick={() => exportarCsv(poisVisibles, centrosActivos, universos)}
                 disabled={poisVisibles.length === 0}
                 className="rounded-md border border-linea bg-panel2 px-3 py-2 text-left font-mono text-[11px] text-zinc-300 transition-colors hover:border-cian hover:text-cian disabled:opacity-30"
               >
@@ -2342,7 +2439,9 @@ export default function SeekerApp({
                 <span className="text-zinc-600">seeker_pois_puntos.geojson</span>
               </button>
               <button
-                onClick={() => exportarGeoJsonGeocercas(poisVisibles, radioGeocerca, vertices)}
+                onClick={() =>
+                  exportarGeoJsonGeocercas(poisVisibles, radioGeocerca, vertices, universos)
+                }
                 disabled={poisVisibles.length === 0}
                 className="rounded-md border border-linea bg-panel2 px-3 py-2 text-left font-mono text-[11px] text-zinc-300 transition-colors hover:border-magenta hover:text-magenta disabled:opacity-30"
               >
@@ -2354,7 +2453,8 @@ export default function SeekerApp({
                   exportarGeoJsonRadiosOrigen(
                     centrosActivos,
                     mode === "census" ? alcance : radio,
-                    vertices
+                    vertices,
+                    universos
                   )
                 }
                 disabled={centrosActivos.length === 0}
@@ -2385,6 +2485,18 @@ export default function SeekerApp({
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              <button
+                onClick={toggleCapaDemografica}
+                disabled={cargandoCapa}
+                className={`rounded-full border px-3 py-1 font-mono text-[10px] transition-colors disabled:opacity-50 ${
+                  capaDemografica
+                    ? "border-violeta bg-violeta/15 text-violeta"
+                    : "border-linea bg-panel2 text-zinc-400 hover:border-violeta hover:text-violeta"
+                }`}
+                title="Choropleth de AGEBs que intersectan tus geocercas (Censo 2020)"
+              >
+                {cargandoCapa ? "Cargando AGEBs…" : "◆ Capa demográfica"}
+              </button>
               {fechaCensoUsado && (
                 <span className="rounded-full border border-zinc-500/40 bg-zinc-500/10 px-3 py-1 font-mono text-[10px] text-[#9ca3af]">
                   censo del{" "}
@@ -2411,6 +2523,10 @@ export default function SeekerApp({
               </span>
             </div>
           </div>
+
+          {/* universos demográficos — siempre visibles junto a los resultados */}
+          <UniversosPanel universos={universos} />
+
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <MapView
               mode={mode}
@@ -2440,10 +2556,12 @@ export default function SeekerApp({
                     : TER_RADIO_CELDA
                   : radioCelda
               }
+              agebs={capaDemografica ? agebsGeo : null}
             />
             <ResultsTable
               pois={poisVisibles}
               origenes={centrosActivos}
+              poblacionPorOrigen={poblacionPorOrigen}
               colapsada={tablaColapsada}
               onToggle={() => setTablaColapsada(!tablaColapsada)}
               onSeleccionar={(p) => setFoco(p)}

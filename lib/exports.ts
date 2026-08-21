@@ -2,7 +2,37 @@
 // Nombres de archivo seeker_* listos para cargar en DSPs.
 
 import { ciudadDeDireccion, circlePolygon } from "./geo";
-import type { Origin, Poi } from "./types";
+import type { Origin, Poi, Universos } from "./types";
+
+/** Filas de resumen de universos para anexar al final del CSV. */
+function filasUniversos(universos: Universos | null | undefined): string[] {
+  if (!universos?.disponible) return [];
+  return [
+    "",
+    "— UNIVERSOS (Censo 2020 INEGI · interpolación areal por AGEB) —",
+    `universo_residencial,${universos.residencial!.poblacion}`,
+    `adultos_18_mas,${universos.residencial!.adultos18}`,
+    `universo_direccionable_estimado,${universos.direccionable!.dispositivos}`,
+    `factores_direccionable,18+ x ${universos.direccionable!.factorSmartphone} x ${universos.direccionable!.factorMatch}`,
+    `nse_proxy_promedio (proxy censal; no NSE AMAI),${universos.perfil!.nseProxy ?? ""}`,
+    `pct_18a24,${universos.perfil!.pct18a24 ?? ""}`,
+    `pct_60ymas,${universos.perfil!.pct60ymas ?? ""}`,
+    `viviendas,${universos.residencial!.viviendas}`,
+    `agebs_intersectados,${universos.agebs ?? ""}`,
+  ];
+}
+
+/** Resumen de universos para las properties de un FeatureCollection. */
+function propsUniversos(universos: Universos | null | undefined) {
+  if (!universos?.disponible) return undefined;
+  return {
+    fuente: universos.fuente,
+    residencial: universos.residencial,
+    direccionable_estimado: universos.direccionable,
+    perfil: universos.perfil,
+    agebs: universos.agebs,
+  };
+}
 
 function descargar(nombre: string, contenido: string, mime: string) {
   const blob = new Blob([contenido], { type: mime });
@@ -25,7 +55,11 @@ function csvCampo(v: string | number): string {
  * 1) CSV de POIs con la relación origen↔POI: cada fila trae el origen
  * más cercano (nombre y coordenadas) y la distancia entre ambos.
  */
-export function exportarCsv(pois: Poi[], origenes: Origin[] = []) {
+export function exportarCsv(
+  pois: Poi[],
+  origenes: Origin[] = [],
+  universos?: Universos | null
+) {
   const filas = [
     [
       "nombre",
@@ -58,6 +92,7 @@ export function exportarCsv(pois: Poi[], origenes: Origin[] = []) {
         p.placeId,
       ].join(",");
     }),
+    ...filasUniversos(universos),
   ];
   descargar("seeker_pois.csv", filas.join("\n"), "text/csv;charset=utf-8");
 }
@@ -90,10 +125,12 @@ export function exportarGeoJsonPuntos(pois: Poi[]) {
 export function exportarGeoJsonGeocercas(
   pois: Poi[],
   radioM: number,
-  vertices: number
+  vertices: number,
+  universos?: Universos | null
 ) {
   const fc = {
     type: "FeatureCollection",
+    properties: { universos: propsUniversos(universos) ?? null },
     features: pois.map((p) => ({
       type: "Feature",
       properties: {
@@ -124,16 +161,22 @@ export function exportarGeoJsonGeocercas(
 export function exportarGeoJsonRadiosOrigen(
   origenes: Origin[],
   radioM: number,
-  vertices: number
+  vertices: number,
+  universos?: Universos | null
 ) {
+  const porGeocerca = universos?.disponible ? universos.porGeocerca : undefined;
   const fc = {
     type: "FeatureCollection",
+    properties: { universos: propsUniversos(universos) ?? null },
     features: origenes.map((o, i) => ({
       type: "Feature",
       properties: {
         nombre: o.nombre ?? `Origen ${i + 1}`,
         direccion: o.direccion ?? "",
         ...(o.viewport ? {} : { radio_m: radioM }),
+        universo_residencial: porGeocerca?.[i]?.poblacion ?? null,
+        adultos_18_mas: porGeocerca?.[i]?.adultos18 ?? null,
+        nse_proxy: porGeocerca?.[i]?.nse_proxy ?? null,
       },
       geometry: {
         type: "Polygon",
