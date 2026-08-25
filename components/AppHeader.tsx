@@ -68,6 +68,11 @@ export default function AppHeader({ usuario, status, onNueva }: AppHeaderProps) 
           <Link href="/historial" className={navCls(pathname === "/historial")}>
             Historial
           </Link>
+          {usuario?.rol === "admin" && (
+            <Link href="/admin" className={navCls(pathname === "/admin")}>
+              Admin
+            </Link>
+          )}
         </nav>
       </div>
 

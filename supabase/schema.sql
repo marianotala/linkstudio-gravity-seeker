@@ -714,3 +714,101 @@ $$;
 
 revoke execute on function public.guardar_censo(text, text, text, text, jsonb, jsonb, jsonb) from public, anon;
 grant execute on function public.guardar_censo(text, text, text, text, jsonb, jsonb, jsonb) to authenticated;
+
+
+-- ============================================================
+-- MIGRACIÓN FASE 5b — carga de AGEBs desde la página /admin
+-- ============================================================
+
+drop policy if exists "agebs: insertar admin" on public.agebs;
+create policy "agebs: insertar admin"
+  on public.agebs for insert
+  to authenticated
+  with check (public.es_admin());
+
+drop policy if exists "agebs: actualizar admin" on public.agebs;
+create policy "agebs: actualizar admin"
+  on public.agebs for update
+  to authenticated
+  using (public.es_admin());
+
+drop policy if exists "agebs: borrar admin" on public.agebs;
+create policy "agebs: borrar admin"
+  on public.agebs for delete
+  to authenticated
+  using (public.es_admin());
+
+-- Carga por lotes desde /admin (geometrías en GeoJSON). security
+-- invoker: las políticas de arriba limitan la escritura a admins.
+create or replace function public.admin_upsert_agebs(p_agebs jsonb)
+returns int
+language plpgsql
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v_n int;
+begin
+  if coalesce(jsonb_array_length(p_agebs), 0) = 0
+     or jsonb_array_length(p_agebs) > 300 then
+    raise exception 'Lote inválido: manda entre 1 y 300 AGEBs';
+  end if;
+
+  insert into public.agebs
+    (cvegeo, entidad, municipio, pobtot, p_18ymas, p_18a24, p_60ymas,
+     graproes, tvivhab, vph_autom, vph_inter, vph_pc, nse_proxy, geom)
+  select
+    r ->> 'cvegeo',
+    r ->> 'entidad',
+    r ->> 'municipio',
+    (r ->> 'pobtot')::int,
+    (r ->> 'p_18ymas')::int,
+    (r ->> 'p_18a24')::int,
+    (r ->> 'p_60ymas')::int,
+    (r ->> 'graproes')::numeric,
+    (r ->> 'tvivhab')::int,
+    (r ->> 'vph_autom')::int,
+    (r ->> 'vph_inter')::int,
+    (r ->> 'vph_pc')::int,
+    (r ->> 'nse_proxy')::numeric,
+    ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(r -> 'geometria'), 4326))
+  from jsonb_array_elements(p_agebs) as r
+  on conflict (cvegeo) do update set
+    entidad = excluded.entidad, municipio = excluded.municipio,
+    pobtot = excluded.pobtot, p_18ymas = excluded.p_18ymas,
+    p_18a24 = excluded.p_18a24, p_60ymas = excluded.p_60ymas,
+    graproes = excluded.graproes, tvivhab = excluded.tvivhab,
+    vph_autom = excluded.vph_autom, vph_inter = excluded.vph_inter,
+    vph_pc = excluded.vph_pc, nse_proxy = excluded.nse_proxy,
+    geom = excluded.geom;
+
+  get diagnostics v_n = row_count;
+  return v_n;
+end;
+$$;
+
+revoke execute on function public.admin_upsert_agebs(jsonb) from public, anon;
+grant execute on function public.admin_upsert_agebs(jsonb) to authenticated;
+
+-- Resumen de entidades cargadas para la página /admin.
+create or replace function public.agebs_resumen()
+returns jsonb
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'entidad', entidad,
+    'agebs', n,
+    'poblacion', pob
+  ) order by entidad), '[]'::jsonb)
+  from (
+    select entidad, count(*) as n, sum(pobtot) as pob
+    from public.agebs
+    group by entidad
+  ) t;
+$$;
+
+revoke execute on function public.agebs_resumen() from public, anon;
+grant execute on function public.agebs_resumen() to authenticated;

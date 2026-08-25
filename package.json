@@ -11,6 +11,7 @@
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.3",
+    "@turf/simplify": "^7.4.0",
     "leaflet": "^1.9.4",
     "next": "^14.2.32",
     "papaparse": "^5.5.3",
@@ -18,6 +19,7 @@
     "react-dom": "^18.3.1",
     "react-leaflet": "^4.2.1",
     "server-only": "^0.0.1",
+    "shpjs": "^6.2.0",
     "xlsx": "^0.18.5",
     "zod": "^3.25.76"
   },
