@@ -128,14 +128,33 @@ export async function parsearCensoInegi(
 const INEGI_LCC =
   "+proj=lcc +lat_1=17.5 +lat_2=29.5 +lat_0=12 +lon_0=-102 +x_0=2500000 +y_0=0 +ellps=GRS80 +units=m +no_defs";
 
+/** Reproyecta recursivamente coordenadas proyectadas→WGS84. */
+function reproyectarCoords(
+  coords: unknown,
+  inversa: (p: [number, number]) => [number, number]
+): unknown {
+  if (Array.isArray(coords)) {
+    if (typeof coords[0] === "number") {
+      const [lng, lat] = inversa([coords[0] as number, coords[1] as number]);
+      return [
+        Math.round(lng * 1e6) / 1e6,
+        Math.round(lat * 1e6) / 1e6,
+      ];
+    }
+    return coords.map((c) => reproyectarCoords(c, inversa));
+  }
+  return coords;
+}
+
 /**
  * Lee el shapefile (.shp + .dbf + .prj) en el navegador con shpjs y lo
- * reproyecta de la Lambert ITRF2008 de INEGI a WGS84.
- * Notas de la API de shpjs v6 (verificada en el paquete instalado):
- * - parseShp/parseDbf/combine son exports NOMBRADOS (el default es
- *   getShapefile, sin métodos — de ahí el "parseShp is not a function")
- * - parseShp recibe un CONVERSOR de proj4 (usa .inverse), no el .prj crudo
- * - parseDbf recibe el encoding como string: INEGI usa ISO-8859-1
+ * reproyecta de la Lambert ITRF2008 de INEGI a WGS84 (EPSG:4326).
+ *
+ * Nota crítica de la API de shpjs v6 (verificada de punta a punta con
+ * un shapefile sintético): el export público parseShp hace
+ * toString(prj) — si le pasas un conversor de proj4 lo DESCARTA en
+ * silencio y no reproyecta. Hay que pasarle el TEXTO del .prj (WKT) o
+ * una proj-string; el wrapper llama proj4() por dentro.
  */
 export async function parsearShapefileInegi(
   shpFile: File,
@@ -148,18 +167,71 @@ export async function parsearShapefileInegi(
   ]);
   const proj4 = proj4mod.default;
 
-  // conversor proyectada→WGS84: del .prj (WKT) o del respaldo de INEGI
-  let trans: unknown;
-  const prjTexto = prjFile ? await prjFile.text() : null;
-  try {
-    trans = proj4(prjTexto ?? INEGI_LCC);
-  } catch {
-    trans = proj4(INEGI_LCC);
+  // 1) definición de proyección COMO TEXTO: el WKT del .prj si proj4
+  //    lo parsea; si falta o no parsea, la Lambert de INEGI directa
+  let defProyeccion = INEGI_LCC;
+  if (prjFile) {
+    const wkt = await prjFile.text();
+    try {
+      proj4(wkt);
+      defProyeccion = wkt;
+    } catch {
+      defProyeccion = INEGI_LCC;
+    }
   }
 
-  const geoms = parseShp(await shpFile.arrayBuffer(), trans);
+  const geoms = parseShp(await shpFile.arrayBuffer(), defProyeccion);
   const props = parseDbf(await dbfFile.arrayBuffer(), "ISO-8859-1");
-  return combine([geoms, props]);
+  const fc = combine([geoms, props]);
+
+  // 2) verificación de sanidad post-reproyección: México cae en
+  //    lng [-119,-85], lat [13,34] (CDMX: lng ~-99.2 a -98.9, lat
+  //    ~19.0 a 19.6). Si las coordenadas siguen proyectadas (metros,
+  //    cientos de miles), reproyectamos manualmente como respaldo.
+  const primera = (function buscar(c: unknown): number[] | null {
+    if (Array.isArray(c)) {
+      if (typeof c[0] === "number") return c as number[];
+      for (const hijo of c) {
+        const r = buscar(hijo);
+        if (r) return r;
+      }
+    }
+    return null;
+  })(fc.features[0]?.geometry && (fc.features[0].geometry as { coordinates?: unknown }).coordinates);
+
+  if (primera && (Math.abs(primera[0]) > 180 || Math.abs(primera[1]) > 90)) {
+    const conv = proj4(defProyeccion);
+    for (const f of fc.features) {
+      const g = f.geometry as { coordinates?: unknown } | null;
+      if (g?.coordinates) {
+        g.coordinates = reproyectarCoords(g.coordinates, (p) =>
+          conv.inverse(p)
+        );
+      }
+    }
+  }
+
+  // 3) validación final: dentro del rango de México o error claro
+  const check = (function buscar(c: unknown): number[] | null {
+    if (Array.isArray(c)) {
+      if (typeof c[0] === "number") return c as number[];
+      for (const hijo of c) {
+        const r = buscar(hijo);
+        if (r) return r;
+      }
+    }
+    return null;
+  })(fc.features[0]?.geometry && (fc.features[0].geometry as { coordinates?: unknown }).coordinates);
+  if (
+    check &&
+    (check[0] < -119 || check[0] > -85 || check[1] < 13 || check[1] > 34)
+  ) {
+    throw new Error(
+      `La reproyección salió fuera del rango de México (lng ${check[0].toFixed(2)}, lat ${check[1].toFixed(2)}). ¿El .prj corresponde a este shapefile?`
+    );
+  }
+
+  return fc;
 }
 
 /** Cruza geometrías con censo, simplifica y arma los registros a cargar. */

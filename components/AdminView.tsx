@@ -96,26 +96,9 @@ export default function AdminView({
         return;
       }
 
-      // sanity check: las coordenadas deben ser geográficas (WGS84)
-      const primerPar = (function buscar(c: unknown): number[] | null {
-        if (Array.isArray(c)) {
-          if (typeof c[0] === "number") return c as number[];
-          for (const hijo of c) {
-            const r = buscar(hijo);
-            if (r) return r;
-          }
-        }
-        return null;
-      })((registros[0].geometria as { coordinates?: unknown }).coordinates);
-      if (!primerPar || Math.abs(primerPar[0]) > 180 || Math.abs(primerPar[1]) > 90) {
-        setMensaje({
-          tipo: "error",
-          texto:
-            "Las coordenadas no parecen WGS84 — falta el archivo .prj del shapefile (súbelo junto con .shp y .dbf).",
-        });
-        return;
-      }
-
+      // la reproyección y su verificación de sanidad (rango de México)
+      // viven en parsearShapefileInegi; si algo falla, lanza un error
+      // claro que se muestra abajo
       const supabase = createClient();
       let hecho = 0;
       for (let i = 0; i < registros.length; i += LOTE) {
