@@ -35,6 +35,16 @@ function colorPoi(fuente: string): { color: string; fillColor: string } {
 // Centro inicial: CDMX
 const CENTRO_INICIAL: [number, number] = [19.4326, -99.1332];
 
+// CARTO ahora exige API key para sus basemaps (sin ella los tiles
+// llegan con la marca "API KEY REQUIRED"). Se pasa como ?key= en la
+// URL del tile, según la documentación de CartoDB/basemap-styles.
+// La key debe ser NEXT_PUBLIC_ para inlinearse en el bundle del
+// cliente; es una key pública de basemaps (fair use), no un secreto.
+const CARTO_KEY = process.env.NEXT_PUBLIC_CARTO_API_KEY;
+const TILES_URL = `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png${
+  CARTO_KEY ? `?key=${CARTO_KEY}` : ""
+}`;
+
 interface MapViewProps {
   mode: SearchMode;
   origenes: Origin[];
@@ -127,7 +137,7 @@ export default function MapView(props: MapViewProps) {
       attributionControl={true}
     >
       <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        url={TILES_URL}
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
         subdomains="abcd"
         maxZoom={20}
