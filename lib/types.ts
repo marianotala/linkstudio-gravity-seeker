@@ -206,10 +206,13 @@ export interface PerfilUsuario {
 /** Fila de public.searches tal como la lee el historial. */
 export interface BusquedaGuardada {
   id: string;
+  user_id: string;
   created_at: string;
   mode: SearchMode;
   params: SearchRequest;
   result_count: number;
+  /** Embebido vía FK (para que un admin vea las del equipo). */
+  profiles?: { email: string; nombre: string | null } | null;
 }
 
 /** Fila de public.search_results. */

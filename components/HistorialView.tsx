@@ -37,15 +37,21 @@ export default function HistorialView({
   const [busquedas, setBusquedas] = useState<BusquedaGuardada[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  // admin: RLS ya le regresa las búsquedas de todo el equipo;
+  // este filtro solo decide qué mostrar.
+  const esAdmin = usuario?.rol === "admin";
+  const [filtro, setFiltro] = useState<"equipo" | "mias">("equipo");
 
   useEffect(() => {
     (async () => {
       const supabase = createClient();
       const { data, error: e } = await supabase
         .from("searches")
-        .select("id, created_at, mode, params, result_count")
+        .select(
+          "id, user_id, created_at, mode, params, result_count, profiles(email, nombre)"
+        )
         .order("created_at", { ascending: false })
-        .limit(200);
+        .limit(300);
       if (e) {
         setError(`No pude cargar el historial: ${e.message}`);
       } else {
@@ -54,6 +60,11 @@ export default function HistorialView({
       setCargando(false);
     })();
   }, []);
+
+  const visibles =
+    esAdmin && filtro === "mias"
+      ? busquedas.filter((b) => b.user_id === usuario?.id)
+      : busquedas;
 
   async function borrar(id: string) {
     const supabase = createClient();
@@ -77,12 +88,36 @@ export default function HistorialView({
                 sin llamar a Google, o duplícala para ajustar los parámetros.
               </p>
             </div>
-            {!cargando && !error && (
-              <span className="shrink-0 rounded-full border border-linea bg-panel2 px-3 py-1 font-mono text-[10px] text-zinc-400">
-                {busquedas.length}{" "}
-                {busquedas.length === 1 ? "búsqueda" : "búsquedas"}
-              </span>
-            )}
+            <div className="flex shrink-0 items-center gap-2">
+              {esAdmin && !cargando && !error && (
+                <div className="flex gap-1 rounded-full border border-linea bg-panel2 p-0.5">
+                  {(
+                    [
+                      ["equipo", "Equipo"],
+                      ["mias", "Mías"],
+                    ] as ["equipo" | "mias", string][]
+                  ).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => setFiltro(key)}
+                      className={`rounded-full px-3 py-1 font-mono text-[10px] transition-colors ${
+                        filtro === key
+                          ? "bg-cian/15 text-cian"
+                          : "text-zinc-500 hover:text-zinc-300"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {!cargando && !error && (
+                <span className="rounded-full border border-linea bg-panel2 px-3 py-1 font-mono text-[10px] text-zinc-400">
+                  {visibles.length}{" "}
+                  {visibles.length === 1 ? "búsqueda" : "búsquedas"}
+                </span>
+              )}
+            </div>
           </div>
 
           {cargando && (
@@ -93,7 +128,7 @@ export default function HistorialView({
           {error && (
             <p className="mt-8 font-mono text-xs text-magenta">{error}</p>
           )}
-          {!cargando && !error && busquedas.length === 0 && (
+          {!cargando && !error && visibles.length === 0 && (
             <div className="mt-8 rounded-lg border border-dashed border-linea bg-panel px-6 py-10 text-center">
               <p className="font-mono text-xs text-zinc-500">
                 Todavía no hay búsquedas guardadas. Cada búsqueda que hagas en
@@ -108,7 +143,7 @@ export default function HistorialView({
             </div>
           )}
 
-          {busquedas.length > 0 && (
+          {visibles.length > 0 && (
             <div className="mt-6 overflow-hidden rounded-xl border border-linea">
               <table className="w-full text-left font-mono text-xs">
                 <thead className="bg-panel2 text-zinc-500">
@@ -117,6 +152,9 @@ export default function HistorialView({
                     <th className="px-3 py-2.5 font-medium">Modo</th>
                     <th className="px-3 py-2.5 font-medium">Categoría</th>
                     <th className="px-3 py-2.5 font-medium">Zona / orígenes</th>
+                    {esAdmin && (
+                      <th className="px-3 py-2.5 font-medium">Autor</th>
+                    )}
                     <th className="px-3 py-2.5 text-right font-medium">POIs</th>
                     <th className="px-4 py-2.5 text-right font-medium">
                       Acciones
@@ -124,7 +162,7 @@ export default function HistorialView({
                   </tr>
                 </thead>
                 <tbody className="bg-panel">
-                  {busquedas.map((b) => (
+                  {visibles.map((b) => (
                     <tr
                       key={b.id}
                       className="border-t border-linea/60 text-zinc-300"
@@ -164,6 +202,20 @@ export default function HistorialView({
                       <td className="max-w-[220px] truncate px-3 py-2.5 text-zinc-400">
                         {etiquetaAlcance(b)}
                       </td>
+                      {esAdmin && (
+                        <td
+                          className="max-w-[140px] truncate px-3 py-2.5"
+                          title={b.profiles?.email}
+                        >
+                          {b.user_id === usuario?.id ? (
+                            <span className="text-cian">tú</span>
+                          ) : (
+                            <span className="text-zinc-400">
+                              {b.profiles?.nombre ?? b.profiles?.email ?? "—"}
+                            </span>
+                          )}
+                        </td>
+                      )}
                       <td className="px-3 py-2.5 text-right text-magenta">
                         {b.result_count}
                       </td>
@@ -181,13 +233,16 @@ export default function HistorialView({
                           >
                             Duplicar
                           </Link>
-                          <button
-                            onClick={() => borrar(b.id)}
-                            className="rounded border border-linea bg-panel2 px-2 py-1 text-[11px] text-zinc-500 transition-colors hover:border-magenta hover:text-magenta"
-                            title="Borrar del historial"
-                          >
-                            ×
-                          </button>
+                          {/* RLS solo permite borrar las propias */}
+                          {b.user_id === usuario?.id && (
+                            <button
+                              onClick={() => borrar(b.id)}
+                              className="rounded border border-linea bg-panel2 px-2 py-1 text-[11px] text-zinc-500 transition-colors hover:border-magenta hover:text-magenta"
+                              title="Borrar del historial"
+                            >
+                              ×
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
