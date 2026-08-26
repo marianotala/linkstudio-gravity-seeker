@@ -123,23 +123,43 @@ export async function parsearCensoInegi(
   return mapa;
 }
 
+// Proyección del Marco Geoestadístico de INEGI (Lambert Conformal
+// Conic sobre GRS80/ITRF2008) — respaldo si el .prj falta o no parsea.
+const INEGI_LCC =
+  "+proj=lcc +lat_1=17.5 +lat_2=29.5 +lat_0=12 +lon_0=-102 +x_0=2500000 +y_0=0 +ellps=GRS80 +units=m +no_defs";
+
 /**
- * Lee el shapefile (.shp + .dbf + .prj) en el navegador con shpjs, que
- * reproyecta de la Lambert de INEGI a WGS84 usando el .prj.
+ * Lee el shapefile (.shp + .dbf + .prj) en el navegador con shpjs y lo
+ * reproyecta de la Lambert ITRF2008 de INEGI a WGS84.
+ * Notas de la API de shpjs v6 (verificada en el paquete instalado):
+ * - parseShp/parseDbf/combine son exports NOMBRADOS (el default es
+ *   getShapefile, sin métodos — de ahí el "parseShp is not a function")
+ * - parseShp recibe un CONVERSOR de proj4 (usa .inverse), no el .prj crudo
+ * - parseDbf recibe el encoding como string: INEGI usa ISO-8859-1
  */
 export async function parsearShapefileInegi(
   shpFile: File,
   dbfFile: File,
   prjFile?: File
 ): Promise<GeoJSON.FeatureCollection> {
-  const shpjs = (await import("shpjs")) as unknown as {
-    default: typeof import("shpjs");
-  };
-  const shp = shpjs.default;
-  const prj = prjFile ? await prjFile.text() : undefined;
-  const geoms = shp.parseShp(await shpFile.arrayBuffer(), prj);
-  const props = shp.parseDbf(await dbfFile.arrayBuffer());
-  return shp.combine([geoms, props]);
+  const [{ parseShp, parseDbf, combine }, proj4mod] = await Promise.all([
+    import("shpjs"),
+    import("proj4"),
+  ]);
+  const proj4 = proj4mod.default;
+
+  // conversor proyectada→WGS84: del .prj (WKT) o del respaldo de INEGI
+  let trans: unknown;
+  const prjTexto = prjFile ? await prjFile.text() : null;
+  try {
+    trans = proj4(prjTexto ?? INEGI_LCC);
+  } catch {
+    trans = proj4(INEGI_LCC);
+  }
+
+  const geoms = parseShp(await shpFile.arrayBuffer(), trans);
+  const props = parseDbf(await dbfFile.arrayBuffer(), "ISO-8859-1");
+  return combine([geoms, props]);
 }
 
 /** Cruza geometrías con censo, simplifica y arma los registros a cargar. */
