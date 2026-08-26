@@ -10,6 +10,8 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const esLogin = pathname === "/login";
   const esApi = pathname.startsWith("/api");
+  // el callback de OAuth llega sin sesión todavía
+  const esAuth = pathname.startsWith("/auth");
 
   // Sin configuración de Supabase: cerrado por default.
   if (!url || !anonKey) {
@@ -46,7 +48,7 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user && !esLogin && !esApi) {
+  if (!user && !esLogin && !esApi && !esAuth) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
   if (user && esLogin) {

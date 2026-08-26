@@ -812,3 +812,69 @@ $$;
 
 revoke execute on function public.agebs_resumen() from public, anon;
 grant execute on function public.agebs_resumen() to authenticated;
+
+
+-- ============================================================
+-- MIGRACIÓN FASE 6 — acceso con Google restringido por dominio
+-- ============================================================
+
+create table if not exists public.dominios_permitidos (
+  dominio text primary key
+);
+
+insert into public.dominios_permitidos (dominio)
+values ('linkstudio.mx')
+on conflict do nothing;
+
+alter table public.dominios_permitidos enable row level security;
+
+drop policy if exists "dominios: leer autenticados" on public.dominios_permitidos;
+create policy "dominios: leer autenticados"
+  on public.dominios_permitidos for select
+  to authenticated
+  using (true);
+
+drop policy if exists "dominios: escribir admin" on public.dominios_permitidos;
+create policy "dominios: escribir admin"
+  on public.dominios_permitidos for all
+  to authenticated
+  using (public.es_admin())
+  with check (public.es_admin());
+
+-- handle_new_user: las altas por OAuth (Google) exigen dominio en
+-- dominios_permitidos; si no, la transacción se aborta y el usuario
+-- NO se crea. Las altas por email (dashboard) no se filtran.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if coalesce(new.raw_app_meta_data ->> 'provider', 'email') <> 'email'
+     and not exists (
+       select 1 from public.dominios_permitidos d
+       where lower(split_part(new.email, '@', 2)) = d.dominio
+     ) then
+    raise exception 'Dominio no autorizado para acceso con Google: %',
+      split_part(new.email, '@', 2);
+  end if;
+
+  insert into public.profiles (id, email, nombre, rol)
+  values (
+    new.id,
+    new.email,
+    coalesce(
+      new.raw_user_meta_data ->> 'nombre',
+      new.raw_user_meta_data ->> 'full_name',
+      new.raw_user_meta_data ->> 'name',
+      split_part(new.email, '@', 1)
+    ),
+    coalesce(new.raw_user_meta_data ->> 'rol', 'vendedor')
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+revoke execute on function public.handle_new_user() from public, anon, authenticated;

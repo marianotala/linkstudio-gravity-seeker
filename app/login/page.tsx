@@ -4,7 +4,7 @@
 // logo de ondas, "Gravity", subtítulo Seeker. Sin registro público —
 // los usuarios se dan de alta desde el dashboard de Supabase.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import GravityMark from "@/components/GravityMark";
 import { createClient } from "@/lib/supabase/client";
@@ -19,6 +19,35 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [entrando, setEntrando] = useState(false);
+
+  // errores que regresan del callback de OAuth (?error=...)
+  useEffect(() => {
+    const e = new URLSearchParams(window.location.search).get("error");
+    if (e) setError(e);
+  }, []);
+
+  async function entrarConGoogle() {
+    setError("");
+    setEntrando(true);
+    try {
+      const supabase = createClient();
+      const { error: authError } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+          queryParams: { prompt: "select_account" },
+        },
+      });
+      if (authError) {
+        setError(`No se pudo iniciar con Google: ${authError.message}`);
+        setEntrando(false);
+      }
+      // si no hay error, el navegador redirige a Google
+    } catch {
+      setError("Error de conexión con Supabase. Intenta de nuevo.");
+      setEntrando(false);
+    }
+  }
 
   async function entrar(e: React.FormEvent) {
     e.preventDefault();
@@ -120,6 +149,44 @@ export default function LoginPage() {
             >
               {entrando ? "Entrando…" : "Entrar"}
             </button>
+
+            <div className="flex items-center gap-3 py-1">
+              <span className="h-px flex-1 bg-linea" />
+              <span className="font-mono text-[10px] uppercase tracking-widest text-zinc-600">
+                o
+              </span>
+              <span className="h-px flex-1 bg-linea" />
+            </div>
+
+            <button
+              type="button"
+              onClick={entrarConGoogle}
+              disabled={entrando}
+              className="flex w-full items-center justify-center gap-2.5 rounded-md border border-linea bg-panel2 px-3 py-2.5 font-mono text-sm text-zinc-200 transition-colors hover:border-zinc-500 disabled:opacity-40"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
+                <path
+                  fill="#4285F4"
+                  d="M23.5 12.27c0-.85-.08-1.67-.22-2.46H12v4.65h6.45a5.52 5.52 0 0 1-2.4 3.62v3h3.87c2.27-2.09 3.58-5.17 3.58-8.81z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 24c3.24 0 5.96-1.07 7.94-2.91l-3.87-3c-1.08.72-2.45 1.14-4.07 1.14-3.13 0-5.78-2.11-6.73-4.96H1.28v3.1A12 12 0 0 0 12 24z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.27 14.27a7.2 7.2 0 0 1 0-4.54v-3.1H1.28a12 12 0 0 0 0 10.74l3.99-3.1z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 4.77c1.76 0 3.35.6 4.6 1.8l3.44-3.44A11.97 11.97 0 0 0 12 0 12 12 0 0 0 1.28 6.63l3.99 3.1C6.22 6.88 8.87 4.77 12 4.77z"
+                />
+              </svg>
+              Continuar con Google
+            </button>
+            <p className="font-mono text-[10px] leading-relaxed text-zinc-600">
+              Solo cuentas de Google de dominios autorizados del equipo.
+            </p>
           </form>
         )}
 
