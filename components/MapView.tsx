@@ -35,15 +35,32 @@ function colorPoi(fuente: string): { color: string; fillColor: string } {
 // Centro inicial: CDMX
 const CENTRO_INICIAL: [number, number] = [19.4326, -99.1332];
 
-// CARTO ahora exige API key para sus basemaps (sin ella los tiles
-// llegan con la marca "API KEY REQUIRED"). Se pasa como ?key= en la
-// URL del tile, según la documentación de CartoDB/basemap-styles.
-// La key debe ser NEXT_PUBLIC_ para inlinearse en el bundle del
-// cliente; es una key pública de basemaps (fair use), no un secreto.
+// Proveedor de tiles:
+// - Con NEXT_PUBLIC_CARTO_API_KEY: CARTO dark_all (?key= según la
+//   documentación de CartoDB/basemap-styles).
+// - Sin key: OpenStreetMap estándar SIN key, oscurecido con un filtro
+//   CSS (clase .tiles-osm-oscuro) para conservar la identidad Gravity.
+//   Así el mapa nunca queda rehén de una API key.
 const CARTO_KEY = process.env.NEXT_PUBLIC_CARTO_API_KEY;
-const TILES_URL = `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png${
-  CARTO_KEY ? `?key=${CARTO_KEY}` : ""
-}`;
+const USAR_CARTO = Boolean(CARTO_KEY);
+
+const TILES = USAR_CARTO
+  ? {
+      url: `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=${CARTO_KEY}`,
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: "abcd",
+      maxZoom: 20,
+      className: "",
+    }
+  : {
+      url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      subdomains: "",
+      maxZoom: 19,
+      className: "tiles-osm-oscuro",
+    };
 
 interface MapViewProps {
   mode: SearchMode;
@@ -137,10 +154,11 @@ export default function MapView(props: MapViewProps) {
       attributionControl={true}
     >
       <TileLayer
-        url={TILES_URL}
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        subdomains="abcd"
-        maxZoom={20}
+        url={TILES.url}
+        attribution={TILES.attribution}
+        subdomains={TILES.subdomains}
+        maxZoom={TILES.maxZoom}
+        className={TILES.className}
       />
 
       {mode === "origins" &&

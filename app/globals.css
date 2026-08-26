@@ -99,6 +99,14 @@ body {
   background: #0a0a0c;
   font-family: var(--font-inter), sans-serif;
 }
+
+/* OSM estándar oscurecido: inversión + rotación de tono para que el
+   mapa claro de OSM quede oscuro y neutro, acorde a Gravity. Solo se
+   aplica a los tiles base, no a los markers ni overlays. */
+.tiles-osm-oscuro {
+  filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9)
+    saturate(0.35);
+}
 .leaflet-control-attribution {
   background: rgba(10, 10, 12, 0.7) !important;
   color: #71717a !important;
