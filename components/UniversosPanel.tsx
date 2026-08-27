@@ -205,6 +205,7 @@ export default function UniversosPanel({
         <p className="font-mono text-[9px] text-zinc-600">
           Censo 2020 INEGI ·{" "}
           {fmt(universos.agebs ?? porAgeb.length)} zonas censales analizadas
+          {universos.criterio && ` · ${universos.criterio}`}
         </p>
         <button
           onClick={() => setDetalle((d) => !d)}

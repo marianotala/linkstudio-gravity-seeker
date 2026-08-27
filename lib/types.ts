@@ -140,6 +140,8 @@ export interface Universos {
   mensaje?: string;
   /** Etiqueta de fuente y método — siempre presente cuando disponible. */
   fuente?: string;
+  /** Criterio de área usado, p. ej. "población a 500 m de los puntos censados". */
+  criterio?: string;
   agebs?: number;
   residencial?: {
     poblacion: number;

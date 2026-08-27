@@ -361,6 +361,13 @@ export default function SeekerApp({
   const [capaDemografica, setCapaDemografica] = useState(false);
   const [agebsGeo, setAgebsGeo] = useState<AgebGeo[] | null>(null);
   const [cargandoCapa, setCargandoCapa] = useState(false);
+  /**
+   * Área de influencia alrededor de cada POI censado para el universo
+   * demográfico (censos de marca/territoriales). NO es el radio de
+   * exportación de geocercas (radioGeocerca): aquel es la geocerca
+   * chica para DSPs; este define quién vive "cerca" del punto.
+   */
+  const [radioInfluencia, setRadioInfluencia] = useState(500);
   /** Geocercas de la última búsqueda, para el choropleth bajo demanda. */
   const geocercasRef = useRef<GeocercaUniverso[] | null>(null);
 
@@ -897,28 +904,53 @@ export default function SeekerApp({
     reportar("idle", "Listo para buscar");
   }
 
-  // ---- universos de un censo: geocercas por POI (radio de geocerca)
-  async function calcularUniversosDeCenso(lista: Poi[]): Promise<Universos | null> {
+  // ---- universos de un censo: área de influencia alrededor de cada POI.
+  // Cada punto censado se convierte en un buffer de radioInfluencia; el
+  // servidor los UNE (ST_Union, sin contar doble los traslapes) y corre
+  // la interpolación areal de AGEBs contra esa geometría unificada —
+  // igual que los radios del modo por orígenes.
+  const etiquetaMetros = (m: number) =>
+    m >= 1000 ? `${m / 1000} km` : `${m} m`;
+
+  async function calcularUniversosDeCenso(
+    lista: Poi[],
+    radio: number = radioInfluencia
+  ): Promise<Universos | null> {
     if (lista.length === 0) return null;
     try {
       const geocercas: GeocercaUniverso[] = lista.slice(0, 2000).map((p) => ({
         id: p.placeId,
         lat: p.lat,
         lng: p.lng,
-        radio_m: radioGeocerca,
+        radio_m: radio,
       }));
       geocercasRef.current = geocercas;
       const { universos: u } = await postJson<{ universos: Universos }>(
         "/api/universos",
         { geocercas }
       );
-      setUniversos(u);
+      const conCriterio: Universos = u?.disponible
+        ? {
+            ...u,
+            criterio: `población a ${etiquetaMetros(radio)} de los puntos censados`,
+          }
+        : u;
+      setUniversos(conCriterio);
       setAgebsGeo(null);
       setCapaDemografica(false);
-      return u;
+      return conCriterio;
     } catch (e) {
       console.error("No se pudieron calcular universos del censo:", e);
       return null;
+    }
+  }
+
+  // Cambiar el radio de influencia recalcula los universos del censo
+  // en pantalla (la capa demográfica se apaga: quedaría desfasada).
+  async function cambiarRadioInfluencia(radio: number) {
+    setRadioInfluencia(radio);
+    if ((mode === "census" || mode === "territorial") && pois.length > 0) {
+      await calcularUniversosDeCenso(pois, radio);
     }
   }
 
@@ -2497,6 +2529,20 @@ export default function SeekerApp({
               >
                 {cargandoCapa ? "Cargando AGEBs…" : "◆ Capa demográfica"}
               </button>
+              {(mode === "census" || mode === "territorial") && (
+                <select
+                  value={radioInfluencia}
+                  onChange={(e) => cambiarRadioInfluencia(Number(e.target.value))}
+                  className="rounded-full border border-linea bg-panel2 px-2.5 py-1 font-mono text-[10px] text-zinc-400 focus:border-violeta focus:outline-none"
+                  title="Área de influencia alrededor de cada punto censado para el universo demográfico"
+                >
+                  {[300, 500, 1000, 2000].map((m) => (
+                    <option key={m} value={m}>
+                      Influencia {m >= 1000 ? `${m / 1000} km` : `${m} m`}
+                    </option>
+                  ))}
+                </select>
+              )}
               {fechaCensoUsado && (
                 <span className="rounded-full border border-zinc-500/40 bg-zinc-500/10 px-3 py-1 font-mono text-[10px] text-[#9ca3af]">
                   censo del{" "}
