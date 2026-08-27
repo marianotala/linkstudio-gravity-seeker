@@ -357,9 +357,11 @@ export default function AdminView({
               Sube el shapefile de CPs de una entidad (
               <span className="text-zinc-300">.shp + .dbf + .prj</span>) del
               dataset oficial de Correos de México en datos.gob.mx
-              (&quot;códigos postales, coordenadas y colonias&quot;). La carga
-              es acumulativa por entidad y habilita el modo de búsqueda
-              &quot;Por código postal&quot;.
+              (&quot;códigos postales, coordenadas y colonias&quot;): campo{" "}
+              <span className="text-zinc-300">d_codigo</span>, proyección
+              Mexico_ITRF2008_LCC — la reproyección a WGS84 es automática.
+              La carga es acumulativa por entidad y habilita el modo de
+              búsqueda &quot;Por código postal&quot;.
             </p>
 
             <div className="mt-4 flex gap-2">

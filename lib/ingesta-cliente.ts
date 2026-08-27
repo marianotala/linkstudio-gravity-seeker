@@ -346,16 +346,19 @@ export interface CpRegistro {
   geometria: Record<string, unknown>;
 }
 
-// Nombres de campo de CP vistos en los shapefiles publicados (varían
-// por versión del dataset); si ninguno aparece, se autodetecta la
-// columna cuyos valores son códigos de 4-5 dígitos.
+// Campo del CP en el .dbf. El dataset oficial de Correos de México
+// (datos.gob.mx) trae UN solo campo: d_codigo, texto de 5 dígitos con
+// ceros a la izquierda (verificado; la comparación es sin
+// mayúsculas). Los demás nombres cubren otras versiones publicadas;
+// si ninguno aparece, se autodetecta la columna cuyos valores son
+// códigos de 4-5 dígitos.
 const CAMPOS_CP = [
+  "D_CODIGO",
   "D_CP",
   "CP",
   "COD_POST",
   "CODIGO_POS",
   "C_POSTAL",
-  "D_CODIGO",
   "CVE_CP",
   "CODIGO",
 ];
