@@ -771,7 +771,9 @@ begin
     (r ->> 'vph_inter')::int,
     (r ->> 'vph_pc')::int,
     (r ->> 'nse_proxy')::numeric,
-    ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(r -> 'geometria'), 4326))
+    ST_Multi(ST_CollectionExtract(ST_MakeValid(
+      ST_SetSRID(ST_GeomFromGeoJSON(r -> 'geometria'), 4326)
+    ), 3))
   from jsonb_array_elements(p_agebs) as r
   on conflict (cvegeo) do update set
     entidad = excluded.entidad, municipio = excluded.municipio,
@@ -801,10 +803,12 @@ as $$
   select coalesce(jsonb_agg(jsonb_build_object(
     'entidad', entidad,
     'agebs', n,
-    'poblacion', pob
+    'poblacion', pob,
+    'sin_censo', sin_censo
   ) order by entidad), '[]'::jsonb)
   from (
-    select entidad, count(*) as n, sum(pobtot) as pob
+    select entidad, count(*) as n, sum(pobtot) as pob,
+           count(*) - count(pobtot) as sin_censo
     from public.agebs
     group by entidad
   ) t;
@@ -929,7 +933,9 @@ begin
     (r ->> 'vph_inter')::int,
     (r ->> 'vph_pc')::int,
     (r ->> 'nse_proxy')::numeric,
-    ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(r -> 'geometria'), 4326))
+    ST_Multi(ST_CollectionExtract(ST_MakeValid(
+      ST_SetSRID(ST_GeomFromGeoJSON(r -> 'geometria'), 4326)
+    ), 3))
   from jsonb_array_elements(p_agebs) as r
   on conflict (cvegeo) do update set
     entidad = excluded.entidad, municipio = excluded.municipio,
@@ -1254,7 +1260,9 @@ begin
   select
     r ->> 'codigo_postal',
     p_entidad,
-    ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(r -> 'geometria'), 4326))
+    ST_Multi(ST_CollectionExtract(ST_MakeValid(
+      ST_SetSRID(ST_GeomFromGeoJSON(r -> 'geometria'), 4326)
+    ), 3))
   from jsonb_array_elements(p_cps) as r
   on conflict (codigo_postal) do update set
     entidad = excluded.entidad,
@@ -1443,3 +1451,22 @@ $$;
 
 revoke execute on function public.celdas_en_cps(text[], jsonb) from public, anon;
 grant execute on function public.celdas_en_cps(text[], jsonb) to authenticated;
+
+
+-- ============================================================
+-- MIGRACIÓN FASE 9 — geometrías válidas (reparación una vez)
+-- ============================================================
+-- La simplificación de la ingesta puede dejar self-intersections;
+-- una geometría inválida hace tronar ST_Intersection en
+-- calcular_universos para cualquier zona que la toque. Los upserts
+-- de arriba ya escriben con ST_MakeValid; esto repara lo cargado
+-- antes de esta migración (aplicado al proyecto el 2026-08-27:
+-- 29 AGEBs y 180 CPs reparados).
+
+update public.agebs
+set geom = extensions.ST_Multi(extensions.ST_CollectionExtract(extensions.ST_MakeValid(geom), 3))
+where not extensions.ST_IsValid(geom);
+
+update public.cp_poligonos
+set geom = extensions.ST_Multi(extensions.ST_CollectionExtract(extensions.ST_MakeValid(geom), 3))
+where not extensions.ST_IsValid(geom);

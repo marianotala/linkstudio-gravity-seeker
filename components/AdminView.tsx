@@ -19,6 +19,8 @@ interface ResumenEntidad {
   entidad: string;
   agebs: number;
   poblacion: number | null;
+  /** AGEBs cargados sin datos censales (solo geometría). */
+  sin_censo?: number;
 }
 
 interface ResumenCps {
@@ -510,6 +512,14 @@ export default function AdminView({
                       </td>
                       <td className="py-2 pr-3 text-right text-zinc-400">
                         {r.poblacion?.toLocaleString("es-MX") ?? "—"}
+                        {(r.sin_censo ?? 0) > 0 && (
+                          <span
+                            className="ml-2 text-amber-400"
+                            title="AGEBs sin datos censales (solo geometría): vuelve a subir el RESAGEBURB de esta entidad"
+                          >
+                            ⚠ {r.sin_censo!.toLocaleString("es-MX")} sin censo
+                          </span>
+                        )}
                       </td>
                       <td className="py-2 text-right">
                         <button

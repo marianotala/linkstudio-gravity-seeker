@@ -18,8 +18,14 @@ const FACTOR_MATCH =
 export const ETIQUETA_FUENTE_UNIVERSOS =
   "Censo 2020 INEGI · AGEB urbana · interpolación areal · índice socioeconómico aproximado (proxy censal)";
 
-const MENSAJE_NO_DISPONIBLE =
-  "Universos no disponibles para esta zona — falta cargar la entidad en la base demográfica (corre scripts/ingesta-ageb).";
+// Dos fallas DISTINTAS con mensajes distintos: que la zona no tenga
+// AGEBs cargados (acción: cargar la entidad en /admin) no es lo mismo
+// que un error de consulta (acción: reintentar / avisar). Colapsarlas
+// mandaba a recargar entidades que sí estaban.
+const MENSAJE_SIN_DATOS =
+  "Sin datos demográficos para esta zona — carga la entidad en Admin.";
+const MENSAJE_ERROR_CONSULTA =
+  "No se pudieron calcular los universos demográficos (error de consulta). Vuelve a intentar; si persiste, avisa al admin.";
 
 interface RpcUniversos {
   disponible: boolean;
@@ -82,11 +88,17 @@ export async function calcularUniversos(
     });
     if (error) {
       console.error("calcular_universos falló:", error.message);
-      return { disponible: false, mensaje: MENSAJE_NO_DISPONIBLE };
+      return { disponible: false, mensaje: MENSAJE_ERROR_CONSULTA };
     }
     const r = data as RpcUniversos;
     if (!r?.disponible || !r.total) {
-      return { disponible: false, mensaje: MENSAJE_NO_DISPONIBLE };
+      // el RPC sí corrió: la verificación es espacial (¿algún AGEB
+      // intersecta la zona?) — sin AGEBs = falta cargar la entidad
+      return {
+        disponible: false,
+        mensaje:
+          r?.motivo === "sin_agebs" ? MENSAJE_SIN_DATOS : MENSAJE_ERROR_CONSULTA,
+      };
     }
     return {
       disponible: true,
@@ -127,6 +139,6 @@ export async function calcularUniversos(
     };
   } catch (e) {
     console.error("calcularUniversos:", e);
-    return { disponible: false, mensaje: MENSAJE_NO_DISPONIBLE };
+    return { disponible: false, mensaje: MENSAJE_ERROR_CONSULTA };
   }
 }
