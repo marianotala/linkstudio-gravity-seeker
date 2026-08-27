@@ -57,6 +57,22 @@ export interface Poi {
   actividad?: string | null;
   /** Solo modo CP: código postal (polígono) que contiene al POI. */
   cp?: string | null;
+  /** Capa de categoría a la que pertenece (multi-búsqueda en la misma
+   * geografía); null/ausente en búsquedas de una sola capa. */
+  capa?: string | null;
+}
+
+/** Una búsqueda de POIs acumulada sobre la geografía activa (capa de
+ * categoría). Vive en la sesión; el Planner la heredará como survey. */
+export interface CapaBusqueda {
+  id: string;
+  /** Término/categoría buscada (nombre visible de la capa). */
+  nombre: string;
+  color: string;
+  pois: Poi[];
+  visible: boolean;
+  excluidos: number;
+  descartadosPorNombre: number;
 }
 
 /** Polígono de código postal, tal como lo regresa /api/cps. */

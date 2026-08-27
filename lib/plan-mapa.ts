@@ -24,6 +24,8 @@ interface OpcionesMapa {
   cps?: CpPoligono[];
   /** Rectángulos de zona (modo zona). */
   zonas?: Origin[];
+  /** Color por nombre de capa (multi-búsqueda sobre la misma geografía). */
+  colorPorCapa?: Record<string, string>;
 }
 
 const lngAX = (lng: number, z: number) => ((lng + 180) / 360) * 2 ** z;
@@ -203,12 +205,14 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
         ctx.stroke();
       }
     }
-    // POIs
+    // POIs (con capas, el color identifica a la capa)
     for (const p of o.pois) {
       const [px, py] = aPx(p.lat, p.lng);
       ctx.beginPath();
       ctx.arc(px, py, 4.5, 0, Math.PI * 2);
-      ctx.fillStyle = p.fuente === "denue" ? NARANJA : MAGENTA;
+      ctx.fillStyle =
+        (p.capa ? o.colorPorCapa?.[p.capa] : undefined) ??
+        (p.fuente === "denue" ? NARANJA : MAGENTA);
       ctx.fill();
       ctx.strokeStyle = "#0a0a0f";
       ctx.lineWidth = 1.2;

@@ -65,7 +65,7 @@ export default function ResultsTable({
                 const activo = seleccionado?.placeId === p.placeId;
                 return (
                   <tr
-                    key={p.placeId}
+                    key={`${p.capa ?? ""}:${p.placeId}`}
                     onClick={() => onSeleccionar(p)}
                     className={`cursor-pointer border-t border-linea/60 transition-colors hover:bg-panel2 ${
                       activo ? "bg-panel2 text-magenta" : "text-zinc-300"

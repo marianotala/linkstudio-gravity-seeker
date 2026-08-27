@@ -36,6 +36,7 @@ import {
 import type {
   AgebGeo,
   ApiError,
+  CapaBusqueda,
   Censo,
   CensoPoi,
   CpPoligono,
@@ -128,6 +129,19 @@ const MAX_CELDAS_CP =
   Number(process.env.NEXT_PUBLIC_MAX_CELDAS_CP) > 0
     ? Number(process.env.NEXT_PUBLIC_MAX_CELDAS_CP)
     : 200;
+
+// Capas de categoría: varias búsquedas de POIs sobre la MISMA
+// geografía (CPs o zonas). El universo demográfico es del territorio,
+// no de los POIs, así que se comparte entre capas.
+const MAX_CAPAS = 6;
+const PALETA_CAPAS = [
+  "#f4368a", // magenta
+  "#2fb9e8", // cian
+  "#9d5cf0", // violeta
+  "#34d399", // verde
+  "#fbbf24", // ámbar
+  "#ff8c42", // naranja
+];
 
 /** Celda de cobertura del modo por CP, ligada al CP que la generó. */
 interface CeldaCp {
@@ -391,6 +405,11 @@ export default function SeekerApp({
   /** Etiquetas fijas de CP sobre los polígonos (apagadas por default). */
   const [etiquetasCp, setEtiquetasCp] = useState(false);
 
+  // ---- capas de categoría (multi-búsqueda sobre la misma geografía)
+  const [capas, setCapas] = useState<CapaBusqueda[]>([]);
+  /** true = la PRÓXIMA búsqueda se agrega como capa en vez de reemplazar. */
+  const agregarCapaRef = useRef(false);
+
   // ---- universos demográficos y capa AGEB
   const [universos, setUniversos] = useState<Universos | null>(null);
   const [capaDemografica, setCapaDemografica] = useState(false);
@@ -458,6 +477,60 @@ export default function SeekerApp({
       (universos.porGeocerca ?? []).map((g) => [g.id, g.poblacion])
     );
   }, [mode, universos]);
+
+  // ---- capas: derivados y registro
+  const hayCapas = capas.length > 0;
+  const poisActivos = useMemo(
+    () =>
+      hayCapas
+        ? capas.filter((c) => c.visible).flatMap((c) => c.pois)
+        : poisVisibles,
+    [hayCapas, capas, poisVisibles]
+  );
+  const colorPorCapa = useMemo(
+    () => Object.fromEntries(capas.map((c) => [c.nombre, c.color])),
+    [capas]
+  );
+
+  /** Nombre visible de la búsqueda actual (para la capa). */
+  function nombreCapaActual(): string {
+    return categoria === SOLO_NOMBRE
+      ? nameFilter.trim() || "Búsqueda"
+      : (CATEGORIAS.find((c) => c.key === categoria)?.label ?? categoria);
+  }
+
+  /** Registra la búsqueda recién terminada como capa. Sin el flag de
+   * "agregar", reemplaza el set completo (comportamiento de siempre);
+   * con el flag, se suma (o actualiza la capa del mismo nombre). */
+  function registrarCapa(nombre: string, lista: Poi[], excluidos: number, descartados: number) {
+    setCapas((prev) => {
+      const base = agregarCapaRef.current ? prev.filter((c) => c.nombre !== nombre) : [];
+      if (base.length >= MAX_CAPAS) return prev;
+      const usados = new Set(base.map((c) => c.color));
+      const color =
+        PALETA_CAPAS.find((c) => !usados.has(c)) ??
+        PALETA_CAPAS[base.length % PALETA_CAPAS.length];
+      return [
+        ...base,
+        {
+          id: `${nombre}-${lista.length}-${base.length}`,
+          nombre,
+          color,
+          visible: true,
+          excluidos,
+          descartadosPorNombre: descartados,
+          pois: lista.map((p) => ({ ...p, capa: nombre })),
+        },
+      ];
+    });
+    agregarCapaRef.current = false;
+  }
+
+  // cambiar de modo cambia la geografía: las capas no sobreviven
+  useEffect(() => {
+    setCapas([]);
+    agregarCapaRef.current = false;
+  }, [mode]);
 
   function reportar(tipo: StatusTipo, texto: string) {
     setStatus({ tipo, texto });
@@ -1271,6 +1344,7 @@ export default function SeekerApp({
       }
 
       setPois(lista);
+      registrarCapa(nombreCapaActual(), lista, excluidosTotal, descartadosTotal);
       setContadores({
         excluidos: excluidosTotal,
         descartadosPorNombre: descartadosTotal,
@@ -1391,6 +1465,8 @@ export default function SeekerApp({
     setNombreArchivoCps("");
     setCoberturaCp(null);
     setTituloPlan("");
+    setCapas([]);
+    agregarCapaRef.current = false;
     setCensoSugerido(null);
     setAvisoDescartado(false);
     setActualizarDe(null);
@@ -1947,6 +2023,17 @@ export default function SeekerApp({
       };
       const data = await postJson<SearchResponse>("/api/search", body);
       setPois(data.pois);
+      // en modo zona la búsqueda se acumula como capa (misma geografía)
+      if (mode === "zone") {
+        registrarCapa(
+          nombreCapaActual(),
+          data.pois,
+          data.excluidos,
+          data.descartadosPorNombre
+        );
+      } else {
+        setCapas([]);
+      }
       setContadores({
         excluidos: data.excluidos,
         descartadosPorNombre: data.descartadosPorNombre,
@@ -2032,7 +2119,10 @@ export default function SeekerApp({
   //      clic. La generación es 100% client-side (@react-pdf/renderer,
   //      importado bajo demanda) y el mapa se captura en canvas.
   async function exportarPlan() {
-    if (poisVisibles.length === 0 && !universos?.disponible) {
+    const poisPlan = hayCapas
+      ? capas.flatMap((c) => c.pois)
+      : poisVisibles;
+    if (poisPlan.length === 0 && !universos?.disponible) {
       reportar("error", "Corre una búsqueda primero para exportar el plan");
       return;
     }
@@ -2043,7 +2133,8 @@ export default function SeekerApp({
         await Promise.all([import("@/lib/plan-pdf"), import("@/lib/plan-mapa")]);
 
       const mapaDataUrl = await capturarMapaPlan({
-        pois: poisVisibles,
+        pois: poisPlan,
+        colorPorCapa,
         origenes: mode === "origins" ? origenes : undefined,
         radioM: mode === "origins" ? radio : undefined,
         cps: mode === "cp" ? cpsGeo : undefined,
@@ -2075,9 +2166,9 @@ export default function SeekerApp({
                     .join(", ")}${cpsGeo.length > 4 ? ` +${cpsGeo.length - 4}` : ""}`
                 : `${origenes.length} orígenes`;
 
-      const hayDenue = poisVisibles.some((p) => p.fuente !== "google");
+      const hayDenue = poisPlan.some((p) => p.fuente !== "google");
       const hayGoogle =
-        poisVisibles.length === 0 || poisVisibles.some((p) => p.fuente !== "denue");
+        poisPlan.length === 0 || poisPlan.some((p) => p.fuente !== "denue");
       const fuentes = [
         ...(hayGoogle ? ["Google Places API (New) — establecimientos"] : []),
         ...(hayDenue ? ["DENUE, INEGI — establecimientos"] : []),
@@ -2089,16 +2180,22 @@ export default function SeekerApp({
           : []),
       ];
 
+      const terminoPlan =
+        capas.length > 1 ? capas.map((c) => c.nombre).join(" · ") : termino;
       const fecha = new Date();
-      const tituloFinal = tituloPlan.trim() || `${termino} — ${alcance}`;
+      const tituloFinal = tituloPlan.trim() || `${terminoPlan} — ${alcance}`;
       const blob = await generarPlanPdf({
         modo: mode,
         titulo: tituloPlan.trim() || null,
-        termino,
+        termino: terminoPlan,
         alcance,
         usuario: usuario?.nombre ?? usuario?.email ?? "Seeker",
         fecha,
-        pois: poisVisibles,
+        pois: poisPlan,
+        capas:
+          capas.length > 1
+            ? capas.map((c) => ({ nombre: c.nombre, color: c.color, pois: c.pois }))
+            : undefined,
         nombresOrigen: centrosActivos.map(
           (c, i) => c.nombre ?? `Origen ${i + 1}`
         ),
@@ -2126,8 +2223,8 @@ export default function SeekerApp({
       URL.revokeObjectURL(url);
 
       // dos entregables, un clic: el Export data acompaña al plan
-      if (poisVisibles.length > 0) {
-        exportarCsv(poisVisibles, centrosActivos, universos);
+      if (poisPlan.length > 0) {
+        exportarCsv(poisPlan, centrosActivos, universos);
       }
       reportar("ok", "Export plan (PDF) + Export data (CSV) descargados");
     } catch (e) {
@@ -2304,7 +2401,7 @@ export default function SeekerApp({
       <div className="grid shrink-0 grid-cols-2 gap-3 xl:grid-cols-4">
         <Kpi
           titulo="POIs encontrados"
-          valor={String(poisVisibles.length)}
+          valor={String(poisActivos.length)}
           caption={
             mode === "census"
               ? progresoCenso
@@ -3042,6 +3139,74 @@ export default function SeekerApp({
             </section>
           )}
 
+          {/* capas de categoría: varias búsquedas sobre la misma
+              geografía (solo zona y CP; el universo es del territorio) */}
+          {(mode === "zone" || mode === "cp") && hayCapas && (
+            <section className={pasoCls}>
+              <label className={labelCls}>
+                Capas de búsqueda · {capas.length}/{MAX_CAPAS}
+              </label>
+              {capas.map((c) => (
+                <div key={c.id} className="flex items-center gap-2 py-1">
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: c.color }}
+                  />
+                  <span
+                    className={`min-w-0 flex-1 truncate font-mono text-[11px] ${c.visible ? "text-zinc-200" : "text-zinc-600 line-through"}`}
+                  >
+                    {c.nombre}
+                  </span>
+                  <span className="font-mono text-[10px] text-zinc-500">
+                    {c.pois.length.toLocaleString("es-MX")}
+                  </span>
+                  <button
+                    onClick={() =>
+                      setCapas((prev) =>
+                        prev.map((x) =>
+                          x.id === c.id ? { ...x, visible: !x.visible } : x
+                        )
+                      )
+                    }
+                    className="font-mono text-[11px] text-zinc-500 transition-colors hover:text-cian"
+                    title={c.visible ? "Ocultar capa" : "Mostrar capa"}
+                  >
+                    {c.visible ? "●" : "○"}
+                  </button>
+                  <button
+                    onClick={() =>
+                      setCapas((prev) => prev.filter((x) => x.id !== c.id))
+                    }
+                    className="font-mono text-[12px] text-zinc-600 transition-colors hover:text-magenta"
+                    title="Eliminar capa (no afecta a las demás ni a la geografía)"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              {capas.length < MAX_CAPAS && (
+                <button
+                  onClick={() => {
+                    agregarCapaRef.current = true;
+                    setNameFilter("");
+                    reportar(
+                      "ok",
+                      "La geografía se mantiene: elige la nueva categoría o término y presiona Buscar"
+                    );
+                  }}
+                  disabled={ocupado}
+                  className="mt-2 w-full rounded-md border border-dashed border-linea bg-panel2 px-3 py-2 font-mono text-[11px] text-zinc-400 transition-colors hover:border-emerald-400 hover:text-emerald-400 disabled:opacity-40"
+                >
+                  + Agregar otra búsqueda en esta zona
+                </button>
+              )}
+              <p className="mt-2 font-mono text-[10px] leading-relaxed text-zinc-600">
+                El universo demográfico es del territorio y se comparte
+                entre capas.
+              </p>
+            </section>
+          )}
+
           {/* 03 · radio (solo orígenes: zona usa sus límites y el censo
               usa radio de celda + alcance del paso 02) */}
           {mode === "origins" && (
@@ -3255,7 +3420,7 @@ export default function SeekerApp({
               <button
                 onClick={exportarPlan}
                 disabled={
-                  ocupado || (poisVisibles.length === 0 && !universos?.disponible)
+                  ocupado || (poisActivos.length === 0 && !universos?.disponible)
                 }
                 className="rounded-md border border-magenta bg-magenta/10 px-3 py-2 text-left font-mono text-[11px] font-medium text-magenta transition-colors hover:bg-magenta/20 disabled:opacity-30"
                 title="PDF comercial con branding Gravity + CSV de datos, en un clic"
@@ -3264,15 +3429,15 @@ export default function SeekerApp({
                 <span className="text-magenta/60">+ Export data · Gravity_Plan_*.pdf</span>
               </button>
               <button
-                onClick={() => exportarCsv(poisVisibles, centrosActivos, universos)}
-                disabled={poisVisibles.length === 0}
+                onClick={() => exportarCsv(poisActivos, centrosActivos, universos)}
+                disabled={poisActivos.length === 0}
                 className="rounded-md border border-linea bg-panel2 px-3 py-2 text-left font-mono text-[11px] text-zinc-300 transition-colors hover:border-cian hover:text-cian disabled:opacity-30"
               >
                 ↓ CSV de POIs <span className="text-zinc-600">seeker_pois.csv</span>
               </button>
               <button
-                onClick={() => exportarGeoJsonPuntos(poisVisibles)}
-                disabled={poisVisibles.length === 0}
+                onClick={() => exportarGeoJsonPuntos(poisActivos)}
+                disabled={poisActivos.length === 0}
                 className="rounded-md border border-linea bg-panel2 px-3 py-2 text-left font-mono text-[11px] text-zinc-300 transition-colors hover:border-cian hover:text-cian disabled:opacity-30"
               >
                 ↓ GeoJSON puntos{" "}
@@ -3280,9 +3445,9 @@ export default function SeekerApp({
               </button>
               <button
                 onClick={() =>
-                  exportarGeoJsonGeocercas(poisVisibles, radioGeocerca, vertices, universos)
+                  exportarGeoJsonGeocercas(poisActivos, radioGeocerca, vertices, universos)
                 }
-                disabled={poisVisibles.length === 0}
+                disabled={poisActivos.length === 0}
                 className="rounded-md border border-linea bg-panel2 px-3 py-2 text-left font-mono text-[11px] text-zinc-300 transition-colors hover:border-magenta hover:text-magenta disabled:opacity-30"
               >
                 ↓ GeoJSON geocercas por POI{" "}
@@ -3392,7 +3557,7 @@ export default function SeekerApp({
           </div>
 
           {/* universos demográficos — siempre visibles junto a los resultados */}
-          <UniversosPanel universos={universos} />
+          <UniversosPanel universos={universos} notaTerritorio={capas.length > 1} />
 
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <MapView
@@ -3409,7 +3574,7 @@ export default function SeekerApp({
                       : 0
                     : radio
               }
-              pois={poisVisibles}
+              pois={poisActivos}
               foco={foco}
               celdas={
                 mode === "census" || mode === "territorial"
@@ -3427,9 +3592,38 @@ export default function SeekerApp({
               cps={mode === "cp" ? cpsGeo : undefined}
               etiquetasCp={etiquetasCp}
               poblacionCp={poblacionPorCp}
+              colorPorCapa={colorPorCapa}
             />
+            {/* leyenda de capas sobre el mapa (clic = mostrar/ocultar) */}
+            {capas.length > 1 && (
+              <div className="absolute bottom-3 left-3 z-[1000] flex flex-col gap-1 rounded-md border border-linea bg-fondo/90 px-2.5 py-2">
+                {capas.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() =>
+                      setCapas((prev) =>
+                        prev.map((x) =>
+                          x.id === c.id ? { ...x, visible: !x.visible } : x
+                        )
+                      )
+                    }
+                    className={`flex items-center gap-1.5 font-mono text-[10px] transition-opacity ${c.visible ? "text-zinc-300" : "text-zinc-600 opacity-60"}`}
+                    title={c.visible ? "Ocultar capa" : "Mostrar capa"}
+                  >
+                    <span
+                      className="h-2 w-2 rounded-full"
+                      style={{ backgroundColor: c.color }}
+                    />
+                    {c.nombre}
+                    <span className="text-zinc-600">
+                      {c.pois.length.toLocaleString("es-MX")}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
             <ResultsTable
-              pois={poisVisibles}
+              pois={poisActivos}
               origenes={centrosActivos}
               poblacionPorOrigen={poblacionPorOrigen}
               colapsada={tablaColapsada}

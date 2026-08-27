@@ -57,6 +57,12 @@ export interface PlanDatos {
   exclusiones: string[];
   /** Censo de competencia (activa Geo-Fence Conquista). */
   esCompetencia?: boolean;
+  /**
+   * Capas de categoría (multi-búsqueda sobre la misma geografía).
+   * Con 2+, el plan muestra el universo UNA vez (es del territorio) y
+   * una sección de resultados por capa. `pois` debe traer la unión.
+   */
+  capas?: { nombre: string; color: string; pois: Poi[] }[] | null;
 }
 
 // ------------------------------------------------------------------
@@ -361,7 +367,18 @@ const TACTICAS = {
 };
 
 /** Tácticas según el modo del análisis (3-4 máximo, las más relevantes). */
-export function tacticasParaModo(modo: SearchMode, esCompetencia: boolean) {
+export function tacticasParaModo(
+  modo: SearchMode,
+  esCompetencia: boolean,
+  multiCapa = false
+) {
+  // varias categorías censadas → activación multi-categoría del
+  // territorio: Geo-Fence POI + Geo-Targeting encabezan el set
+  if (multiCapa) {
+    return modo === "cp"
+      ? [TACTICAS.poi, TACTICAS.targeting, TACTICAS.pdooh]
+      : [TACTICAS.poi, TACTICAS.targeting, TACTICAS.trade];
+  }
   switch (modo) {
     case "census":
       return esCompetencia
@@ -391,20 +408,56 @@ function segmentosEdades(u: Universos | null): Segmento[] | null {
     : null;
 }
 
-/** Zona/CP con más POIs: [nombre, conteo]. */
-function zonaConMasPois(d: PlanDatos): [string, number] | null {
-  if (d.pois.length === 0) return null;
+/** Conteo de POIs por zona/CP de una lista. */
+function conteoPorZona(pois: Poi[], nombresOrigen: string[]): Map<string, number> {
   const conteo = new Map<string, number>();
-  for (const p of d.pois) {
-    const zona = p.cp ? `CP ${p.cp}` : (d.nombresOrigen[p.origenIdx] ?? "—");
+  for (const p of pois) {
+    const zona = p.cp ? `CP ${p.cp}` : (nombresOrigen[p.origenIdx] ?? "—");
     conteo.set(zona, (conteo.get(zona) ?? 0) + 1);
   }
-  return Array.from(conteo.entries()).sort((a, b) => b[1] - a[1])[0];
+  return conteo;
 }
 
-/** 2-3 hallazgos con reglas simples sobre los datos. Redacción sobria. */
+/** Zona/CP con más POIs de una lista: [nombre, conteo]. */
+function zonaTop(pois: Poi[], nombresOrigen: string[]): [string, number] | null {
+  if (pois.length === 0) return null;
+  return Array.from(conteoPorZona(pois, nombresOrigen).entries()).sort(
+    (a, b) => b[1] - a[1]
+  )[0];
+}
+
+function zonaConMasPois(d: PlanDatos): [string, number] | null {
+  return zonaTop(d.pois, d.nombresOrigen);
+}
+
+/** 2-3 hallazgos con reglas simples sobre los datos. Redacción sobria.
+ * Con capas, prioriza el comparativo entre categorías cuando aporta. */
 function hallazgos(d: PlanDatos): string[] {
   const salida: string[] = [];
+  const capas = d.capas && d.capas.length > 1 ? d.capas : null;
+
+  // comparativo entre capas: la zona líder de una categoría vs el peso
+  // de la otra en esa misma zona (solo si el contraste es real)
+  if (capas) {
+    const conPois = capas.filter((c) => c.pois.length > 2);
+    bucle: for (const a of conPois) {
+      const topA = zonaTop(a.pois, d.nombresOrigen);
+      if (!topA) continue;
+      const pctA = (100 * topA[1]) / a.pois.length;
+      for (const b of conPois) {
+        if (b === a) continue;
+        const enZona = conteoPorZona(b.pois, d.nombresOrigen).get(topA[0]) ?? 0;
+        const pctB = (100 * enZona) / b.pois.length;
+        if (pctA - pctB >= 15) {
+          salida.push(
+            `${topA[0]} concentra ${Math.round(pctA)}% de ${a.nombre.toLowerCase()} pero solo ${Math.round(pctB)}% de ${b.nombre.toLowerCase()}.`
+          );
+          break bucle;
+        }
+      }
+    }
+  }
+
   const nse = segmentosNse(d.universos?.disponible ? d.universos : null);
   if (nse) {
     const top = [...nse].sort((a, b) => b.pct - a.pct)[0];
@@ -413,7 +466,7 @@ function hallazgos(d: PlanDatos): string[] {
     );
   }
   const zona = zonaConMasPois(d);
-  if (zona && d.pois.length > 1 && d.nombresOrigen.length > 1) {
+  if (!capas && zona && d.pois.length > 1 && d.nombresOrigen.length > 1) {
     salida.push(
       `La mayor concentración de puntos está en ${zona[0]}: ${fmt(zona[1])} de ${fmt(d.pois.length)} (${Math.round((100 * zona[1]) / d.pois.length)}%).`
     );
@@ -429,6 +482,7 @@ function hallazgos(d: PlanDatos): string[] {
 }
 
 const FILAS_TABLA = 12;
+const FILAS_POR_CAPA = 8;
 const ALTO_MAPA = Math.round((CONT * 9) / 16); // 16:9 dentro del ancho
 
 /** Alto del lienzo calculado por bloques (una sola página vertical:
@@ -439,20 +493,30 @@ function estimarAltura(d: PlanDatos, titulo: string): number {
   const u = d.universos?.disponible ? d.universos : null;
   const nse = segmentosNse(u);
   const edades = segmentosEdades(u);
-  const filas = Math.min(d.pois.length, FILAS_TABLA);
+  const capas = d.capas && d.capas.length > 1 ? d.capas : null;
   const nHallazgos = hallazgos(d).length;
   const porGeocerca = (u?.porGeocerca ?? []).filter((g) => g.poblacion > 0).slice(0, 8);
-  const tacticas = tacticasParaModo(d.modo, d.esCompetencia ?? false);
+  const tacticas = tacticasParaModo(d.modo, d.esCompetencia ?? false, !!capas);
 
   const lineasTitulo = Math.max(1, Math.ceil(titulo.length / 42));
   let h = MARGEN; // padding superior
   h += 56 + lineasTitulo * 34 + 78; // bloque 1: logo + título + slogan/fecha + divisor
   h += 96; // cifras
+  if (capas) h += 26; // fila de conteos por capa
   if (nse) h += 62;
   if (edades) h += 62;
   h += 46; // línea fuente + divisor + aire
-  if (d.mapaDataUrl) h += 44 + ALTO_MAPA + 26; // bloque 3
-  if (filas > 0) h += 66 + 18 + 16 + filas * 15.5 + 22; // bloque 4a tabla
+  if (d.mapaDataUrl) h += 44 + ALTO_MAPA + (capas ? 20 : 0) + 26; // bloque 3
+  if (capas) {
+    // bloque 4a: una sección de resultados por capa
+    for (const c of capas) {
+      const filasCapa = Math.min(c.pois.length, FILAS_POR_CAPA);
+      h += 52 + 16 + 16 + filasCapa * 15.5 + 22;
+    }
+  } else {
+    const filas = Math.min(d.pois.length, FILAS_TABLA);
+    if (filas > 0) h += 66 + 18 + 16 + filas * 15.5 + 22; // bloque 4a tabla
+  }
   const colIzq = porGeocerca.length > 1 ? 26 + porGeocerca.length * 17 : 0;
   const colDer = nHallazgos > 0 ? 26 + nHallazgos * 52 : 0;
   if (colIzq || colDer) h += Math.max(colIzq, colDer) + 26; // bloque 4b
@@ -476,9 +540,27 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
   const u = d.universos?.disponible ? d.universos : null;
   const nse = segmentosNse(u);
   const edades = segmentosEdades(u);
-  const tacticas = tacticasParaModo(d.modo, d.esCompetencia ?? false);
-  const topPois = d.pois.slice(0, FILAS_TABLA);
-  const zonaTop = zonaConMasPois(d);
+  const capasDoc = d.capas && d.capas.length > 1 ? d.capas : null;
+  const tacticas = tacticasParaModo(d.modo, d.esCompetencia ?? false, !!capasDoc);
+  // una sección de resultados por capa; sin capas, una sola tabla
+  const seccionesResultados = capasDoc
+    ? capasDoc.map((c) => ({
+        nombre: c.nombre as string | null,
+        color: c.color as string | null,
+        pois: c.pois,
+        filasMax: FILAS_POR_CAPA,
+      }))
+    : d.pois.length > 0
+      ? [
+          {
+            nombre: null as string | null,
+            color: null as string | null,
+            pois: d.pois,
+            filasMax: FILAS_TABLA,
+          },
+        ]
+      : [];
+  const zonaTopGeneral = zonaConMasPois(d);
   const porGeocerca = (u?.porGeocerca ?? [])
     .filter((g) => g.poblacion > 0)
     .sort((a, b) => b.poblacion - a.poblacion)
@@ -552,6 +634,24 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
           <Cifra valor={u ? fmt(u.agebs ?? 0) : "—"} descriptor="Zonas censales analizadas" />
         </View>
 
+        {/* conteos por capa: el universo es UNO (del territorio); las
+            categorías censadas se listan con su color */}
+        {capasDoc && (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 16, alignItems: "center" }}>
+            {capasDoc.map((c, i) => (
+              <View key={c.nombre} style={{ flexDirection: "row", alignItems: "center", marginRight: 10 }}>
+                {i > 0 && (
+                  <Text style={{ fontFamily: "DMMono", fontSize: 9, color: GRIS_OSCURO, marginRight: 10 }}>·</Text>
+                )}
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.color, marginRight: 5 }} />
+                <Text style={{ fontFamily: "DMMono", fontSize: 9, color: TINTA }}>
+                  {c.nombre}: <Text style={{ color: BLANCO }}>{fmt(c.pois.length)}</Text>
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+
         {nse && (
           <View style={{ marginTop: 20 }}>
             <BarraApilada titulo="Nivel socioeconómico (proxy censal, no AMAI)" segmentos={nse} width={CONT} />
@@ -580,53 +680,94 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
               src={d.mapaDataUrl}
               style={{ width: CONT, height: ALTO_MAPA, borderRadius: 8, objectFit: "cover" }}
             />
+            {capasDoc && (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 8 }}>
+                {capasDoc.map((c, i) => (
+                  <View key={c.nombre} style={{ flexDirection: "row", alignItems: "center", marginRight: 12 }}>
+                    <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.color, marginRight: 4 }} />
+                    <Text style={{ fontFamily: "DMMono", fontSize: 8, color: GRIS }}>{c.nombre}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
         )}
 
-        {/* ---------- bloque 4 · resultados + inteligencia ---------- */}
-        {topPois.length > 0 && (
+        {/* ---------- bloque 4 · resultados + inteligencia ----------
+            con capas: UNA sección por capa, cada una con su top de
+            puntos y su línea de concentración */}
+        {seccionesResultados.length > 0 && (
           <View>
-            <Seccion etiqueta="Resultados" titulo={`Top ${topPois.length} puntos censados`} />
-            {zonaTop && d.nombresOrigen.length > 1 && (
+            <Seccion
+              etiqueta="Resultados"
+              titulo={
+                capasDoc
+                  ? `${capasDoc.length} categorías sobre el territorio`
+                  : `Top ${Math.min(d.pois.length, FILAS_TABLA)} puntos censados`
+              }
+            />
+            {!capasDoc && zonaTopGeneral && d.nombresOrigen.length > 1 && (
               <Text style={{ fontFamily: "Inter", fontSize: 9, color: GRIS, marginTop: -6, marginBottom: 8 }}>
-                Los puntos se concentran en {zonaTop[0]} ({fmt(zonaTop[1])} de {fmt(d.pois.length)}).
+                Los puntos se concentran en {zonaTopGeneral[0]} ({fmt(zonaTopGeneral[1])} de {fmt(d.pois.length)}).
               </Text>
             )}
-            <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 4 }}>
-              <Text style={[celdaTh, { width: 190 }]}>NOMBRE</Text>
-              <Text style={[celdaTh, { flex: 1 }]}>DIRECCIÓN</Text>
-              <Text style={[celdaTh, { width: 118 }]}>ZONA / CP</Text>
-              <Text style={[celdaTh, { width: 48, textAlign: "right" }]}>DIST. M</Text>
-            </View>
-            {topPois.map((p, i) => (
-              <View
-                key={p.placeId}
-                style={{
-                  flexDirection: "row",
-                  paddingTop: 3,
-                  paddingBottom: 3,
-                  backgroundColor: i % 2 === 1 ? PANEL : undefined,
-                }}
-              >
-                <Text style={[celdaTd, { width: 190, color: BLANCO }]}>
-                  {p.nombre.length > 33 ? p.nombre.slice(0, 32) + "…" : p.nombre}
-                </Text>
-                <Text style={[celdaTd, { flex: 1, color: GRIS }]}>
-                  {p.direccion.length > 46 ? p.direccion.slice(0, 45) + "…" : p.direccion}
-                </Text>
-                <Text style={[celdaTd, { width: 118, color: GRIS }]}>
-                  {(p.cp ? `CP ${p.cp}` : (d.nombresOrigen[p.origenIdx] ?? "—")).slice(0, 19)}
-                </Text>
-                <Text style={[celdaTd, { width: 48, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
-                  {fmt(p.distancia)}
-                </Text>
-              </View>
-            ))}
-            {d.pois.length > topPois.length && (
-              <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
-                +{fmt(d.pois.length - topPois.length)} registros más — detalle completo en el Export data (CSV).
-              </Text>
-            )}
+            {seccionesResultados.map((sec) => {
+              const filas = sec.pois.slice(0, sec.filasMax);
+              const topZonaSec = zonaTop(sec.pois, d.nombresOrigen);
+              return (
+                <View key={sec.nombre ?? "unica"} style={{ marginBottom: capasDoc ? 16 : 0 }}>
+                  {sec.nombre && (
+                    <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 5 }}>
+                      <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: sec.color ?? MAGENTA, marginRight: 6 }} />
+                      <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 12.5, color: BLANCO }}>
+                        {sec.nombre}
+                      </Text>
+                      <Text style={{ fontFamily: "DMMono", fontSize: 8.5, color: GRIS, marginLeft: 8 }}>
+                        {fmt(sec.pois.length)} puntos
+                        {topZonaSec && d.nombresOrigen.length > 1
+                          ? ` · concentrados en ${topZonaSec[0]} (${Math.round((100 * topZonaSec[1]) / sec.pois.length)}%)`
+                          : ""}
+                      </Text>
+                    </View>
+                  )}
+                  <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 4 }}>
+                    <Text style={[celdaTh, { width: 190 }]}>NOMBRE</Text>
+                    <Text style={[celdaTh, { flex: 1 }]}>DIRECCIÓN</Text>
+                    <Text style={[celdaTh, { width: 118 }]}>ZONA / CP</Text>
+                    <Text style={[celdaTh, { width: 48, textAlign: "right" }]}>DIST. M</Text>
+                  </View>
+                  {filas.map((p, i) => (
+                    <View
+                      key={`${sec.nombre ?? ""}:${p.placeId}`}
+                      style={{
+                        flexDirection: "row",
+                        paddingTop: 3,
+                        paddingBottom: 3,
+                        backgroundColor: i % 2 === 1 ? PANEL : undefined,
+                      }}
+                    >
+                      <Text style={[celdaTd, { width: 190, color: BLANCO }]}>
+                        {p.nombre.length > 33 ? p.nombre.slice(0, 32) + "…" : p.nombre}
+                      </Text>
+                      <Text style={[celdaTd, { flex: 1, color: GRIS }]}>
+                        {p.direccion.length > 46 ? p.direccion.slice(0, 45) + "…" : p.direccion}
+                      </Text>
+                      <Text style={[celdaTd, { width: 118, color: GRIS }]}>
+                        {(p.cp ? `CP ${p.cp}` : (d.nombresOrigen[p.origenIdx] ?? "—")).slice(0, 19)}
+                      </Text>
+                      <Text style={[celdaTd, { width: 48, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
+                        {fmt(p.distancia)}
+                      </Text>
+                    </View>
+                  ))}
+                  {sec.pois.length > filas.length && (
+                    <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
+                      +{fmt(sec.pois.length - filas.length)} registros más — detalle completo en el Export data (CSV).
+                    </Text>
+                  )}
+                </View>
+              );
+            })}
           </View>
         )}
 

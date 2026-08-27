@@ -73,8 +73,11 @@ function BarraApilada({
 
 export default function UniversosPanel({
   universos,
+  notaTerritorio = false,
 }: {
   universos: Universos | null;
+  /** Con capas activas: el universo es del TERRITORIO, no de los POIs. */
+  notaTerritorio?: boolean;
 }) {
   const [detalle, setDetalle] = useState(false);
 
@@ -174,6 +177,12 @@ export default function UniversosPanel({
           Censo 2020 INEGI ·{" "}
           {fmt(universos.agebs ?? porAgeb.length)} zonas censales analizadas
           {universos.criterio && ` · ${universos.criterio}`}
+          {notaTerritorio && (
+            <span className="text-zinc-500">
+              {" "}
+              · universo del territorio, compartido por todas las capas
+            </span>
+          )}
         </p>
         <button
           onClick={() => setDetalle((d) => !d)}

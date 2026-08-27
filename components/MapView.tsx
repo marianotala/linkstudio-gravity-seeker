@@ -108,6 +108,8 @@ interface MapViewProps {
   etiquetasCp?: boolean;
   /** Población por CP (de universos.porGeocerca), para el popup. */
   poblacionCp?: Record<string, number>;
+  /** Color por nombre de capa (multi-búsqueda sobre la misma geografía). */
+  colorPorCapa?: Record<string, string>;
 }
 
 /** Ajusta la vista cuando cambian orígenes/zona/POIs, y vuela al foco. */
@@ -436,10 +438,15 @@ export default function MapView(props: MapViewProps) {
       )}
 
       {pois.map((p) => {
-        const c = colorPoi(p.fuente);
+        // con capas activas el color identifica a la CAPA; sin capas,
+        // a la fuente (google/denue/ambas) como siempre
+        const colorCapa = p.capa ? props.colorPorCapa?.[p.capa] : undefined;
+        const c = colorCapa
+          ? { color: colorCapa, fillColor: colorCapa }
+          : colorPoi(p.fuente);
         return (
           <CircleMarker
-            key={p.placeId}
+            key={`${p.capa ?? ""}:${p.placeId}`}
             center={[p.lat, p.lng]}
             radius={5}
             pathOptions={{
@@ -460,6 +467,7 @@ export default function MapView(props: MapViewProps) {
                   fuente: {p.fuente.toUpperCase()}
                   {p.estrato ? ` · ${p.estrato}` : ""}
                 </div>
+                {p.capa && <div>capa: {p.capa}</div>}
                 {p.actividad && <div>{p.actividad}</div>}
               </div>
             </Popup>
