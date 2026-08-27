@@ -17,7 +17,14 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import type { AgebGeo, LatLng, Origin, Poi, SearchMode } from "@/lib/types";
+import type {
+  AgebGeo,
+  CpPoligono,
+  LatLng,
+  Origin,
+  Poi,
+  SearchMode,
+} from "@/lib/types";
 
 const CIAN = "#2fb9e8";
 const MAGENTA = "#f4368a";
@@ -79,6 +86,8 @@ interface MapViewProps {
   radioCelda?: number;
   /** Capa demográfica: AGEBs que intersectan las geocercas. */
   agebs?: AgebGeo[] | null;
+  /** Modo CP: polígonos reales de los códigos postales. */
+  cps?: CpPoligono[];
 }
 
 /** Ajusta la vista cuando cambian orígenes/zona/POIs, y vuela al foco. */
@@ -91,6 +100,7 @@ function Encuadre({
   foco,
   radio,
   celdas,
+  cps,
 }: MapViewProps) {
   const map = useMap();
 
@@ -114,6 +124,11 @@ function Encuadre({
           puntos.push([z.lat, z.lng]);
         }
       });
+    } else if (mode === "cp") {
+      (cps ?? []).forEach((c) => {
+        puntos.push([c.bbox.south, c.bbox.west]);
+        puntos.push([c.bbox.north, c.bbox.east]);
+      });
     } else if (zona) {
       puntos.push([zona.lat, zona.lng]);
     }
@@ -127,7 +142,7 @@ function Encuadre({
     }
     map.fitBounds(L.latLngBounds(puntos).pad(0.15));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, origenes, zona, zonas, pois, celdas, map]);
+  }, [mode, origenes, zona, zonas, pois, celdas, cps, map]);
 
   return null;
 }
@@ -143,6 +158,7 @@ export default function MapView(props: MapViewProps) {
     celdas,
     radioCelda,
     agebs,
+    cps,
   } = props;
 
   return (
@@ -218,6 +234,36 @@ export default function MapView(props: MapViewProps) {
           }}
         />
       ))}
+
+      {/* modo CP: polígonos reales de códigos postales (estilo zona),
+          con la etiqueta del CP fija en cada polígono */}
+      {mode === "cp" &&
+        (cps ?? []).map(
+          (c) =>
+            c.geometria && (
+              <GeoJSON
+                key={c.codigo_postal}
+                data={c.geometria as unknown as GeoJSON.GeoJsonObject}
+                style={{
+                  color: VIOLETA,
+                  weight: 1.5,
+                  opacity: 0.75,
+                  fillColor: VIOLETA,
+                  fillOpacity: 0.07,
+                }}
+                onEachFeature={(_f, layer) => {
+                  layer.bindTooltip(
+                    `<span style="font-family:monospace;font-size:11px;font-weight:700">${c.codigo_postal}</span>`,
+                    {
+                      permanent: true,
+                      direction: "center",
+                      className: "etiqueta-cp",
+                    }
+                  );
+                }}
+              />
+            )
+        )}
 
       {(mode === "census" || mode === "territorial") &&
         (celdas ?? []).map((c, i) => (

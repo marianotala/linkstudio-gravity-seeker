@@ -214,15 +214,18 @@ export async function parsearShapefileInegi(
   const proj4 = proj4mod.default;
 
   // 1) definición de proyección COMO TEXTO: el WKT del .prj si proj4
-  //    lo parsea; si falta o no parsea, la Lambert de INEGI directa
-  let defProyeccion = INEGI_LCC;
+  //    lo parsea. Sin .prj legible NO se asume proyección (los
+  //    shapefiles de CP suelen venir ya en WGS84): se parsea crudo y
+  //    el respaldo de abajo reproyecta con la Lambert de INEGI solo
+  //    si las coordenadas resultan proyectadas (metros).
+  let defProyeccion: string | undefined;
   if (prjFile) {
     const wkt = await prjFile.text();
     try {
       proj4(wkt);
       defProyeccion = wkt;
     } catch {
-      defProyeccion = INEGI_LCC;
+      defProyeccion = undefined;
     }
   }
 
@@ -246,7 +249,7 @@ export async function parsearShapefileInegi(
   })(fc.features[0]?.geometry && (fc.features[0].geometry as { coordinates?: unknown }).coordinates);
 
   if (primera && (Math.abs(primera[0]) > 180 || Math.abs(primera[1]) > 90)) {
-    const conv = proj4(defProyeccion);
+    const conv = proj4(defProyeccion ?? INEGI_LCC);
     for (const f of fc.features) {
       const g = f.geometry as { coordinates?: unknown } | null;
       if (g?.coordinates) {
@@ -331,4 +334,108 @@ export function construirAgebs(
     });
   }
   return { registros, sinCenso, saltados };
+}
+
+// ------------------------------------------------------------------
+// Polígonos de códigos postales (Correos de México / datos.gob.mx)
+// ------------------------------------------------------------------
+
+/** Registro listo para admin_upsert_cps. */
+export interface CpRegistro {
+  codigo_postal: string;
+  geometria: Record<string, unknown>;
+}
+
+// Nombres de campo de CP vistos en los shapefiles publicados (varían
+// por versión del dataset); si ninguno aparece, se autodetecta la
+// columna cuyos valores son códigos de 4-5 dígitos.
+const CAMPOS_CP = [
+  "D_CP",
+  "CP",
+  "COD_POST",
+  "CODIGO_POS",
+  "C_POSTAL",
+  "D_CODIGO",
+  "CVE_CP",
+  "CODIGO",
+];
+
+function detectarCampoCp(fc: GeoJSON.FeatureCollection): string | null {
+  const muestra = fc.features.slice(0, 50);
+  if (muestra.length === 0) return null;
+  const llaves = Object.keys(muestra[0].properties ?? {});
+  const porNombre = llaves.find((k) =>
+    CAMPOS_CP.includes(k.trim().toUpperCase())
+  );
+  if (porNombre) return porNombre;
+  // autodetección: ≥80% de los valores son códigos de 4-5 dígitos
+  // (4 = ceros iniciales perdidos por tipado numérico del .dbf)
+  for (const k of llaves) {
+    const valores = muestra
+      .map((f) => String((f.properties as Record<string, unknown>)?.[k] ?? "").trim())
+      .filter(Boolean);
+    if (
+      valores.length >= muestra.length * 0.8 &&
+      valores.filter((v) => /^\d{4,5}$/.test(v)).length >= valores.length * 0.8
+    ) {
+      return k;
+    }
+  }
+  return null;
+}
+
+/**
+ * Agrupa las geometrías del shapefile por código postal (5 dígitos,
+ * preservando ceros a la izquierda) en un MultiPolygon por CP,
+ * simplificado para carga vía admin_upsert_cps.
+ */
+export function construirCps(
+  fc: GeoJSON.FeatureCollection,
+  toleranciaSimplify = 0.0001
+): { registros: CpRegistro[]; sinCp: number; campoCp: string | null } {
+  const campoCp = detectarCampoCp(fc);
+  if (!campoCp) return { registros: [], sinCp: fc.features.length, campoCp };
+
+  let sinCp = 0;
+  // un CP puede venir en varias features: se acumulan sus polígonos
+  const porCp = new Map<string, GeoJSON.Position[][][]>();
+  for (const f of fc.features) {
+    const crudo = String(
+      (f.properties as Record<string, unknown>)?.[campoCp] ?? ""
+    ).trim();
+    if (!/^\d{4,5}$/.test(crudo) || !f.geometry) {
+      sinCp++;
+      continue;
+    }
+    const cp = crudo.padStart(5, "0");
+
+    let geometria = f.geometry;
+    try {
+      geometria = simplify(
+        { type: "Feature", properties: {}, geometry: f.geometry },
+        { tolerance: toleranciaSimplify, highQuality: false }
+      ).geometry;
+    } catch {
+      // si la simplificación degenera el polígono, se usa el original
+    }
+
+    const acumulado = porCp.get(cp) ?? [];
+    if (geometria.type === "Polygon") {
+      acumulado.push(geometria.coordinates as GeoJSON.Position[][]);
+    } else if (geometria.type === "MultiPolygon") {
+      acumulado.push(...(geometria.coordinates as GeoJSON.Position[][][]));
+    } else {
+      sinCp++;
+      continue;
+    }
+    porCp.set(cp, acumulado);
+  }
+
+  const registros: CpRegistro[] = Array.from(porCp.entries()).map(
+    ([codigo_postal, coordinates]) => ({
+      codigo_postal,
+      geometria: { type: "MultiPolygon", coordinates },
+    })
+  );
+  return { registros, sinCp, campoCp };
 }

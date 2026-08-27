@@ -146,3 +146,57 @@ export function parsearDirecciones(texto: string): string[] {
     .map((l) => l.trim())
     .filter(Boolean);
 }
+
+// ------------------------------------------------------------------
+// Códigos postales (modo "Por código postal")
+// ------------------------------------------------------------------
+
+/** Normaliza un valor de celda/token a CP de 5 dígitos, o null.
+ * Acepta 4 dígitos (celdas numéricas de Excel que perdieron el cero
+ * inicial: 1000 → "01000") y re-rellena con ceros a la izquierda. */
+function aCp(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  const s =
+    typeof v === "number" && Number.isInteger(v)
+      ? String(v)
+      : String(v).trim();
+  return /^\d{4,5}$/.test(s) ? s.padStart(5, "0") : null;
+}
+
+/** Extrae CPs de texto libre: separados por comas, punto y coma,
+ * espacios o saltos de línea. Únicos, en orden de aparición. */
+export function extraerCps(texto: string): string[] {
+  const vistos = new Set<string>();
+  for (const token of texto.split(/[\s,;]+/)) {
+    const cp = aCp(token);
+    if (cp) vistos.add(cp);
+  }
+  return Array.from(vistos);
+}
+
+/** Extrae CPs de un Excel/CSV de una columna. Tolera encabezado
+ * presente o ausente (las celdas que no son códigos de 4-5 dígitos se
+ * ignoran) y celdas numéricas que perdieron el cero inicial. */
+export async function parsearArchivoCps(file: File): Promise<string[]> {
+  const nombre = file.name.toLowerCase();
+  const vistos = new Set<string>();
+  const registrar = (celda: unknown) => {
+    const cp = aCp(celda);
+    if (cp) vistos.add(cp);
+  };
+  if (nombre.endsWith(".csv") || nombre.endsWith(".txt")) {
+    const res = Papa.parse<string[]>(await file.text(), {
+      header: false,
+      skipEmptyLines: true,
+    });
+    for (const fila of res.data) for (const celda of fila) registrar(celda);
+  } else {
+    const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    const filas = XLSX.utils.sheet_to_json<unknown[]>(
+      wb.Sheets[wb.SheetNames[0]],
+      { header: 1, defval: "" }
+    );
+    for (const fila of filas) for (const celda of fila) registrar(celda);
+  }
+  return Array.from(vistos);
+}

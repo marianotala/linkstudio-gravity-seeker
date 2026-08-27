@@ -119,3 +119,15 @@ body {
   color: #e4e4e7 !important;
   border-color: #26262e !important;
 }
+
+/* Etiqueta del código postal sobre su polígono (modo Por CP) */
+.etiqueta-cp {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: #c9a8f7;
+  text-shadow: 0 1px 3px rgba(10, 10, 12, 0.9);
+}
+.etiqueta-cp::before {
+  display: none;
+}

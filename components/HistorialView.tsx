@@ -20,6 +20,12 @@ function etiquetaAlcance(b: BusquedaGuardada): string {
   if (b.mode === "zone") {
     return b.params.centers[0]?.nombre ?? "Zona sin nombre";
   }
+  if (b.mode === "cp") {
+    const cps = b.params.cps ?? [];
+    return cps.length > 0
+      ? `CP ${cps.slice(0, 4).join(", ")}${cps.length > 4 ? ` +${cps.length - 4}` : ""}`
+      : "Códigos postales";
+  }
   if (b.mode === "census") {
     const ciudad = b.params.censo?.ciudad ?? b.params.centers[0]?.nombre ?? "Ciudad";
     const celdas = b.params.censo?.celdas;
@@ -180,14 +186,18 @@ export default function HistorialView({
                               ? "text-cian"
                               : b.mode === "zone"
                                 ? "text-violeta"
-                                : "text-magenta"
+                                : b.mode === "cp"
+                                  ? "text-emerald-400"
+                                  : "text-magenta"
                           }
                         >
                           {b.mode === "origins"
                             ? "Orígenes"
                             : b.mode === "zone"
                               ? "Zona"
-                              : "Censo"}
+                              : b.mode === "cp"
+                                ? "Código postal"
+                                : "Censo"}
                         </span>
                       </td>
                       <td className="px-3 py-2.5">

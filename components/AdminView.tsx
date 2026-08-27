@@ -9,6 +9,7 @@ import AppHeader from "./AppHeader";
 import { createClient } from "@/lib/supabase/client";
 import {
   construirAgebs,
+  construirCps,
   parsearCensoInegi,
   parsearShapefileInegi,
 } from "@/lib/ingesta-cliente";
@@ -18,6 +19,11 @@ interface ResumenEntidad {
   entidad: string;
   agebs: number;
   poblacion: number | null;
+}
+
+interface ResumenCps {
+  entidad: string;
+  cps: number;
 }
 
 const NOMBRES_ENTIDAD: Record<string, string> = {
@@ -46,10 +52,21 @@ export default function AdminView({
   const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error" | "info"; texto: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // ---- carga de polígonos de códigos postales
+  const [resumenCps, setResumenCps] = useState<ResumenCps[]>([]);
+  const [archivosCp, setArchivosCp] = useState<File[]>([]);
+  const [entidadCp, setEntidadCp] = useState("");
+  const [cargandoCp, setCargandoCp] = useState(false);
+  const [progresoCp, setProgresoCp] = useState<{ hecho: number; total: number } | null>(null);
+  const [mensajeCp, setMensajeCp] = useState<{ tipo: "ok" | "error" | "info"; texto: string } | null>(null);
+  const inputCpRef = useRef<HTMLInputElement>(null);
+
   async function cargarResumen() {
     const supabase = createClient();
     const { data } = await supabase.rpc("agebs_resumen");
     setResumen(((data ?? []) as ResumenEntidad[]) ?? []);
+    const { data: cps } = await supabase.rpc("cps_resumen");
+    setResumenCps(((cps ?? []) as ResumenCps[]) ?? []);
   }
   useEffect(() => {
     cargarResumen();
@@ -150,6 +167,91 @@ export default function AdminView({
     }
   }
 
+  // ---- polígonos de códigos postales (shapefile de Correos de México)
+  const porExtensionCp = (ext: string) =>
+    archivosCp.find((f) => f.name.toLowerCase().endsWith(ext));
+  const shpCp = porExtensionCp(".shp");
+  const dbfCp = porExtensionCp(".dbf");
+  const prjCp = porExtensionCp(".prj");
+  const listoParaCargarCp = Boolean(shpCp && dbfCp && entidadCp);
+
+  async function cargarCps() {
+    if (!shpCp || !dbfCp || !entidadCp) return;
+    setCargandoCp(true);
+    setMensajeCp(null);
+    setProgresoCp(null);
+    try {
+      setMensajeCp({ tipo: "info", texto: "Leyendo shapefile de CPs…" });
+      const fc = await parsearShapefileInegi(shpCp, dbfCp, prjCp);
+      const { registros, sinCp, campoCp } = construirCps(fc);
+      if (registros.length === 0) {
+        setMensajeCp({
+          tipo: "error",
+          texto: campoCp
+            ? "El shapefile no trae códigos postales válidos de 4-5 dígitos."
+            : "No encontré la columna de código postal en el .dbf (busqué D_CP, CP, COD_POST y similares, y ninguna columna trae códigos de 5 dígitos).",
+        });
+        return;
+      }
+
+      const supabase = createClient();
+      let hecho = 0;
+      for (let i = 0; i < registros.length; i += LOTE) {
+        const lote = registros.slice(i, i + LOTE);
+        const { error } = await supabase.rpc("admin_upsert_cps", {
+          p_entidad: entidadCp,
+          p_cps: lote,
+        });
+        if (error) {
+          throw new Error(
+            /row-level security/i.test(error.message)
+              ? "Tu usuario no tiene rol admin: no puede cargar datos."
+              : error.message
+          );
+        }
+        hecho += lote.length;
+        setProgresoCp({ hecho, total: registros.length });
+        setMensajeCp({
+          tipo: "info",
+          texto: `Cargando: ${hecho.toLocaleString("es-MX")} de ${registros.length.toLocaleString("es-MX")} CPs…`,
+        });
+      }
+
+      setMensajeCp({
+        tipo: "ok",
+        texto: `Listo: ${registros.length.toLocaleString("es-MX")} códigos postales cargados (columna ${campoCp})${sinCp > 0 ? ` · ${sinCp} geometrías saltadas` : ""}. Ya puedes buscarlos en el modo "Por código postal".`,
+      });
+      setArchivosCp([]);
+      if (inputCpRef.current) inputCpRef.current.value = "";
+      await cargarResumen();
+    } catch (e) {
+      setMensajeCp({
+        tipo: "error",
+        texto: e instanceof Error ? e.message : "Error al cargar los archivos",
+      });
+    } finally {
+      setCargandoCp(false);
+      setProgresoCp(null);
+    }
+  }
+
+  async function borrarEntidadCp(entidad: string) {
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("cp_poligonos")
+      .delete()
+      .eq("entidad", entidad);
+    if (error) {
+      setMensajeCp({ tipo: "error", texto: `No se pudo borrar: ${error.message}` });
+    } else {
+      setMensajeCp({
+        tipo: "ok",
+        texto: `CPs de la entidad ${entidad} eliminados`,
+      });
+      await cargarResumen();
+    }
+  }
+
   async function borrarEntidad(entidad: string) {
     const supabase = createClient();
     const { error } = await supabase.from("agebs").delete().eq("entidad", entidad);
@@ -243,6 +345,135 @@ export default function AdminView({
               >
                 {mensaje.texto}
               </p>
+            )}
+          </div>
+
+          {/* carga de polígonos de códigos postales */}
+          <div className="tarjeta glow-cian px-6 py-6">
+            <h2 className="font-display text-xl font-extrabold tracking-tight text-white">
+              Cargar polígonos de códigos postales
+            </h2>
+            <p className="mt-1 font-mono text-[11px] leading-relaxed text-zinc-500">
+              Sube el shapefile de CPs de una entidad (
+              <span className="text-zinc-300">.shp + .dbf + .prj</span>) del
+              dataset oficial de Correos de México en datos.gob.mx
+              (&quot;códigos postales, coordenadas y colonias&quot;). La carga
+              es acumulativa por entidad y habilita el modo de búsqueda
+              &quot;Por código postal&quot;.
+            </p>
+
+            <div className="mt-4 flex gap-2">
+              <select
+                value={entidadCp}
+                onChange={(e) => setEntidadCp(e.target.value)}
+                className={`${inputCls} w-56`}
+              >
+                <option value="">Entidad…</option>
+                {Object.entries(NOMBRES_ENTIDAD).map(([clave, nombre]) => (
+                  <option key={clave} value={clave}>
+                    {clave} · {nombre}
+                  </option>
+                ))}
+              </select>
+              <input
+                ref={inputCpRef}
+                type="file"
+                multiple
+                accept=".shp,.dbf,.prj,.shx"
+                onChange={(e) => setArchivosCp(Array.from(e.target.files ?? []))}
+                className={`${inputCls} file:mr-3 file:rounded file:border-0 file:bg-cian/20 file:px-3 file:py-1 file:font-mono file:text-[11px] file:text-cian`}
+              />
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-1.5 font-mono text-[10px]">
+              {[
+                [".shp (geometrías)", shpCp],
+                [".dbf (atributos)", dbfCp],
+                [".prj (proyección)", prjCp],
+              ].map(([etiqueta, archivo]) => (
+                <span
+                  key={etiqueta as string}
+                  className={`rounded-full border px-2.5 py-0.5 ${
+                    archivo
+                      ? "border-emerald-400/50 text-emerald-400"
+                      : "border-linea text-zinc-600"
+                  }`}
+                >
+                  {archivo ? "✓" : "○"} {etiqueta as string}
+                </span>
+              ))}
+              <span
+                className={`rounded-full border px-2.5 py-0.5 ${
+                  entidadCp
+                    ? "border-emerald-400/50 text-emerald-400"
+                    : "border-linea text-zinc-600"
+                }`}
+              >
+                {entidadCp ? "✓" : "○"} entidad
+              </span>
+            </div>
+
+            <button
+              onClick={cargarCps}
+              disabled={!listoParaCargarCp || cargandoCp}
+              className="mt-4 w-full rounded-md bg-cian px-3 py-2.5 font-display text-sm font-extrabold text-fondo transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              {cargandoCp ? "Cargando…" : "Cargar polígonos de CP"}
+            </button>
+
+            {progresoCp && (
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-fondo">
+                <div
+                  className="h-full rounded-full bg-cian transition-all"
+                  style={{ width: `${Math.round((progresoCp.hecho / progresoCp.total) * 100)}%` }}
+                />
+              </div>
+            )}
+            {mensajeCp && (
+              <p
+                className={`mt-3 font-mono text-[11px] leading-relaxed ${
+                  mensajeCp.tipo === "ok"
+                    ? "text-emerald-400"
+                    : mensajeCp.tipo === "error"
+                      ? "text-magenta"
+                      : "text-zinc-400"
+                }`}
+              >
+                {mensajeCp.texto}
+              </p>
+            )}
+
+            {resumenCps.length > 0 && (
+              <table className="mt-4 w-full text-left font-mono text-xs">
+                <thead className="text-zinc-500">
+                  <tr>
+                    <th className="py-1.5 pr-3 font-medium">Entidades con CPs cargados</th>
+                    <th className="py-1.5 pr-3 text-right font-medium">CPs</th>
+                    <th className="py-1.5 text-right font-medium"></th>
+                  </tr>
+                </thead>
+                <tbody className="text-zinc-300">
+                  {resumenCps.map((r) => (
+                    <tr key={r.entidad} className="border-t border-linea/60">
+                      <td className="py-2 pr-3">
+                        {r.entidad} · {NOMBRES_ENTIDAD[r.entidad] ?? "—"}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-cian">
+                        {r.cps.toLocaleString("es-MX")}
+                      </td>
+                      <td className="py-2 text-right">
+                        <button
+                          onClick={() => borrarEntidadCp(r.entidad)}
+                          disabled={cargandoCp}
+                          className="rounded border border-linea bg-panel2 px-2 py-1 text-[11px] text-zinc-500 transition-colors hover:border-magenta hover:text-magenta disabled:opacity-40"
+                        >
+                          Eliminar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
 

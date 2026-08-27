@@ -1,6 +1,6 @@
 // Tipos compartidos entre cliente y servidor.
 
-export type SearchMode = "origins" | "zone" | "census" | "territorial";
+export type SearchMode = "origins" | "zone" | "census" | "territorial" | "cp";
 
 /** Fuente de un POI: Google Places, DENUE (INEGI) o ambas (match cruzado). */
 export type Fuente = "google" | "denue" | "ambas";
@@ -55,6 +55,17 @@ export interface Poi {
   /** Solo DENUE: razón social y clase de actividad SCIAN. */
   razonSocial?: string | null;
   actividad?: string | null;
+  /** Solo modo CP: código postal (polígono) que contiene al POI. */
+  cp?: string | null;
+}
+
+/** Polígono de código postal, tal como lo regresa /api/cps. */
+export interface CpPoligono {
+  codigo_postal: string;
+  entidad: string;
+  bbox: Viewport;
+  /** GeoJSON geometry (MultiPolygon), para dibujar en el mapa. */
+  geometria: Record<string, unknown> | null;
 }
 
 /** Establecimiento crudo que regresa /api/denue. */
@@ -110,13 +121,15 @@ export interface DeltaCenso {
 // Universos demográficos (Censo 2020 INEGI, AGEB urbana)
 // ------------------------------------------------------------------
 
-/** Geocerca para calcular universos: círculo o rectángulo (viewport). */
+/** Geocerca para calcular universos: círculo, rectángulo (viewport)
+ * o polígono real de código postal ({cp: "11560"}). */
 export interface GeocercaUniverso {
   id: string;
   lat?: number;
   lng?: number;
   radio_m?: number;
   viewport?: Viewport;
+  cp?: string;
 }
 
 export interface UniversoPorGeocerca {
@@ -208,6 +221,8 @@ export interface SearchRequest {
   persist?: boolean;
   /** Solo en búsquedas census guardadas: metadata de la cuadrícula. */
   censo?: CensoInfo;
+  /** Solo modo cp: códigos postales de 5 dígitos (centers va vacío). */
+  cps?: string[];
 }
 
 export interface SearchResponse {

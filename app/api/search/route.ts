@@ -20,6 +20,9 @@ import type {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// El modo CP puede paginar searchText sobre varios códigos postales
+// en una sola llamada: hasta 60 s en Vercel.
+export const maxDuration = 60;
 
 const ViewportSchema = z
   .object({
@@ -66,11 +69,11 @@ function dentroDeViewport(
 
 const BodySchema = z
   .object({
-    mode: z.enum(["origins", "zone", "census"]),
+    mode: z.enum(["origins", "zone", "census", "cp"]),
     centers: z
       .array(CenterSchema)
-      .min(1, "Manda al menos un centro de búsqueda")
-      .max(200, "Máximo 200 orígenes por búsqueda"),
+      .max(200, "Máximo 200 orígenes por búsqueda")
+      .default([]),
     radius: z
       .number()
       .min(50, "El radio mínimo es 50 m")
@@ -79,6 +82,11 @@ const BodySchema = z
     nameFilter: z.string().trim().default(""),
     excludes: z.array(z.string().trim().min(1)).max(50).default([]),
     persist: z.boolean().optional(),
+    /** Solo modo cp: códigos postales de 5 dígitos. */
+    cps: z
+      .array(z.string().regex(/^\d{5}$/, "CP inválido: usa 5 dígitos"))
+      .max(25, "Máximo 25 códigos postales por búsqueda")
+      .optional(),
   })
   .refine((b) => b.category === SOLO_NOMBRE || getCategoria(b.category), {
     message: "Categoría desconocida",
@@ -91,6 +99,14 @@ const BodySchema = z
   .refine((b) => b.mode !== "census" || b.centers.length === 1, {
     message: "El modo censo procesa una celda por llamada",
     path: ["centers"],
+  })
+  .refine((b) => b.mode === "cp" || b.centers.length >= 1, {
+    message: "Manda al menos un centro de búsqueda",
+    path: ["centers"],
+  })
+  .refine((b) => b.mode !== "cp" || (b.cps?.length ?? 0) >= 1, {
+    message: "Manda al menos un código postal",
+    path: ["cps"],
   });
 
 // Límites diarios por usuario (los admin no tienen límite).
@@ -139,10 +155,54 @@ export async function POST(req: Request) {
     );
   }
 
-  const { mode, centers, radius, category, nameFilter, excludes } = parsed.data;
+  const { mode, radius, category, nameFilter, excludes } = parsed.data;
+  let centers = parsed.data.centers;
   // Las celdas de censo no se guardan como búsquedas individuales.
   const persistir = parsed.data.persist ?? mode !== "census";
   const categoria = getCategoria(category);
+
+  // Modo CP: resolver los códigos postales a sus polígonos. El bbox de
+  // cada CP se vuelve un "centro" tipo zona (searchText restringido al
+  // rectángulo) y el filtro fino contra el polígono REAL corre después
+  // vía puntos_en_cps.
+  const cpsPedidos = Array.from(new Set(parsed.data.cps ?? []));
+  let cpsEncontrados: {
+    codigo_postal: string;
+    entidad: string;
+    bbox: { north: number; south: number; east: number; west: number };
+  }[] = [];
+  if (mode === "cp") {
+    const { data, error } = await supabase.rpc("buscar_cps", {
+      p_cps: cpsPedidos,
+      p_incluir_geometria: false,
+    });
+    if (error) {
+      console.error("buscar_cps falló:", error.message);
+      return NextResponse.json(
+        { error: "No se pudieron consultar los códigos postales" },
+        { status: 502 }
+      );
+    }
+    const r = data as {
+      encontrados: typeof cpsEncontrados;
+      no_encontrados: string[];
+    };
+    cpsEncontrados = r.encontrados ?? [];
+    if (cpsEncontrados.length === 0) {
+      return NextResponse.json(
+        {
+          error: `Ningún CP está en la base de polígonos (${(r.no_encontrados ?? cpsPedidos).join(", ")}). Carga la entidad en Admin.`,
+        },
+        { status: 400 }
+      );
+    }
+    centers = cpsEncontrados.map((c) => ({
+      lat: (c.bbox.north + c.bbox.south) / 2,
+      lng: (c.bbox.east + c.bbox.west) / 2,
+      nombre: `CP ${c.codigo_postal}`,
+      viewport: c.bbox,
+    }));
+  }
 
   // Protección de cuota: 1 búsqueda normal o 1 celda de censo por llamada.
   // La RPC es security definer, atómica, y regresa permitido=true para admin.
@@ -183,9 +243,11 @@ export async function POST(req: Request) {
         searchNearby(c, radius, categoria.types)
       );
       crudos = porCentro.flat();
-    } else if (mode === "zone") {
+    } else if (mode === "zone" || mode === "cp") {
       // Modo zona: sin radio — restricción dura a los límites reales de
       // cada zona (viewport de Geocoding), paginado hasta 60 por zona.
+      // Modo CP: mismo mecanismo sobre el bbox de cada código postal;
+      // el recorte al polígono real viene después.
       const query = categoria ? categoria.textQuery : nameFilter;
       const porZona = await enLotes(centers, LOTE_CENTROS, (c) =>
         searchText(query, { rectangle: c.viewport ?? viewportDeRespaldo(c) })
@@ -259,7 +321,7 @@ export async function POST(req: Request) {
         }
       });
       const dentro =
-        mode === "zone"
+        mode === "zone" || mode === "cp"
           ? centers.some((c) =>
               dentroDeViewport(p, c.viewport ?? viewportDeRespaldo(c))
             )
@@ -278,7 +340,43 @@ export async function POST(req: Request) {
         });
       }
     }
-    pois.sort((a, b) => a.distancia - b.distancia);
+    // Modo CP: recorte fino al POLÍGONO real (el bbox de arriba es solo
+    // cobertura). puntos_en_cps regresa únicamente los puntos dentro de
+    // algún CP pedido, con el CP que los contiene — los de fuera se
+    // descartan aunque Google los haya devuelto.
+    let poisFinales = pois;
+    if (mode === "cp" && pois.length > 0) {
+      const { data, error } = await supabase.rpc("puntos_en_cps", {
+        p_cps: cpsEncontrados.map((c) => c.codigo_postal),
+        p_puntos: pois
+          .slice(0, 5000)
+          .map((p) => ({ id: p.placeId, lat: p.lat, lng: p.lng })),
+      });
+      if (error) {
+        console.error("puntos_en_cps falló:", error.message);
+        return NextResponse.json(
+          { error: "No se pudo aplicar el filtro espacial de los CPs" },
+          { status: 502 }
+        );
+      }
+      const cpPorId = new Map(
+        ((data ?? []) as { id: string; cp: string }[]).map((f) => [f.id, f.cp])
+      );
+      poisFinales = pois
+        .filter((p) => cpPorId.has(p.placeId))
+        .map((p) => {
+          const cp = cpPorId.get(p.placeId)!;
+          const idx = cpsEncontrados.findIndex((c) => c.codigo_postal === cp);
+          const centro = centers[idx] ?? centers[p.origenIdx];
+          return {
+            ...p,
+            cp,
+            origenIdx: idx >= 0 ? idx : p.origenIdx,
+            distancia: Math.round(haversine(centro, p)),
+          };
+        });
+    }
+    poisFinales.sort((a, b) => a.distancia - b.distancia);
 
     // Guardar la búsqueda + resultados en el historial (RPC = una sola
     // transacción, con RLS del usuario). Si el guardado falla, la
@@ -286,7 +384,7 @@ export async function POST(req: Request) {
     let searchId: string | null = null;
     if (!persistir) {
       return NextResponse.json({
-        pois,
+        pois: poisFinales,
         excluidos,
         descartadosPorNombre,
         detalleExcluidos,
@@ -296,16 +394,28 @@ export async function POST(req: Request) {
     }
 
     // Universos demográficos sobre las geocercas de la búsqueda:
-    // orígenes = círculos con su radio; zona = rectángulos (viewport).
+    // orígenes = círculos con su radio; zona = rectángulos (viewport);
+    // CP = interpolación areal contra el POLÍGONO real de cada código.
     // Nunca bloquea los POIs: si falla, universos.disponible = false.
     let universos: Universos | undefined;
-    if (pois.length > 0) {
-      const geocercas: GeocercaUniverso[] = centers.map((c, i) =>
-        mode === "zone"
-          ? { id: c.nombre ?? String(i), viewport: c.viewport ?? viewportDeRespaldo(c) }
-          : { id: c.nombre ?? String(i), lat: c.lat, lng: c.lng, radio_m: radius }
-      );
+    if (poisFinales.length > 0) {
+      const geocercas: GeocercaUniverso[] =
+        mode === "cp"
+          ? cpsEncontrados.map((c) => ({
+              id: c.codigo_postal,
+              cp: c.codigo_postal,
+            }))
+          : centers.map((c, i) =>
+              mode === "zone"
+                ? { id: c.nombre ?? String(i), viewport: c.viewport ?? viewportDeRespaldo(c) }
+                : { id: c.nombre ?? String(i), lat: c.lat, lng: c.lng, radio_m: radius }
+            );
       universos = await calcularUniversos(supabase, geocercas);
+      if (mode === "cp" && universos.disponible) {
+        const lista = cpsEncontrados.map((c) => c.codigo_postal);
+        const mostrados = lista.slice(0, 8).join(", ");
+        universos.criterio = `población dentro de los CPs ${mostrados}${lista.length > 8 ? ` y ${lista.length - 8} más` : ""}`;
+      }
     }
 
     try {
@@ -316,6 +426,7 @@ export async function POST(req: Request) {
         category,
         nameFilter,
         excludes,
+        ...(mode === "cp" ? { cps: cpsPedidos } : {}),
       };
       const etiquetaCategoria = categoria?.label ?? "Solo por nombre";
       const { data: idGuardado, error: errorGuardado } = await supabase.rpc(
@@ -328,7 +439,7 @@ export async function POST(req: Request) {
           p_universos: universos
             ? { ...universos, porAgeb: undefined, agebsGeo: undefined }
             : null,
-          p_results: pois.map((p) => ({
+          p_results: poisFinales.map((p) => ({
             name: p.nombre,
             category: etiquetaCategoria,
             lat: p.lat,
@@ -348,7 +459,7 @@ export async function POST(req: Request) {
     }
 
     const respuesta: SearchResponse = {
-      pois,
+      pois: poisFinales,
       excluidos,
       descartadosPorNombre,
       detalleExcluidos,

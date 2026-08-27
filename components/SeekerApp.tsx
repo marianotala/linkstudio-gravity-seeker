@@ -20,7 +20,9 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { DIAS_AMARILLO, frescuraCenso } from "@/lib/censos";
 import {
+  extraerCps,
   parsearArchivo,
+  parsearArchivoCps,
   parsearCoordenadas,
   parsearDirecciones,
   type ArchivoParseado,
@@ -36,6 +38,7 @@ import type {
   ApiError,
   Censo,
   CensoPoi,
+  CpPoligono,
   DeltaCenso,
   DenuePoi,
   Fuente,
@@ -356,6 +359,15 @@ export default function SeekerApp({
   // ---- filtro por estrato (DENUE)
   const [estratoFiltro, setEstratoFiltro] = useState("");
 
+  // ---- modo por código postal: polígonos reales de cp_poligonos
+  const [cpsInput, setCpsInput] = useState("");
+  const [cpsGeo, setCpsGeo] = useState<CpPoligono[]>([]);
+  const [cpsNoEncontrados, setCpsNoEncontrados] = useState<
+    { cp: string; sugerencia: string }[]
+  >([]);
+  const [nombreArchivoCps, setNombreArchivoCps] = useState("");
+  const cpFileRef = useRef<HTMLInputElement>(null);
+
   // ---- universos demográficos y capa AGEB
   const [universos, setUniversos] = useState<Universos | null>(null);
   const [capaDemografica, setCapaDemografica] = useState(false);
@@ -383,14 +395,21 @@ export default function SeekerApp({
         ? origenes
         : mode === "zone"
           ? zonas
-          : mode === "territorial"
-            ? terCentro
-              ? [terCentro]
-              : []
-            : zona
-              ? [zona]
-              : [],
-    [mode, origenes, zonas, zona, terCentro]
+          : mode === "cp"
+            ? cpsGeo.map((c) => ({
+                lat: (c.bbox.north + c.bbox.south) / 2,
+                lng: (c.bbox.east + c.bbox.west) / 2,
+                nombre: `CP ${c.codigo_postal}`,
+                viewport: c.bbox,
+              }))
+            : mode === "territorial"
+              ? terCentro
+                ? [terCentro]
+                : []
+              : zona
+                ? [zona]
+                : [],
+    [mode, origenes, zonas, zona, terCentro, cpsGeo]
   );
 
   // POIs visibles tras el filtro de estrato (afecta mapa, tabla y exports)
@@ -455,6 +474,9 @@ export default function SeekerApp({
         setTab("coordenadas");
       } else if (p.mode === "zone") {
         setZonas(p.centers);
+      } else if (p.mode === "cp") {
+        // restaurar los CPs; los polígonos se recargan con "Ver polígonos"
+        setCpsInput((p.cps ?? []).join(", "));
       } else {
         // census: restaurar marca, ciudad y configuración de cuadrícula
         setZona(p.centers[0] ?? null);
@@ -863,6 +885,72 @@ export default function SeekerApp({
     }
   }
 
+  // ---- paso 2 (modo CP): Excel/CSV de una columna con CPs
+  async function onArchivoCps(file: File | undefined) {
+    if (!file) return;
+    setNombreArchivoCps(file.name);
+    try {
+      const cps = await parsearArchivoCps(file);
+      if (cps.length === 0) {
+        reportar("error", "El archivo no trae códigos postales de 5 dígitos");
+        return;
+      }
+      // se suman a los del textarea, sin duplicar
+      setCpsInput((prev) => {
+        const todos = Array.from(new Set([...extraerCps(prev), ...cps]));
+        return todos.join(", ");
+      });
+      reportar("ok", `${cps.length} CPs detectados en ${file.name}`);
+    } catch {
+      reportar("error", "No pude leer el archivo. ¿Es un .xlsx o .csv válido?");
+    }
+  }
+
+  // ---- paso 2 (modo CP): resolver los CPs a sus polígonos reales
+  async function cargarCpsPoligonos() {
+    const cps = extraerCps(cpsInput);
+    if (cps.length === 0) {
+      reportar("error", "Escribe al menos un CP de 5 dígitos (p. ej. 11560, 11550)");
+      return;
+    }
+    if (cps.length > 25) {
+      reportar("error", "Máximo 25 códigos postales por búsqueda");
+      return;
+    }
+    setOcupado(true);
+    setFoco(null);
+    reportar("busy", `Buscando los polígonos de ${cps.length} CPs…`);
+    try {
+      const data = await postJson<{
+        encontrados: CpPoligono[];
+        noEncontrados: { cp: string; sugerencia: string }[];
+      }>("/api/cps", { cps });
+      setCpsGeo(data.encontrados);
+      setCpsNoEncontrados(data.noEncontrados);
+      if (data.encontrados.length === 0) {
+        reportar(
+          "error",
+          `Ningún CP está en la base de polígonos: ${data.noEncontrados.map((n) => `${n.cp} — ${n.sugerencia}`).join(" · ")}`
+        );
+        return;
+      }
+      reportar(
+        "ok",
+        `${data.encontrados.length} ${data.encontrados.length === 1 ? "polígono listo" : "polígonos listos"}${data.noEncontrados.length > 0 ? ` · ${data.noEncontrados.length} no encontrados` : ""}`
+      );
+    } catch (e) {
+      reportar("error", e instanceof Error ? e.message : "Error al consultar los CPs");
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  function quitarCp(cp: string) {
+    const quedan = cpsGeo.filter((c) => c.codigo_postal !== cp);
+    setCpsGeo(quedan);
+    setCpsInput(quedan.map((c) => c.codigo_postal).join(", "));
+  }
+
   // ---- nueva búsqueda: limpia todo y regresa al estado inicial
   function nuevaBusqueda() {
     detenerCensoRef.current = true;
@@ -885,6 +973,10 @@ export default function SeekerApp({
     setProgresoCenso(null);
     setTerLugarQuery("");
     setTerCentro(null);
+    setCpsInput("");
+    setCpsGeo([]);
+    setCpsNoEncontrados([]);
+    setNombreArchivoCps("");
     setCensoSugerido(null);
     setAvisoDescartado(false);
     setActualizarDe(null);
@@ -1407,7 +1499,9 @@ export default function SeekerApp({
         "error",
         mode === "origins"
           ? "Primero procesa tus orígenes (paso 02)"
-          : "Primero agrega al menos una zona (paso 02)"
+          : mode === "cp"
+            ? "Primero carga tus códigos postales y sus polígonos (paso 02)"
+            : "Primero agrega al menos una zona (paso 02)"
       );
       return;
     }
@@ -1422,16 +1516,21 @@ export default function SeekerApp({
       "busy",
       mode === "origins"
         ? `Buscando POIs alrededor de ${centrosActivos.length} orígenes…`
-        : `Buscando POIs en ${centrosActivos.length} ${centrosActivos.length === 1 ? "zona" : "zonas"}…`
+        : mode === "cp"
+          ? `Buscando POIs dentro de ${cpsGeo.length} ${cpsGeo.length === 1 ? "código postal" : "códigos postales"}…`
+          : `Buscando POIs en ${centrosActivos.length} ${centrosActivos.length === 1 ? "zona" : "zonas"}…`
     );
     try {
       const body: SearchRequest = {
         mode,
-        centers: centrosActivos,
+        centers: mode === "cp" ? [] : centrosActivos,
         radius: radio,
         category: categoria,
         nameFilter: nameFilter.trim(),
         excludes,
+        ...(mode === "cp"
+          ? { cps: cpsGeo.map((c) => c.codigo_postal) }
+          : {}),
       };
       const data = await postJson<SearchResponse>("/api/search", body);
       setPois(data.pois);
@@ -1448,11 +1547,14 @@ export default function SeekerApp({
       setUniversos(data.universos ?? null);
       setAgebsGeo(null);
       setCapaDemografica(false);
-      geocercasRef.current = centrosActivos.map((c, i) =>
-        mode === "zone"
-          ? { id: c.nombre ?? String(i), viewport: c.viewport }
-          : { id: c.nombre ?? String(i), lat: c.lat, lng: c.lng, radio_m: radio }
-      );
+      geocercasRef.current =
+        mode === "cp"
+          ? cpsGeo.map((c) => ({ id: c.codigo_postal, cp: c.codigo_postal }))
+          : centrosActivos.map((c, i) =>
+              mode === "zone"
+                ? { id: c.nombre ?? String(i), viewport: c.viewport }
+                : { id: c.nombre ?? String(i), lat: c.lat, lng: c.lng, radio_m: radio }
+            );
       setTablaColapsada(false);
       const extras: string[] = [];
       if (data.excluidos > 0) extras.push(`${data.excluidos} excluidos`);
@@ -1561,20 +1663,38 @@ export default function SeekerApp({
               ? "Orígenes"
               : mode === "zone"
                 ? "Zona"
-                : mode === "census"
-                  ? "Censo de marca"
-                  : "Censo territorial"
+                : mode === "cp"
+                  ? "Código postal"
+                  : mode === "census"
+                    ? "Censo de marca"
+                    : "Censo territorial"
           }
           color={
             mode === "origins"
               ? "text-cian"
               : mode === "zone"
                 ? "text-violeta"
-                : mode === "census"
-                  ? "text-magenta"
-                  : "text-[#ff8c42]"
+                : mode === "cp"
+                  ? "text-emerald-400"
+                  : mode === "census"
+                    ? "text-magenta"
+                    : "text-[#ff8c42]"
           }
         />
+        {mode === "cp" && (
+          <Segmento
+            etiqueta="CPs"
+            valor={
+              cpsGeo.length > 0
+                ? cpsGeo
+                    .slice(0, 6)
+                    .map((c) => c.codigo_postal)
+                    .join(" · ") + (cpsGeo.length > 6 ? ` +${cpsGeo.length - 6}` : "")
+                : "—"
+            }
+            color={cpsGeo.length > 0 ? "text-emerald-400" : "text-zinc-600"}
+          />
+        )}
         {mode === "origins" && (
           <Segmento
             etiqueta="Orígenes"
@@ -1640,7 +1760,7 @@ export default function SeekerApp({
             />
           </>
         )}
-        {mode !== "zone" && mode !== "territorial" && (
+        {mode !== "zone" && mode !== "territorial" && mode !== "cp" && (
           <Segmento
             etiqueta={mode === "census" ? "Alcance" : "Radio"}
             valor={fmtM(mode === "census" ? alcance : radio)}
@@ -1813,6 +1933,16 @@ export default function SeekerApp({
               >
                 Censo territorial
               </button>
+              <button
+                onClick={() => setMode("cp")}
+                className={`col-span-2 rounded-md border px-2 py-2 font-mono text-[11px] transition-colors ${
+                  mode === "cp"
+                    ? "border-emerald-400 bg-emerald-400/10 text-emerald-400"
+                    : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
+                }`}
+              >
+                Por código postal
+              </button>
             </div>
           </section>
 
@@ -1943,6 +2073,74 @@ export default function SeekerApp({
               <p className="mt-2 font-mono text-[10px] leading-relaxed text-zinc-600">
                 Sin radio: la búsqueda se limita a los límites reales de cada
                 zona (Polanco = solo Polanco; CDMX = toda la ciudad).
+              </p>
+            </section>
+          ) : mode === "cp" ? (
+            <section className={pasoCls}>
+              <label className={labelCls}>02 · Tus códigos postales</label>
+              <textarea
+                value={cpsInput}
+                onChange={(e) => setCpsInput(e.target.value)}
+                rows={4}
+                placeholder={"CPs separados por comas o saltos de línea:\n11560, 11550\n01000"}
+                className={`${inputCls} resize-y`}
+              />
+              <input
+                ref={cpFileRef}
+                type="file"
+                accept=".xlsx,.xls,.csv,.txt"
+                className="hidden"
+                onChange={(e) => {
+                  onArchivoCps(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                onClick={() => cpFileRef.current?.click()}
+                className="mt-2 w-full rounded-md border border-dashed border-linea bg-panel2 px-3 py-2.5 font-mono text-xs text-zinc-500 transition-colors hover:border-emerald-400 hover:text-emerald-400"
+              >
+                {nombreArchivoCps || "Subir Excel/CSV con una columna de CPs"}
+              </button>
+              <button
+                onClick={cargarCpsPoligonos}
+                disabled={ocupado}
+                className="mt-3 w-full rounded-md border border-emerald-400 bg-emerald-400/10 px-3 py-2 font-mono text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-400/20 disabled:opacity-40"
+              >
+                Ver polígonos
+              </button>
+              {cpsGeo.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {cpsGeo.map((c) => (
+                    <button
+                      key={c.codigo_postal}
+                      onClick={() => quitarCp(c.codigo_postal)}
+                      className="group flex items-center gap-1 rounded-full border border-emerald-400/50 bg-emerald-400/10 px-2.5 py-0.5 font-mono text-[11px] text-emerald-400"
+                      title="Quitar CP"
+                    >
+                      {c.codigo_postal}
+                      <span className="text-emerald-400/60 group-hover:text-emerald-400">
+                        ×
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {cpsNoEncontrados.length > 0 && (
+                <div className="mt-2 rounded-md border border-amber-400/40 bg-amber-400/5 px-2.5 py-1.5">
+                  {cpsNoEncontrados.map((n) => (
+                    <p
+                      key={n.cp}
+                      className="font-mono text-[10px] leading-relaxed text-amber-400/90"
+                    >
+                      {n.cp} no encontrado — {n.sugerencia}
+                    </p>
+                  ))}
+                </div>
+              )}
+              <p className="mt-2 font-mono text-[10px] leading-relaxed text-zinc-600">
+                La búsqueda corre únicamente dentro del polígono real de cada
+                CP: los resultados de fuera se descartan aunque Google los
+                devuelva.
               </p>
             </section>
           ) : mode === "census" ? (
@@ -2603,6 +2801,7 @@ export default function SeekerApp({
                   : radioCelda
               }
               agebs={capaDemografica ? agebsGeo : null}
+              cps={mode === "cp" ? cpsGeo : undefined}
             />
             <ResultsTable
               pois={poisVisibles}

@@ -23,6 +23,8 @@ const GeocercaSchema = z.object({
   lng: z.number().min(-180).max(180).optional(),
   radio_m: z.number().min(10).max(100000).optional(),
   viewport: ViewportSchema.optional(),
+  /** Polígono real de un código postal cargado en cp_poligonos. */
+  cp: z.string().regex(/^\d{5}$/).optional(),
 });
 
 const BodySchema = z.object({

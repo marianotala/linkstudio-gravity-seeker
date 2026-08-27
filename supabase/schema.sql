@@ -949,7 +949,8 @@ $$;
 revoke execute on function public.admin_upsert_agebs(jsonb) from public, anon;
 grant execute on function public.admin_upsert_agebs(jsonb) to authenticated;
 
--- calcular_universos ampliado. Agrega a `total`:
+-- calcular_universos ampliado (fase 8: acepta geocercas {cp} que
+-- resuelven al polígono real del código postal). Agrega a `total`:
 --   pobfem/pobmas          población por sexo (interpolada)
 --   edades                 % del universo 18+ por rango REAL del censo:
 --                          18-24, 25-59 (derivado), 60-64 (derivado,
@@ -989,6 +990,7 @@ begin
     select
       coalesce(g.value->>'id', g.ordinality::text) as gid,
       case
+        when g.value ? 'cp' then (select c.geom from public.cp_poligonos c where c.codigo_postal = g.value->>'cp')
         when g.value ? 'viewport' then ST_MakeEnvelope(
           (g.value->'viewport'->>'west')::float,
           (g.value->'viewport'->>'south')::float,
@@ -1077,7 +1079,8 @@ begin
   -- tabla de detalle por AGEB (población interpolada dentro de la zona)
   with gc as (
     select case
-      when g.value ? 'viewport' then ST_MakeEnvelope(
+      when g.value ? 'cp' then (select c.geom from public.cp_poligonos c where c.codigo_postal = g.value->>'cp')
+        when g.value ? 'viewport' then ST_MakeEnvelope(
         (g.value->'viewport'->>'west')::float,
         (g.value->'viewport'->>'south')::float,
         (g.value->'viewport'->>'east')::float,
@@ -1111,7 +1114,8 @@ begin
         coalesce(g.value->>'id', g.ordinality::text) as gid,
         g.ordinality as orden,
         case
-          when g.value ? 'viewport' then ST_MakeEnvelope(
+          when g.value ? 'cp' then (select c.geom from public.cp_poligonos c where c.codigo_postal = g.value->>'cp')
+        when g.value ? 'viewport' then ST_MakeEnvelope(
             (g.value->'viewport'->>'west')::float,
             (g.value->'viewport'->>'south')::float,
             (g.value->'viewport'->>'east')::float,
@@ -1142,6 +1146,7 @@ begin
   if p_incluir_agebs then
     with gc as (
       select case
+        when g.value ? 'cp' then (select c.geom from public.cp_poligonos c where c.codigo_postal = g.value->>'cp')
         when g.value ? 'viewport' then ST_MakeEnvelope(
           (g.value->'viewport'->>'west')::float,
           (g.value->'viewport'->>'south')::float,
@@ -1182,3 +1187,203 @@ $$;
 
 revoke execute on function public.calcular_universos(jsonb, boolean) from public, anon;
 grant execute on function public.calcular_universos(jsonb, boolean) to authenticated;
+
+
+-- ============================================================
+-- MIGRACIÓN FASE 8 — búsqueda por código postal (polígono real)
+-- ============================================================
+
+-- Polígonos oficiales de códigos postales (Correos de México /
+-- datos.gob.mx), cargados por entidad desde /admin. El CP es texto
+-- de 5 dígitos SIEMPRE (preserva ceros a la izquierda: "01000").
+create table if not exists public.cp_poligonos (
+  codigo_postal text primary key check (codigo_postal ~ '^\d{5}$'),
+  entidad text not null,
+  geom extensions.geometry(MultiPolygon, 4326) not null
+);
+
+create index if not exists cp_poligonos_geom_gix on public.cp_poligonos using gist (geom);
+create index if not exists cp_poligonos_entidad_idx on public.cp_poligonos (entidad);
+
+alter table public.cp_poligonos enable row level security;
+
+drop policy if exists "cps: leer autenticados" on public.cp_poligonos;
+create policy "cps: leer autenticados"
+  on public.cp_poligonos for select
+  to authenticated
+  using (true);
+
+drop policy if exists "cps: insertar admin" on public.cp_poligonos;
+create policy "cps: insertar admin"
+  on public.cp_poligonos for insert
+  to authenticated
+  with check (public.es_admin());
+
+drop policy if exists "cps: actualizar admin" on public.cp_poligonos;
+create policy "cps: actualizar admin"
+  on public.cp_poligonos for update
+  to authenticated
+  using (public.es_admin());
+
+drop policy if exists "cps: borrar admin" on public.cp_poligonos;
+create policy "cps: borrar admin"
+  on public.cp_poligonos for delete
+  to authenticated
+  using (public.es_admin());
+
+-- Carga por lotes desde /admin. security invoker: las políticas de
+-- arriba limitan la escritura a admins.
+create or replace function public.admin_upsert_cps(p_entidad text, p_cps jsonb)
+returns int
+language plpgsql
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v_n int;
+begin
+  if p_entidad !~ '^\d{2}$' then
+    raise exception 'Entidad inválida: usa la clave INEGI de dos dígitos';
+  end if;
+  if coalesce(jsonb_array_length(p_cps), 0) = 0
+     or jsonb_array_length(p_cps) > 300 then
+    raise exception 'Lote inválido: manda entre 1 y 300 CPs';
+  end if;
+
+  insert into public.cp_poligonos (codigo_postal, entidad, geom)
+  select
+    r ->> 'codigo_postal',
+    p_entidad,
+    ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(r -> 'geometria'), 4326))
+  from jsonb_array_elements(p_cps) as r
+  on conflict (codigo_postal) do update set
+    entidad = excluded.entidad,
+    geom = excluded.geom;
+
+  get diagnostics v_n = row_count;
+  return v_n;
+end;
+$$;
+
+revoke execute on function public.admin_upsert_cps(text, jsonb) from public, anon;
+grant execute on function public.admin_upsert_cps(text, jsonb) to authenticated;
+
+-- Resumen de entidades con CPs cargados, para /admin.
+create or replace function public.cps_resumen()
+returns jsonb
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'entidad', entidad,
+    'cps', n
+  ) order by entidad), '[]'::jsonb)
+  from (
+    select entidad, count(*) as n
+    from public.cp_poligonos
+    group by entidad
+  ) t;
+$$;
+
+revoke execute on function public.cps_resumen() from public, anon;
+grant execute on function public.cps_resumen() to authenticated;
+
+-- Busca los polígonos de una lista de CPs. Regresa encontrados (con
+-- bbox y, opcionalmente, geometría GeoJSON para dibujar en el mapa)
+-- y la lista de no encontrados — un CP inexistente no bloquea al resto.
+create or replace function public.buscar_cps(
+  p_cps text[],
+  p_incluir_geometria boolean default true
+)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v_enc jsonb;
+  v_no jsonb;
+begin
+  if coalesce(array_length(p_cps, 1), 0) = 0 or array_length(p_cps, 1) > 100 then
+    raise exception 'Manda entre 1 y 100 códigos postales';
+  end if;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'codigo_postal', c.codigo_postal,
+    'entidad', c.entidad,
+    'bbox', jsonb_build_object(
+      'north', ST_YMax(c.geom), 'south', ST_YMin(c.geom),
+      'east', ST_XMax(c.geom), 'west', ST_XMin(c.geom)
+    ),
+    'geometria', case when p_incluir_geometria
+      then ST_AsGeoJSON(c.geom, 5)::jsonb end
+  ) order by c.codigo_postal), '[]'::jsonb)
+  into v_enc
+  from public.cp_poligonos c
+  where c.codigo_postal = any(p_cps);
+
+  select coalesce(jsonb_agg(cp order by cp), '[]'::jsonb)
+  into v_no
+  from unnest(p_cps) as cp
+  where not exists (
+    select 1 from public.cp_poligonos c where c.codigo_postal = cp
+  );
+
+  return jsonb_build_object('encontrados', v_enc, 'no_encontrados', v_no);
+end;
+$$;
+
+revoke execute on function public.buscar_cps(text[], boolean) from public, anon;
+grant execute on function public.buscar_cps(text[], boolean) to authenticated;
+
+-- Filtro espacial: de una lista de puntos [{id, lat, lng}], regresa
+-- SOLO los que caen dentro de alguno de los CPs pedidos, con el CP
+-- que los contiene ([{id, cp}]). Un punto en la frontera de dos CPs
+-- se asigna al de clave menor.
+create or replace function public.puntos_en_cps(
+  p_cps text[],
+  p_puntos jsonb
+)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v_res jsonb;
+begin
+  if coalesce(array_length(p_cps, 1), 0) = 0 or array_length(p_cps, 1) > 100 then
+    raise exception 'Manda entre 1 y 100 códigos postales';
+  end if;
+  if coalesce(jsonb_array_length(p_puntos), 0) = 0
+     or jsonb_array_length(p_puntos) > 5000 then
+    raise exception 'Manda entre 1 y 5000 puntos';
+  end if;
+
+  with pts as (
+    select p ->> 'id' as id,
+      ST_SetSRID(ST_MakePoint((p ->> 'lng')::float, (p ->> 'lat')::float), 4326) as g
+    from jsonb_array_elements(p_puntos) as p
+  ),
+  sel as (
+    select distinct on (pts.id) pts.id, c.codigo_postal
+    from pts
+    join public.cp_poligonos c
+      on c.codigo_postal = any(p_cps)
+     and c.geom && pts.g
+     and ST_Intersects(c.geom, pts.g)
+    order by pts.id, c.codigo_postal
+  )
+  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'cp', codigo_postal)), '[]'::jsonb)
+  into v_res from sel;
+
+  return v_res;
+end;
+$$;
+
+revoke execute on function public.puntos_en_cps(text[], jsonb) from public, anon;
+grant execute on function public.puntos_en_cps(text[], jsonb) to authenticated;
