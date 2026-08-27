@@ -104,8 +104,11 @@ body {
    mapa claro de OSM quede oscuro y neutro, acorde a Gravity. Solo se
    aplica a los tiles base, no a los markers ni overlays. */
 .tiles-osm-oscuro {
-  filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9)
-    saturate(0.35);
+  /* brightness bajo + contraste arriba: fondo cerca de #0a0a0c sin
+     perder la legibilidad de calles y etiquetas (validado visualmente
+     contra 0.85/0.9 y 0.55/1.2) */
+  filter: invert(1) hue-rotate(180deg) brightness(0.68) contrast(1.12)
+    saturate(0.28);
 }
 .leaflet-control-attribution {
   background: rgba(10, 10, 12, 0.7) !important;
