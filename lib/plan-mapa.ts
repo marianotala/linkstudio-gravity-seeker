@@ -129,12 +129,16 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
     }
     const maxTile = 2 ** z;
     const tareas: Promise<void>[] = [];
-    for (let tx = Math.floor(x0); tx * TILE < (x0 + ANCHO / TILE) * TILE + ANCHO; tx++) {
-      if (tx < 0 || tx >= maxTile || (tx - x0) * TILE > ANCHO) continue;
-      for (let ty = Math.floor(y0); ty < maxTile; ty++) {
-        if (ty < 0 || (ty - y0) * TILE > ALTO) continue;
+    const txMin = Math.floor(x0);
+    const txMax = Math.floor(x0 + ANCHO / TILE);
+    const tyMin = Math.max(0, Math.floor(y0));
+    const tyMax = Math.min(maxTile - 1, Math.floor(y0 + ALTO / TILE));
+    for (let tx = txMin; tx <= txMax; tx++) {
+      // la longitud envuelve el antimeridiano; la latitud no
+      const txReal = ((tx % maxTile) + maxTile) % maxTile;
+      for (let ty = tyMin; ty <= tyMax; ty++) {
         tareas.push(
-          cargarTile(z, tx, ty).then((img) => {
+          cargarTile(z, txReal, ty).then((img) => {
             if (img) ctx.drawImage(img, (tx - x0) * TILE, (ty - y0) * TILE, TILE, TILE);
           })
         );

@@ -409,6 +409,8 @@ export default function SeekerApp({
   // ---- configuración de exports
   const [radioGeocerca, setRadioGeocerca] = useState(50);
   const [vertices, setVertices] = useState(12);
+  /** Título del Export plan definido por el vendedor (vacío = default). */
+  const [tituloPlan, setTituloPlan] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1388,6 +1390,7 @@ export default function SeekerApp({
     setCpsNoEncontrados([]);
     setNombreArchivoCps("");
     setCoberturaCp(null);
+    setTituloPlan("");
     setCensoSugerido(null);
     setAvisoDescartado(false);
     setActualizarDe(null);
@@ -2087,8 +2090,10 @@ export default function SeekerApp({
       ];
 
       const fecha = new Date();
+      const tituloFinal = tituloPlan.trim() || `${termino} — ${alcance}`;
       const blob = await generarPlanPdf({
         modo: mode,
+        titulo: tituloPlan.trim() || null,
         termino,
         alcance,
         usuario: usuario?.nombre ?? usuario?.email ?? "Seeker",
@@ -2114,7 +2119,7 @@ export default function SeekerApp({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = nombreArchivoPlan(termino, fecha);
+      a.download = nombreArchivoPlan(tituloFinal, fecha);
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -3239,6 +3244,14 @@ export default function SeekerApp({
               </div>
             </div>
             <div className="grid grid-cols-1 gap-2">
+              <input
+                value={tituloPlan}
+                onChange={(e) => setTituloPlan(e.target.value)}
+                placeholder={'Título del plan · p. ej. "Cafeterías Polanco — Cliente X"'}
+                maxLength={90}
+                className={inputCls}
+                title="Título del PDF y del nombre de archivo; vacío = término + ciudad/CPs"
+              />
               <button
                 onClick={exportarPlan}
                 disabled={

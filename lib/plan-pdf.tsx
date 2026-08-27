@@ -1,10 +1,12 @@
-// Export plan (PDF) — documento comercial 16:9 con el sistema de
-// diseño del pitch deck de Gravity: fondo #0a0a0f, paleta
-// magenta/violeta/cian, encabezados con etiqueta magenta + tres
-// puntos, cifras gigantes, divisores de gradiente y pills de
-// tácticas. Renderizado con @react-pdf/renderer EN EL CLIENTE
-// (PDF vectorial, sin headless browser, la key de Google nunca
-// participa); las fuentes TTF viven en /public/fonts.
+// Export plan (PDF) — one-pager VERTICAL continuo (ancho carta 816pt,
+// alto dinámico según contenido: documento para scroll en celular y
+// laptop, no para proyectar por láminas) con el sistema de diseño del
+// pitch deck de Gravity: fondo #0a0a0f, paleta magenta/violeta/cian,
+// encabezados con etiqueta magenta + tres puntos, cifras gigantes,
+// divisores de gradiente y pills de tácticas. Renderizado con
+// @react-pdf/renderer EN EL CLIENTE con los datos del análisis ACTIVO
+// (POIs, universos y mapa reales llegan desde el estado de Seeker);
+// las fuentes TTF viven en /public/fonts.
 
 import React from "react";
 import {
@@ -32,9 +34,11 @@ import { rangosEdadEstandar } from "./edades";
 
 export interface PlanDatos {
   modo: SearchMode;
-  /** Marca / término / categoría buscada (para título y textos). */
+  /** Título definido por el vendedor; si va vacío se usa el default. */
+  titulo?: string | null;
+  /** Marca / término / categoría buscada (default de título y textos). */
   termino: string;
-  /** Ciudad, zonas o lista de CPs (para título). */
+  /** Ciudad, zonas o lista de CPs (default de título). */
   alcance: string;
   usuario: string;
   fecha: Date;
@@ -68,9 +72,11 @@ const CIAN = "#2fb9e8";
 const BLANCO = "#ffffff";
 const GRIS = "#8b8b96";
 const GRIS_OSCURO = "#5c5c66";
+const TINTA = "#c9c9d1";
 
-const PAGINA: [number, number] = [960, 540];
-const MARGEN = 48;
+const ANCHO_PAG = 816;
+const MARGEN = 44;
+const CONT = ANCHO_PAG - MARGEN * 2; // 728
 
 let fuentesRegistradas = false;
 /** Registra las fuentes una vez. `base` = "" en el navegador
@@ -99,7 +105,6 @@ export function registrarFuentes(base = "") {
       { src: `${base}/fonts/DMMono-500.ttf`, fontWeight: 500 },
     ],
   });
-  // sin cortes de palabra: los títulos del deck no se parten
   Font.registerHyphenationCallback((palabra) => [palabra]);
 }
 
@@ -129,7 +134,7 @@ function Marca({ size = 40 }: { size?: number }) {
 }
 
 /** Divisor horizontal con el gradiente firma magenta → violeta → cian. */
-function Divisor({ width = PAGINA[0] - MARGEN * 2, height = 2.5 }) {
+function Divisor({ width = CONT, height = 2.5 }) {
   return (
     <Svg width={width} height={height}>
       <Defs>
@@ -144,61 +149,40 @@ function Divisor({ width = PAGINA[0] - MARGEN * 2, height = 2.5 }) {
   );
 }
 
-/** Lockup chico de páginas interiores: "Gravity ✕ linkstudio". */
-function LockupChico() {
-  return (
-    <View
-      style={{
-        position: "absolute",
-        top: 22,
-        right: MARGEN,
-        flexDirection: "row",
-        alignItems: "center",
-      }}
-    >
-      <Marca size={16} />
-      <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 9, color: BLANCO, marginLeft: 5 }}>
-        Gravity
-      </Text>
-      <Text style={{ fontFamily: "DMMono", fontSize: 8, color: GRIS_OSCURO, marginLeft: 5 }}>
-        ✕ linkstudio
-      </Text>
-    </View>
-  );
-}
-
 /** Encabezado de sección estilo deck: etiqueta magenta en mayúsculas,
- * tres puntos de color y título grande en blanco. */
-function Encabezado({ etiqueta, titulo }: { etiqueta: string; titulo: string }) {
+ * tres puntos de color y título en blanco. */
+function Seccion({ etiqueta, titulo }: { etiqueta: string; titulo: string }) {
   return (
-    <View style={{ marginBottom: 18 }}>
-      <Text
-        style={{
-          fontFamily: "DMMono",
-          fontWeight: 500,
-          fontSize: 10,
-          letterSpacing: 3,
-          color: MAGENTA,
-        }}
-      >
-        {etiqueta.toUpperCase()}
-      </Text>
-      <View style={{ flexDirection: "row", marginTop: 6, marginBottom: 8 }}>
-        {[MAGENTA, VIOLETA, CIAN].map((c) => (
-          <View
-            key={c}
-            style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: c, marginRight: 5 }}
-          />
-        ))}
+    <View style={{ marginBottom: 14 }}>
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <Text
+          style={{
+            fontFamily: "DMMono",
+            fontWeight: 500,
+            fontSize: 9,
+            letterSpacing: 2.6,
+            color: MAGENTA,
+          }}
+        >
+          {etiqueta.toUpperCase()}
+        </Text>
+        <View style={{ flexDirection: "row", marginLeft: 10 }}>
+          {[MAGENTA, VIOLETA, CIAN].map((c) => (
+            <View
+              key={c}
+              style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: c, marginRight: 4 }}
+            />
+          ))}
+        </View>
       </View>
-      <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 26, color: BLANCO }}>
+      <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 19, color: BLANCO, marginTop: 7 }}>
         {titulo}
       </Text>
     </View>
   );
 }
 
-/** Footer de tres columnas con línea divisoria arriba (portada/cierre). */
+/** Footer de tres columnas con línea divisoria arriba. */
 function FooterTresCol({ fecha }: { fecha: string }) {
   const col = { flex: 1 } as const;
   const label = {
@@ -211,50 +195,28 @@ function FooterTresCol({ fecha }: { fecha: string }) {
   };
   const valor = { fontFamily: "Inter" as const, fontSize: 9, color: GRIS };
   return (
-    <View style={{ position: "absolute", bottom: 26, left: MARGEN, right: MARGEN }}>
-      <View style={{ borderTopWidth: 0.8, borderTopColor: LINEA, paddingTop: 12, flexDirection: "row" }}>
-        <View style={col}>
-          <Text style={label}>DATE</Text>
-          <Text style={valor}>{fecha}</Text>
-        </View>
-        <View style={col}>
-          <Text style={label}>WEBSITE</Text>
-          <Text style={valor}>www.linkstudio.mx</Text>
-        </View>
-        <View style={col}>
-          <Text style={label}>E-MAIL</Text>
-          <Text style={valor}>hello@linkstudio.mx</Text>
-        </View>
+    <View style={{ borderTopWidth: 0.8, borderTopColor: LINEA, paddingTop: 12, flexDirection: "row" }}>
+      <View style={col}>
+        <Text style={label}>DATE</Text>
+        <Text style={valor}>{fecha}</Text>
+      </View>
+      <View style={col}>
+        <Text style={label}>WEBSITE</Text>
+        <Text style={valor}>www.linkstudio.mx</Text>
+      </View>
+      <View style={col}>
+        <Text style={label}>E-MAIL</Text>
+        <Text style={valor}>hello@linkstudio.mx</Text>
       </View>
     </View>
   );
 }
 
-/** Trazos de neón sutiles (solo portada y cierre). El Svg debe ser
- * MÁS CHICO que el área de contenido (página menos padding): react-pdf
- * no puede partir un Svg entre páginas y uno de página completa
- * empuja una hoja extra aunque esté posicionado absoluto. Se dibuja el
- * viewBox completo comprimido al área disponible (curvas abstractas:
- * la compresión no se nota). */
-const NEON_W = PAGINA[0] - MARGEN * 2;
-const NEON_H = PAGINA[1] - MARGEN * 2 - 4;
-function Neon() {
+/** Trazos de neón sutiles para el encabezado y el cierre. */
+function Neon({ height = 120 }: { height?: number }) {
   return (
-    <View
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: NEON_W,
-        height: NEON_H,
-      }}
-    >
-      <Svg
-        width={NEON_W}
-        height={NEON_H}
-        viewBox={`0 0 ${PAGINA[0]} ${PAGINA[1]}`}
-        preserveAspectRatio="none"
-      >
+    <View style={{ position: "absolute", top: 0, left: 0, width: CONT, height }}>
+      <Svg width={CONT} height={height} viewBox={`0 0 ${CONT} ${height}`} preserveAspectRatio="none">
         <Defs>
           <LinearGradient id="neon" x1="0" y1="0" x2="1" y2="0">
             <Stop offset="0" stopColor={MAGENTA} />
@@ -263,22 +225,16 @@ function Neon() {
           </LinearGradient>
         </Defs>
         <Path
-          d="M-40 470 C 240 380, 560 560, 1000 430"
+          d={`M-20 ${height * 0.75} C ${CONT * 0.25} ${height * 0.35}, ${CONT * 0.6} ${height * 1.05}, ${CONT + 20} ${height * 0.55}`}
           stroke="url(#neon)"
-          strokeWidth={1.4}
-          opacity={0.55}
+          strokeWidth={1.3}
+          opacity={0.5}
         />
         <Path
-          d="M-40 500 C 280 420, 620 590, 1000 470"
+          d={`M-20 ${height * 0.9} C ${CONT * 0.3} ${height * 0.55}, ${CONT * 0.65} ${height * 1.15}, ${CONT + 20} ${height * 0.75}`}
           stroke="url(#neon)"
           strokeWidth={0.9}
-          opacity={0.32}
-        />
-        <Path
-          d="M560 -20 C 700 120, 900 60, 1000 160"
-          stroke="url(#neon)"
-          strokeWidth={0.9}
-          opacity={0.25}
+          opacity={0.28}
         />
       </Svg>
     </View>
@@ -288,18 +244,18 @@ function Neon() {
 /** Cifra protagonista estilo deck (patrón 58% / 82%). */
 function Cifra({ valor, descriptor }: { valor: string; descriptor: string }) {
   return (
-    <View style={{ flex: 1, paddingRight: 14 }}>
-      <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 40, color: BLANCO }}>
+    <View style={{ flex: 1, paddingRight: 12 }}>
+      <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 30, color: BLANCO }}>
         {valor}
       </Text>
       <Text
         style={{
           fontFamily: "DMMono",
           fontWeight: 400,
-          fontSize: 8,
-          letterSpacing: 1.6,
+          fontSize: 7.2,
+          letterSpacing: 1.3,
           color: GRIS,
-          marginTop: 4,
+          marginTop: 3,
           lineHeight: 1.5,
         }}
       >
@@ -323,10 +279,10 @@ function BarraApilada({ titulo, segmentos, width }: { titulo: string; segmentos:
         style={{
           fontFamily: "DMMono",
           fontWeight: 500,
-          fontSize: 8,
-          letterSpacing: 2,
+          fontSize: 7.5,
+          letterSpacing: 1.8,
           color: GRIS,
-          marginBottom: 6,
+          marginBottom: 5,
         }}
       >
         {titulo.toUpperCase()}
@@ -347,12 +303,12 @@ function BarraApilada({ titulo, segmentos, width }: { titulo: string; segmentos:
             )
         )}
       </View>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 6 }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 5 }}>
         {segmentos.map((s, i) => (
           <View key={s.etiqueta} style={{ flexDirection: "row", marginRight: 8 }}>
             {i > 0 && <Text style={{ fontFamily: "DMMono", fontSize: 8, color: GRIS_OSCURO, marginRight: 8 }}>·</Text>}
             <Text style={{ fontFamily: "DMMono", fontSize: 8, color: s.color }}>{s.etiqueta}</Text>
-            <Text style={{ fontFamily: "DMMono", fontSize: 8, color: "#c9c9d1", marginLeft: 3 }}>
+            <Text style={{ fontFamily: "DMMono", fontSize: 8, color: TINTA, marginLeft: 3 }}>
               {s.pct.toLocaleString("es-MX")}%
             </Text>
           </View>
@@ -364,10 +320,10 @@ function BarraApilada({ titulo, segmentos, width }: { titulo: string; segmentos:
 
 /** Pill de táctica con borde de gradiente (lámina de tácticas del deck). */
 function PillTactica({ nombre, descriptor }: { nombre: string; descriptor: string }) {
-  const W = (PAGINA[0] - MARGEN * 2 - 20) / 2;
-  const H = 74;
+  const W = (CONT - 16) / 2;
+  const H = 66;
   return (
-    <View style={{ width: W, height: H, marginBottom: 20 }}>
+    <View style={{ width: W, height: H, marginBottom: 16 }}>
       <Svg width={W} height={H} style={{ position: "absolute", top: 0, left: 0 }}>
         <Defs>
           <LinearGradient id="pill" x1="0" y1="0" x2="1" y2="0">
@@ -376,27 +332,17 @@ function PillTactica({ nombre, descriptor }: { nombre: string; descriptor: strin
             <Stop offset="1" stopColor={CIAN} />
           </LinearGradient>
         </Defs>
-        <Rect x={0.8} y={0.8} width={W - 1.6} height={H - 1.6} rx={14} fill={PANEL} stroke="url(#pill)" strokeWidth={1.2} />
+        <Rect x={0.8} y={0.8} width={W - 1.6} height={H - 1.6} rx={12} fill={PANEL} stroke="url(#pill)" strokeWidth={1.2} />
       </Svg>
-      <View style={{ paddingTop: 15, paddingLeft: 20, paddingRight: 20 }}>
-        <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 14, color: BLANCO }}>
+      <View style={{ paddingTop: 13, paddingLeft: 18, paddingRight: 18 }}>
+        <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 13, color: BLANCO }}>
           {nombre}
         </Text>
-        <Text style={{ fontFamily: "Inter", fontSize: 9.5, color: GRIS, marginTop: 5 }}>
+        <Text style={{ fontFamily: "Inter", fontSize: 9, color: GRIS, marginTop: 4 }}>
           {descriptor}
         </Text>
       </View>
     </View>
-  );
-}
-
-/** Página interior estándar: fondo, lockup y número de página. */
-function Pagina({ children }: { children: React.ReactNode }) {
-  return (
-    <Page size={PAGINA} style={{ backgroundColor: FONDO, padding: MARGEN, paddingTop: 52 }}>
-      <LockupChico />
-      {children}
-    </Page>
   );
 }
 
@@ -459,7 +405,7 @@ function zonaConMasPois(d: PlanDatos): [string, number] | null {
 /** 2-3 hallazgos con reglas simples sobre los datos. Redacción sobria. */
 function hallazgos(d: PlanDatos): string[] {
   const salida: string[] = [];
-  const nse = segmentosNse(d.universos);
+  const nse = segmentosNse(d.universos?.disponible ? d.universos : null);
   if (nse) {
     const top = [...nse].sort((a, b) => b.pct - a.pct)[0];
     salida.push(
@@ -472,7 +418,7 @@ function hallazgos(d: PlanDatos): string[] {
       `La mayor concentración de puntos está en ${zona[0]}: ${fmt(zona[1])} de ${fmt(d.pois.length)} (${Math.round((100 * zona[1]) / d.pois.length)}%).`
     );
   }
-  const edades = segmentosEdades(d.universos);
+  const edades = segmentosEdades(d.universos?.disponible ? d.universos : null);
   if (edades) {
     const top = [...edades].sort((a, b) => b.pct - a.pct)[0];
     salida.push(
@@ -482,11 +428,46 @@ function hallazgos(d: PlanDatos): string[] {
   return salida.slice(0, 3);
 }
 
+const FILAS_TABLA = 12;
+const ALTO_MAPA = Math.round((CONT * 9) / 16); // 16:9 dentro del ancho
+
+/** Alto del lienzo calculado por bloques (una sola página vertical:
+ * @react-pdf necesita el tamaño por adelantado, y el contenido es
+ * determinista, así que se suma bloque por bloque + margen de
+ * seguridad; el sobrante queda como respiro antes del cierre). */
+function estimarAltura(d: PlanDatos, titulo: string): number {
+  const u = d.universos?.disponible ? d.universos : null;
+  const nse = segmentosNse(u);
+  const edades = segmentosEdades(u);
+  const filas = Math.min(d.pois.length, FILAS_TABLA);
+  const nHallazgos = hallazgos(d).length;
+  const porGeocerca = (u?.porGeocerca ?? []).filter((g) => g.poblacion > 0).slice(0, 8);
+  const tacticas = tacticasParaModo(d.modo, d.esCompetencia ?? false);
+
+  const lineasTitulo = Math.max(1, Math.ceil(titulo.length / 42));
+  let h = MARGEN; // padding superior
+  h += 56 + lineasTitulo * 34 + 78; // bloque 1: logo + título + slogan/fecha + divisor
+  h += 96; // cifras
+  if (nse) h += 62;
+  if (edades) h += 62;
+  h += 46; // línea fuente + divisor + aire
+  if (d.mapaDataUrl) h += 44 + ALTO_MAPA + 26; // bloque 3
+  if (filas > 0) h += 66 + 18 + 16 + filas * 15.5 + 22; // bloque 4a tabla
+  const colIzq = porGeocerca.length > 1 ? 26 + porGeocerca.length * 17 : 0;
+  const colDer = nHallazgos > 0 ? 26 + nHallazgos * 52 : 0;
+  if (colIzq || colDer) h += Math.max(colIzq, colDer) + 26; // bloque 4b
+  h += 66 + Math.max(120, 30 + d.fuentes.length * 14) + 20; // bloque 5a metodología
+  h += 52 + Math.ceil(tacticas.length / 2) * 82 + 10; // bloque 5b tácticas
+  h += 200 + 66; // bloque 6 cierre + footer
+  return Math.ceil(h + 70); // margen de seguridad
+}
+
 // ------------------------------------------------------------------
-// Documento
+// Documento (una sola página vertical)
 // ------------------------------------------------------------------
 
 function PlanDocumento({ d }: { d: PlanDatos }) {
+  const titulo = d.titulo?.trim() || `${d.termino} — ${d.alcance}`;
   const fechaLarga = d.fecha.toLocaleDateString("es-MX", {
     day: "numeric",
     month: "long",
@@ -496,89 +477,73 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
   const nse = segmentosNse(u);
   const edades = segmentosEdades(u);
   const tacticas = tacticasParaModo(d.modo, d.esCompetencia ?? false);
-  // 16 filas + la nota "+N más" caben en la página 16:9 sin partirse
-  const topPois = d.pois.slice(0, 16);
+  const topPois = d.pois.slice(0, FILAS_TABLA);
   const zonaTop = zonaConMasPois(d);
   const porGeocerca = (u?.porGeocerca ?? [])
     .filter((g) => g.poblacion > 0)
     .sort((a, b) => b.poblacion - a.poblacion)
-    .slice(0, 9);
+    .slice(0, 8);
   const maxPob = porGeocerca[0]?.poblacion ?? 1;
   const listaHallazgos = hallazgos(d);
+  const altura = estimarAltura(d, titulo);
 
   const celdaTh = {
     fontFamily: "DMMono" as const,
     fontWeight: 500 as const,
-    fontSize: 7.5,
-    letterSpacing: 1.5,
+    fontSize: 7,
+    letterSpacing: 1.3,
     color: GRIS_OSCURO,
   };
-  const celdaTd = { fontFamily: "Inter" as const, fontSize: 8.5, color: "#c9c9d1" };
+  const celdaTd = { fontFamily: "Inter" as const, fontSize: 8, color: TINTA };
+  const labelCol = {
+    fontFamily: "DMMono" as const,
+    fontWeight: 500 as const,
+    fontSize: 7.5,
+    letterSpacing: 1.8,
+    color: GRIS,
+    marginBottom: 8,
+  };
 
   return (
-    <Document
-      title={`Plan territorial — ${d.termino} — ${d.alcance}`}
-      author="Gravity · Link Studio"
-      creator="Seeker"
-    >
-      {/* ---------- 1 · PORTADA ---------- */}
-      <Page size={PAGINA} style={{ backgroundColor: FONDO, padding: MARGEN }}>
-        <Neon />
-        <Text
-          style={{
-            position: "absolute",
-            top: 24,
-            right: MARGEN,
-            fontFamily: "DMMono",
-            fontSize: 8.5,
-            letterSpacing: 1.5,
-            color: GRIS,
-          }}
-        >
-          powered by linkstudio
-        </Text>
-
-        <View style={{ marginTop: 64, flexDirection: "row", alignItems: "center" }}>
-          <Marca size={64} />
-          <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 40, color: BLANCO, marginLeft: 16 }}>
-            Gravity
+    <Document title={titulo} author="Gravity · Link Studio" creator="Seeker">
+      <Page size={[ANCHO_PAG, altura]} style={{ backgroundColor: FONDO, padding: MARGEN }}>
+        {/* ---------- bloque 1 · encabezado compacto ---------- */}
+        <Neon height={150} />
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <Marca size={38} />
+            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 24, color: BLANCO, marginLeft: 10 }}>
+              Gravity
+            </Text>
+          </View>
+          <Text style={{ fontFamily: "DMMono", fontSize: 8, letterSpacing: 1.4, color: GRIS }}>
+            powered by linkstudio
           </Text>
         </View>
 
-        <View style={{ marginTop: 46, width: 700 }}>
+        <View style={{ marginTop: 26 }}>
           <Text
-            style={{
-              fontFamily: "DMMono",
-              fontWeight: 500,
-              fontSize: 10,
-              letterSpacing: 3,
-              color: MAGENTA,
-            }}
+            style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 9.5, letterSpacing: 3, color: MAGENTA }}
           >
             PLAN TERRITORIAL
           </Text>
-          <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 34, color: BLANCO, marginTop: 10 }}>
-            {d.termino} — {d.alcance}
+          <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 28, color: BLANCO, marginTop: 8 }}>
+            {titulo}
           </Text>
-          <Text style={{ fontFamily: "Inter", fontSize: 12, color: GRIS, marginTop: 14 }}>
-            El dinero va al clic. La vida ocurre en el mundo físico.
+          <Text style={{ fontFamily: "Inter", fontSize: 11, color: GRIS, marginTop: 8 }}>
+            Where physical meets digital.
           </Text>
-          <Text style={{ fontFamily: "DMMono", fontSize: 9, color: GRIS_OSCURO, marginTop: 22 }}>
+          <Text style={{ fontFamily: "DMMono", fontSize: 8.5, color: GRIS_OSCURO, marginTop: 10 }}>
             {fechaLarga} · Generado por {d.usuario}
           </Text>
         </View>
+        <View style={{ marginTop: 22, marginBottom: 26 }}>
+          <Divisor />
+        </View>
 
-        <FooterTresCol fecha={fechaLarga} />
-      </Page>
-
-      {/* ---------- 2 · RESUMEN EJECUTIVO ---------- */}
-      <Pagina>
-        <Encabezado etiqueta="Resumen ejecutivo" titulo="El territorio en números" />
-        <View style={{ flexDirection: "row", marginTop: 10 }}>
-          <Cifra
-            valor={u ? fmt(u.residencial!.adultos18) : "—"}
-            descriptor="Universo · adultos 18+"
-          />
+        {/* ---------- bloque 2 · cifras + barras ---------- */}
+        <View style={{ flexDirection: "row" }}>
+          <Cifra valor={u ? fmt(u.residencial!.adultos18) : "—"} descriptor="Universo · adultos 18+" />
           <Cifra
             valor={u ? fmt(u.direccionable!.dispositivos) : "—"}
             descriptor="Universo alcanzable · publicidad digital"
@@ -587,300 +552,225 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
           <Cifra valor={u ? fmt(u.agebs ?? 0) : "—"} descriptor="Zonas censales analizadas" />
         </View>
 
-        <View style={{ marginTop: 30 }}>
-          <Divisor />
-        </View>
-
-        <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 26 }}>
-          {nse && <BarraApilada titulo="Nivel socioeconómico (proxy censal, no AMAI)" segmentos={nse} width={420} />}
-          {edades && <BarraApilada titulo="Edades · % del universo 18+" segmentos={edades} width={420} />}
-        </View>
-
-        <Text
-          style={{
-            position: "absolute",
-            bottom: 28,
-            left: MARGEN,
-            fontFamily: "DMMono",
-            fontSize: 8,
-            color: GRIS_OSCURO,
-          }}
-        >
+        {nse && (
+          <View style={{ marginTop: 20 }}>
+            <BarraApilada titulo="Nivel socioeconómico (proxy censal, no AMAI)" segmentos={nse} width={CONT} />
+          </View>
+        )}
+        {edades && (
+          <View style={{ marginTop: 14 }}>
+            <BarraApilada titulo="Edades · % del universo 18+" segmentos={edades} width={CONT} />
+          </View>
+        )}
+        <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 12 }}>
           {u
             ? `Censo 2020 INEGI · ${fmt(u.agebs ?? 0)} zonas censales${d.criterio ? ` · ${d.criterio}` : ""}`
             : "Universos demográficos no disponibles para esta zona"}
         </Text>
-      </Pagina>
+        <View style={{ marginTop: 18, marginBottom: 24 }}>
+          <Divisor />
+        </View>
 
-      {/* ---------- 3 · MAPA GENERAL ---------- */}
-      {d.mapaDataUrl && (
-        <Page size={PAGINA} style={{ backgroundColor: FONDO }}>
-          {/* eslint-disable-next-line jsx-a11y/alt-text */}
-          <Image
-            src={d.mapaDataUrl}
-            style={{ position: "absolute", top: 0, left: 0, width: PAGINA[0], height: PAGINA[1], objectFit: "cover" }}
-          />
-          <View
-            style={{
-              position: "absolute",
-              top: 22,
-              left: MARGEN,
-              backgroundColor: FONDO,
-              opacity: 0.92,
-              paddingTop: 8,
-              paddingBottom: 8,
-              paddingLeft: 12,
-              paddingRight: 12,
-              borderRadius: 6,
-            }}
-          >
-            <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 9, letterSpacing: 2.5, color: MAGENTA }}>
-              MAPA GENERAL
-            </Text>
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 14, color: BLANCO, marginTop: 3 }}>
-              {d.termino} — {d.alcance}
-            </Text>
+        {/* ---------- bloque 3 · mapa real ---------- */}
+        {d.mapaDataUrl && (
+          <View style={{ marginBottom: 26 }}>
+            <Seccion etiqueta="Mapa general" titulo="El territorio" />
+            {/* eslint-disable-next-line jsx-a11y/alt-text */}
+            <Image
+              src={d.mapaDataUrl}
+              style={{ width: CONT, height: ALTO_MAPA, borderRadius: 8, objectFit: "cover" }}
+            />
           </View>
-          <View
-            style={{
-              position: "absolute",
-              bottom: 20,
-              left: MARGEN,
-              backgroundColor: FONDO,
-              opacity: 0.92,
-              paddingTop: 6,
-              paddingBottom: 6,
-              paddingLeft: 12,
-              paddingRight: 12,
-              borderRadius: 6,
-              flexDirection: "row",
-              alignItems: "center",
-            }}
-          >
-            <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: MAGENTA, marginRight: 5 }} />
-            <Text style={{ fontFamily: "DMMono", fontSize: 8, color: "#c9c9d1", marginRight: 12 }}>POIs</Text>
-            <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: d.modo === "cp" ? VIOLETA : CIAN, marginRight: 5 }} />
-            <Text style={{ fontFamily: "DMMono", fontSize: 8, color: "#c9c9d1" }}>
-              {d.modo === "cp" ? "Polígonos de CP" : d.modo === "zone" ? "Zonas" : "Área de análisis"}
-            </Text>
-          </View>
-        </Page>
-      )}
+        )}
 
-      {/* ---------- 4 · RESULTADOS ---------- */}
-      {topPois.length > 0 && (
-        <Pagina>
-          <Encabezado etiqueta="Resultados" titulo={`Top ${topPois.length} puntos censados`} />
-          {zonaTop && d.nombresOrigen.length > 1 && (
-            <Text style={{ fontFamily: "Inter", fontSize: 9.5, color: GRIS, marginTop: -8, marginBottom: 10 }}>
-              Los puntos se concentran en {zonaTop[0]} ({fmt(zonaTop[1])} de {fmt(d.pois.length)}).
-            </Text>
-          )}
-          <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 5 }}>
-            <Text style={[celdaTh, { width: 200 }]}>NOMBRE</Text>
-            <Text style={[celdaTh, { flex: 1 }]}>DIRECCIÓN</Text>
-            <Text style={[celdaTh, { width: 150 }]}>ZONA / CP</Text>
-            <Text style={[celdaTh, { width: 62, textAlign: "right" }]}>DIST. M</Text>
-          </View>
-          {topPois.map((p, i) => (
-            <View
-              key={p.placeId}
-              style={{
-                flexDirection: "row",
-                paddingTop: 3.2,
-                paddingBottom: 3.2,
-                backgroundColor: i % 2 === 1 ? PANEL : undefined,
-              }}
-            >
-              <Text style={[celdaTd, { width: 200, color: BLANCO }]}>
-                {p.nombre.length > 34 ? p.nombre.slice(0, 33) + "…" : p.nombre}
+        {/* ---------- bloque 4 · resultados + inteligencia ---------- */}
+        {topPois.length > 0 && (
+          <View>
+            <Seccion etiqueta="Resultados" titulo={`Top ${topPois.length} puntos censados`} />
+            {zonaTop && d.nombresOrigen.length > 1 && (
+              <Text style={{ fontFamily: "Inter", fontSize: 9, color: GRIS, marginTop: -6, marginBottom: 8 }}>
+                Los puntos se concentran en {zonaTop[0]} ({fmt(zonaTop[1])} de {fmt(d.pois.length)}).
               </Text>
-              <Text style={[celdaTd, { flex: 1, color: GRIS }]}>
-                {p.direccion.length > 52 ? p.direccion.slice(0, 51) + "…" : p.direccion}
-              </Text>
-              <Text style={[celdaTd, { width: 150, color: GRIS }]}>
-                {(p.cp ? `CP ${p.cp}` : (d.nombresOrigen[p.origenIdx] ?? "—")).slice(0, 24)}
-              </Text>
-              <Text style={[celdaTd, { width: 62, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
-                {fmt(p.distancia)}
-              </Text>
+            )}
+            <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 4 }}>
+              <Text style={[celdaTh, { width: 190 }]}>NOMBRE</Text>
+              <Text style={[celdaTh, { flex: 1 }]}>DIRECCIÓN</Text>
+              <Text style={[celdaTh, { width: 118 }]}>ZONA / CP</Text>
+              <Text style={[celdaTh, { width: 48, textAlign: "right" }]}>DIST. M</Text>
             </View>
-          ))}
-          {d.pois.length > topPois.length && (
-            <Text style={{ fontFamily: "DMMono", fontSize: 8, color: GRIS_OSCURO, marginTop: 8 }}>
-              +{fmt(d.pois.length - topPois.length)} registros más — detalle completo en el Export data (CSV).
-            </Text>
-          )}
-        </Pagina>
-      )}
+            {topPois.map((p, i) => (
+              <View
+                key={p.placeId}
+                style={{
+                  flexDirection: "row",
+                  paddingTop: 3,
+                  paddingBottom: 3,
+                  backgroundColor: i % 2 === 1 ? PANEL : undefined,
+                }}
+              >
+                <Text style={[celdaTd, { width: 190, color: BLANCO }]}>
+                  {p.nombre.length > 33 ? p.nombre.slice(0, 32) + "…" : p.nombre}
+                </Text>
+                <Text style={[celdaTd, { flex: 1, color: GRIS }]}>
+                  {p.direccion.length > 46 ? p.direccion.slice(0, 45) + "…" : p.direccion}
+                </Text>
+                <Text style={[celdaTd, { width: 118, color: GRIS }]}>
+                  {(p.cp ? `CP ${p.cp}` : (d.nombresOrigen[p.origenIdx] ?? "—")).slice(0, 19)}
+                </Text>
+                <Text style={[celdaTd, { width: 48, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
+                  {fmt(p.distancia)}
+                </Text>
+              </View>
+            ))}
+            {d.pois.length > topPois.length && (
+              <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
+                +{fmt(d.pois.length - topPois.length)} registros más — detalle completo en el Export data (CSV).
+              </Text>
+            )}
+          </View>
+        )}
 
-      {/* ---------- 5 · INTELIGENCIA TERRITORIAL ---------- */}
-      {u && (porGeocerca.length > 0 || listaHallazgos.length > 0) && (
-        <Pagina>
-          <Encabezado etiqueta="Inteligencia territorial" titulo="Dónde vive el universo" />
-          <View style={{ flexDirection: "row" }}>
-            <View style={{ width: 470 }}>
-              {porGeocerca.length > 1 && (
-                <View>
-                  <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 8, letterSpacing: 2, color: GRIS, marginBottom: 8 }}>
-                    POBLACIÓN POR {d.modo === "cp" ? "CÓDIGO POSTAL" : "ZONA"}
-                  </Text>
-                  {porGeocerca.map((g) => (
-                    <View key={g.id} style={{ flexDirection: "row", alignItems: "center", marginBottom: 5.5 }}>
-                      <Text style={{ fontFamily: "DMMono", fontSize: 8, color: "#c9c9d1", width: 118 }}>
-                        {(d.modo === "cp" ? `CP ${g.id}` : g.id).slice(0, 18)}
-                      </Text>
-                      <View style={{ flex: 1, height: 8, backgroundColor: PANEL, borderRadius: 4 }}>
-                        <View
-                          style={{
-                            width: `${Math.max(2, (100 * g.poblacion) / maxPob)}%`,
-                            height: 8,
-                            backgroundColor: VIOLETA,
-                            borderRadius: 4,
-                          }}
-                        />
-                      </View>
-                      <Text style={{ fontFamily: "DMMono", fontSize: 8, color: BLANCO, width: 66, textAlign: "right" }}>
-                        {fmt(g.poblacion)}
-                      </Text>
+        {(porGeocerca.length > 1 || listaHallazgos.length > 0) && (
+          <View style={{ flexDirection: "row", marginTop: 24 }}>
+            {porGeocerca.length > 1 && (
+              <View style={{ width: 360, marginRight: 28 }}>
+                <Text style={labelCol}>
+                  POBLACIÓN POR {d.modo === "cp" ? "CÓDIGO POSTAL" : "ZONA"}
+                </Text>
+                {porGeocerca.map((g) => (
+                  <View key={g.id} style={{ flexDirection: "row", alignItems: "center", marginBottom: 5 }}>
+                    <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: TINTA, width: 94 }}>
+                      {(d.modo === "cp" ? `CP ${g.id}` : g.id).slice(0, 15)}
+                    </Text>
+                    <View style={{ flex: 1, height: 8, backgroundColor: PANEL, borderRadius: 4 }}>
+                      <View
+                        style={{
+                          width: `${Math.max(2, (100 * g.poblacion) / maxPob)}%`,
+                          height: 8,
+                          backgroundColor: VIOLETA,
+                          borderRadius: 4,
+                        }}
+                      />
                     </View>
-                  ))}
-                </View>
-              )}
-              {nse && (
-                <View style={{ marginTop: porGeocerca.length > 1 ? 16 : 0 }}>
-                  <BarraApilada titulo="Distribución NSE (proxy censal)" segmentos={nse} width={470} />
-                </View>
-              )}
-            </View>
-
-            <View style={{ flex: 1, marginLeft: 34 }}>
-              <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 8, letterSpacing: 2, color: GRIS, marginBottom: 10 }}>
-                HALLAZGOS
-              </Text>
-              {listaHallazgos.map((h, i) => (
-                <View
-                  key={i}
-                  style={{
-                    backgroundColor: PANEL,
-                    borderLeftWidth: 2,
-                    borderLeftColor: [MAGENTA, VIOLETA, CIAN][i % 3],
-                    borderRadius: 6,
-                    paddingTop: 9,
-                    paddingBottom: 9,
-                    paddingLeft: 12,
-                    paddingRight: 12,
-                    marginBottom: 10,
-                  }}
-                >
-                  <Text style={{ fontFamily: "Inter", fontSize: 9.5, color: "#c9c9d1", lineHeight: 1.5 }}>{h}</Text>
-                </View>
-              ))}
-            </View>
+                    <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: BLANCO, width: 56, textAlign: "right" }}>
+                      {fmt(g.poblacion)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            {listaHallazgos.length > 0 && (
+              <View style={{ flex: 1 }}>
+                <Text style={labelCol}>HALLAZGOS</Text>
+                {listaHallazgos.map((h, i) => (
+                  <View
+                    key={i}
+                    style={{
+                      backgroundColor: PANEL,
+                      borderLeftWidth: 2,
+                      borderLeftColor: [MAGENTA, VIOLETA, CIAN][i % 3],
+                      borderRadius: 6,
+                      paddingTop: 7,
+                      paddingBottom: 7,
+                      paddingLeft: 11,
+                      paddingRight: 11,
+                      marginBottom: 8,
+                    }}
+                  >
+                    <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: TINTA, lineHeight: 1.45 }}>{h}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
-        </Pagina>
-      )}
+        )}
 
-      {/* ---------- 6 · METODOLOGÍA ---------- */}
-      <Pagina>
-        <Encabezado etiqueta="Metodología" titulo="Cómo se construyó este análisis" />
-        <View style={{ flexDirection: "row" }}>
-          <View style={{ flex: 1, paddingRight: 30 }}>
-            <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 8, letterSpacing: 2, color: GRIS, marginBottom: 8 }}>
-              FUENTES DE DATOS
-            </Text>
+        <View style={{ marginTop: 24, marginBottom: 24 }}>
+          <Divisor />
+        </View>
+
+        {/* ---------- bloque 5 · metodología + tácticas ---------- */}
+        <Seccion etiqueta="Metodología" titulo="Cómo se construyó este análisis" />
+        <View style={{ flexDirection: "row", marginBottom: 22 }}>
+          <View style={{ flex: 1, paddingRight: 24 }}>
+            <Text style={labelCol}>FUENTES DE DATOS</Text>
             {d.fuentes.map((f) => (
-              <Text key={f} style={{ fontFamily: "Inter", fontSize: 9.5, color: "#c9c9d1", marginBottom: 5 }}>
+              <Text key={f} style={{ fontFamily: "Inter", fontSize: 8.5, color: TINTA, marginBottom: 4, lineHeight: 1.4 }}>
                 · {f}
               </Text>
             ))}
-            <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 8, letterSpacing: 2, color: GRIS, marginTop: 16, marginBottom: 8 }}>
-              LEVANTAMIENTO
-            </Text>
-            <Text style={{ fontFamily: "Inter", fontSize: 9.5, color: "#c9c9d1", lineHeight: 1.6 }}>
-              Georreferenciación de puntos en lat/long WGS84 (EPSG:4326).
-              Levantamiento realizado el {fechaLarga} con Seeker.
-              Deduplicación por identificador de lugar{d.exclusiones.length > 0 ? ` y exclusiones aplicadas: ${d.exclusiones.join(", ")}` : ""}.
+            <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, lineHeight: 1.5, marginTop: 8 }}>
+              Georreferenciación en lat/long WGS84 (EPSG:4326). Levantamiento
+              del {fechaLarga} con Seeker. Deduplicación por identificador de
+              lugar{d.exclusiones.length > 0 ? `; exclusiones: ${d.exclusiones.join(", ")}` : ""}.
             </Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 8, letterSpacing: 2, color: GRIS, marginBottom: 8 }}>
-              UNIVERSOS DEMOGRÁFICOS
+            <Text style={labelCol}>UNIVERSOS DEMOGRÁFICOS</Text>
+            <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: TINTA, lineHeight: 1.5 }}>
+              Población por interpolación areal sobre AGEBs urbanas del Censo
+              2020 (INEGI), contra la unión de geometrías del análisis
+              {d.criterio ? ` (${d.criterio})` : ""}
+              {d.radioM ? `, radio de ${d.radioM >= 1000 ? `${d.radioM / 1000} km` : `${d.radioM} m`}` : ""}.
+              Universo alcanzable: adultos 18+ con smartphone alcanzables por
+              publicidad digital.
             </Text>
-            <Text style={{ fontFamily: "Inter", fontSize: 9.5, color: "#c9c9d1", lineHeight: 1.6 }}>
-              Población calculada por interpolación areal sobre AGEBs urbanas
-              del Censo de Población y Vivienda 2020 (INEGI), contra la unión
-              de geometrías del análisis{d.criterio ? ` (${d.criterio})` : ""}
-              {d.radioM ? `, con radio de ${d.radioM >= 1000 ? `${d.radioM / 1000} km` : `${d.radioM} m`}` : ""}.
-              El universo alcanzable estima adultos 18+ con smartphone y
-              alcanzables por publicidad digital (factores documentados en la
-              plataforma).
-            </Text>
-            <Text style={{ fontFamily: "Inter", fontSize: 9.5, color: GRIS, lineHeight: 1.6, marginTop: 10 }}>
-              El índice socioeconómico es un proxy censal construido con
-              escolaridad, vehículos e internet por vivienda. No es NSE AMAI.
-              Los rangos de edad 25-64 se estiman con estructura nacional del
-              Censo 2020 sobre los bloques censales reales de la zona.
+            <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, lineHeight: 1.5, marginTop: 8 }}>
+              El índice socioeconómico es un proxy censal (escolaridad,
+              vehículos e internet por vivienda); no es NSE AMAI. Los rangos
+              de edad 25-64 se estiman con estructura nacional del Censo 2020.
             </Text>
           </View>
         </View>
-        <View style={{ position: "absolute", bottom: 30, left: MARGEN }}>
-          <Divisor width={PAGINA[0] - MARGEN * 2} />
-        </View>
-      </Pagina>
 
-      {/* ---------- 7 · SIGUIENTES PASOS ---------- */}
-      <Pagina>
-        <Encabezado etiqueta="Siguientes pasos" titulo="Qué se puede activar sobre este territorio" />
-        <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", marginTop: 8 }}>
+        <Seccion etiqueta="Siguientes pasos" titulo="Qué se puede activar sobre este territorio" />
+        <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" }}>
           {tacticas.map((t) => (
             <PillTactica key={t.nombre} nombre={t.nombre} descriptor={t.descriptor} />
           ))}
         </View>
-        <Text style={{ position: "absolute", bottom: 30, left: MARGEN, fontFamily: "Inter", fontSize: 9, color: GRIS_OSCURO }}>
-          Tácticas seleccionadas según el tipo de análisis. El equipo de Gravity arma el plan de medios sobre este territorio.
-        </Text>
-      </Pagina>
 
-      {/* ---------- 8 · CIERRE ---------- */}
-      <Page size={PAGINA} style={{ backgroundColor: FONDO, padding: MARGEN }}>
-        <Neon />
-        <View style={{ marginTop: 130, alignItems: "center" }}>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Marca size={46} />
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 30, color: BLANCO, marginLeft: 12 }}>
-              Gravity
+        {/* ---------- bloque 6 · cierre ---------- */}
+        <View style={{ position: "absolute", bottom: MARGEN, left: MARGEN, width: CONT }}>
+          <View style={{ alignItems: "center", marginBottom: 26, position: "relative" }}>
+            <Neon height={110} />
+            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 10 }}>
+              <Marca size={30} />
+              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 19, color: BLANCO, marginLeft: 8 }}>
+                Gravity
+              </Text>
+            </View>
+            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 14, color: BLANCO, marginTop: 14 }}>
+              Hagamos del mundo físico tu mejor canal digital.
             </Text>
+            <View style={{ flexDirection: "row", marginTop: 8 }}>
+              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: MAGENTA }}>
+                Real Audiences.{" "}
+              </Text>
+              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: CIAN }}>
+                Real Visits.{" "}
+              </Text>
+              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: VIOLETA }}>
+                Real Gravity.
+              </Text>
+            </View>
           </View>
-          <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 20, color: BLANCO, marginTop: 30 }}>
-            Hagamos del mundo físico tu mejor canal digital.
-          </Text>
-          <View style={{ flexDirection: "row", marginTop: 14 }}>
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 12, color: MAGENTA }}>
-              Real Audiences.{" "}
-            </Text>
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 12, color: CIAN }}>
-              Real Visits.{" "}
-            </Text>
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 12, color: VIOLETA }}>
-              Real Gravity.
-            </Text>
-          </View>
+          <FooterTresCol fecha={fechaLarga} />
         </View>
-        <FooterTresCol fecha={fechaLarga} />
       </Page>
     </Document>
   );
 }
 
-/** Nombre de archivo: Gravity_Plan_[término]_[fecha].pdf */
-export function nombreArchivoPlan(termino: string, fecha: Date): string {
-  const limpio = termino
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 40) || "analisis";
+/** Nombre de archivo: Gravity_Plan_[título]_[fecha].pdf */
+export function nombreArchivoPlan(titulo: string, fecha: Date): string {
+  const limpio =
+    titulo
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-zA-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 60) || "analisis";
   const f = fecha.toISOString().slice(0, 10);
   return `Gravity_Plan_${limpio}_${f}.pdf`;
 }
