@@ -194,12 +194,6 @@ export interface Universos {
     pobRural?: number;
     adultos18Rural?: number;
   };
-  /** Estimado: 18+ × factor smartphone × factor match. */
-  direccionable?: {
-    dispositivos: number;
-    factorSmartphone: number;
-    factorMatch: number;
-  };
   perfil?: {
     /** Índice socioeconómico aproximado (proxy censal), 0-100. NO es NSE AMAI. */
     nseProxy: number | null;

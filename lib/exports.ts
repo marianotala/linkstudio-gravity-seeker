@@ -12,8 +12,6 @@ function filasUniversos(universos: Universos | null | undefined): string[] {
     "— UNIVERSOS (Censo 2020 INEGI · interpolación areal por AGEB) —",
     `universo_residencial,${universos.residencial!.poblacion}`,
     `adultos_18_mas,${universos.residencial!.adultos18}`,
-    `universo_direccionable_estimado,${universos.direccionable!.dispositivos}`,
-    `factores_direccionable,18+ x ${universos.direccionable!.factorSmartphone} x ${universos.direccionable!.factorMatch}`,
     `nse_proxy_promedio (proxy censal; no NSE AMAI),${universos.perfil!.nseProxy ?? ""}`,
     `pct_18a24,${universos.perfil!.pct18a24 ?? ""}`,
     `pct_60ymas,${universos.perfil!.pct60ymas ?? ""}`,
@@ -28,7 +26,6 @@ function propsUniversos(universos: Universos | null | undefined) {
   return {
     fuente: universos.fuente,
     residencial: universos.residencial,
-    direccionable_estimado: universos.direccionable,
     perfil: universos.perfil,
     agebs: universos.agebs,
   };

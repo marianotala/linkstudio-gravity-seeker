@@ -4,7 +4,7 @@
 // resultados. Fuente: Censo 2020 INEGI por AGEB urbana; el índice
 // socioeconómico es un proxy censal aproximado, no NSE AMAI.
 //
-// Tarjetas: Universo (adultos 18+), Universo alcanzable, NSE
+// Tarjetas: Universo (adultos 18+), NSE
 // (distribución por nivel) y Edades (rangos reales del censo: INEGI
 // no publica 25-34/35-44/45-54/55-64 a nivel AGEB, así que se
 // muestran 18-24, 25-59, 60-64 y 65+). Hogares, sexo, ocupantes y la
@@ -102,7 +102,6 @@ export default function UniversosPanel({
   }
 
   const residencial = universos.residencial!;
-  const direccionable = universos.direccionable!;
   const perfil = universos.perfil!;
   // seis rangos estándar de medios; 25-64 estimado con estructura
   // nacional porque INEGI no publica quinquenios adultos por AGEB
@@ -138,15 +137,6 @@ export default function UniversosPanel({
               {fmt(adultosRural)}
             </p>
           )}
-        </Tarjeta>
-
-        <Tarjeta etiqueta="Universo alcanzable">
-          <p className="mt-0.5 font-display text-xl font-extrabold leading-none text-cian">
-            {fmt(direccionable.dispositivos)}
-          </p>
-          <p className="mt-1 truncate font-mono text-[9px] text-zinc-500">
-            adultos con acceso a publicidad digital
-          </p>
         </Tarjeta>
 
         <Tarjeta etiqueta="NSE">

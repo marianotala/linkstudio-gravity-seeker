@@ -762,10 +762,6 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
         {/* ---------- bloque 2 · cifras + barras ---------- */}
         <View style={{ flexDirection: "row" }}>
           <Cifra valor={u ? fmt(u.residencial!.adultos18) : "—"} descriptor="Universo · adultos 18+" />
-          <Cifra
-            valor={u ? fmt(u.direccionable!.dispositivos) : "—"}
-            descriptor="Universo alcanzable · publicidad digital"
-          />
           <Cifra valor={fmt(d.pois.length)} descriptor="POIs censados" />
           <Cifra valor={u ? fmt(u.agebs ?? 0) : "—"} descriptor="Zonas censales analizadas" />
         </View>
@@ -1136,8 +1132,6 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
               , contra la unión de geometrías del análisis
               {d.criterio ? ` (${d.criterio})` : ""}
               {d.radioM ? `, radio de ${d.radioM >= 1000 ? `${d.radioM / 1000} km` : `${d.radioM} m`}` : ""}.
-              Universo alcanzable: adultos 18+ con smartphone alcanzables por
-              publicidad digital.
             </Text>
             <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
               El índice socioeconómico es un proxy censal (escolaridad,

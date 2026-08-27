@@ -1,19 +1,10 @@
 // Cálculo de universos demográficos, lado SERVIDOR.
 // Fuente: Censo de Población y Vivienda 2020 (INEGI), AGEB urbana,
 // por interpolación areal en PostGIS (RPC calcular_universos).
-// El universo direccionable es un ESTIMADO: 18+ × factor smartphone ×
-// factor de match, ambos configurables por variables de entorno.
 
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GeocercaUniverso, Universos } from "./types";
-
-const FACTOR_SMARTPHONE =
-  Number(process.env.FACTOR_SMARTPHONE) > 0
-    ? Number(process.env.FACTOR_SMARTPHONE)
-    : 0.82;
-const FACTOR_MATCH =
-  Number(process.env.FACTOR_MATCH) > 0 ? Number(process.env.FACTOR_MATCH) : 0.65;
 
 export const ETIQUETA_FUENTE_UNIVERSOS =
   "Censo 2020 INEGI · AGEB urbana · interpolación areal · índice socioeconómico aproximado (proxy censal)";
@@ -117,13 +108,6 @@ export async function calcularUniversos(
         pobmas: r.total.pobmas ?? null,
         pobRural: r.total.pob_rural ?? 0,
         adultos18Rural: r.total.adultos18_rural ?? 0,
-      },
-      direccionable: {
-        dispositivos: Math.round(
-          r.total.adultos18 * FACTOR_SMARTPHONE * FACTOR_MATCH
-        ),
-        factorSmartphone: FACTOR_SMARTPHONE,
-        factorMatch: FACTOR_MATCH,
       },
       perfil: {
         nseProxy: r.total.nse_proxy,
