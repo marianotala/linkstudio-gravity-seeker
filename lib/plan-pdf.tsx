@@ -27,6 +27,7 @@ import {
 import type { Poi, SearchMode, Universos } from "./types";
 import { NIVELES_NSE } from "./nse";
 import { rangosEdadEstandar } from "./edades";
+import { normalizarComparable } from "./geo";
 
 // ------------------------------------------------------------------
 // Datos que el plan necesita del análisis activo
@@ -408,6 +409,83 @@ function segmentosEdades(u: Universos | null): Segmento[] | null {
     : null;
 }
 
+interface MarcaRank {
+  marca: string;
+  n: number;
+  pct: number;
+  zonaTop: string | null;
+  zonaTopN: number;
+}
+
+/**
+ * Relevancia de marca para análisis TERRITORIALES: en un territorio
+ * amplio la distancia al centroide no significa nada; lo que importa
+ * es qué cadenas dominan. Agrupa por nombre normalizado y fusiona
+ * variantes con sufijo de sucursal ("OXXO Reforma 222" suma a "OXXO"
+ * cuando la marca a secas existe en el territorio).
+ */
+function rankingMarcas(pois: Poi[], nombresOrigen: string[], max: number): MarcaRank[] {
+  interface Grupo {
+    n: number;
+    nombres: Map<string, number>;
+    zonas: Map<string, number>;
+  }
+  const grupos = new Map<string, Grupo>();
+  for (const p of pois) {
+    const clave = normalizarComparable(p.nombre);
+    if (!clave) continue;
+    let g = grupos.get(clave);
+    if (!g) {
+      g = { n: 0, nombres: new Map(), zonas: new Map() };
+      grupos.set(clave, g);
+    }
+    g.n++;
+    const nombre = p.nombre.trim();
+    g.nombres.set(nombre, (g.nombres.get(nombre) ?? 0) + 1);
+    const z = p.cp ? `CP ${p.cp}` : (nombresOrigen[p.origenIdx] ?? "—");
+    g.zonas.set(z, (g.zonas.get(z) ?? 0) + 1);
+  }
+  // fusión de sufijos de sucursal, de la clave más corta hacia arriba
+  const claves = Array.from(grupos.keys()).sort((a, b) => a.length - b.length);
+  for (const corta of claves) {
+    if (corta.length < 4 || !grupos.has(corta)) continue;
+    const base = grupos.get(corta)!;
+    for (const larga of claves) {
+      if (larga.length <= corta.length || !grupos.has(larga)) continue;
+      if (!larga.startsWith(corta + " ")) continue;
+      const g = grupos.get(larga)!;
+      base.n += g.n;
+      g.nombres.forEach((v, k) => base.nombres.set(k, (base.nombres.get(k) ?? 0) + v));
+      g.zonas.forEach((v, k) => base.zonas.set(k, (base.zonas.get(k) ?? 0) + v));
+      grupos.delete(larga);
+    }
+  }
+  const total = pois.length || 1;
+  return Array.from(grupos.values())
+    .map((g) => {
+      const marca = Array.from(g.nombres.entries()).sort((a, b) => b[1] - a[1])[0][0];
+      const zt = Array.from(g.zonas.entries()).sort((a, b) => b[1] - a[1])[0];
+      return {
+        marca,
+        n: g.n,
+        pct: Math.round((100 * g.n) / total),
+        zonaTop: zt?.[0] ?? null,
+        zonaTopN: zt?.[1] ?? 0,
+      };
+    })
+    .sort((a, b) => b.n - a.n)
+    .slice(0, max);
+}
+
+/** Orden para listas individuales territoriales: por zona/CP y nombre
+ * (la distancia al centroide no aporta en esos modos). */
+function ordenarPorZona(pois: Poi[], nombresOrigen: string[]): Poi[] {
+  const zonaDe = (p: Poi) => (p.cp ? `CP ${p.cp}` : (nombresOrigen[p.origenIdx] ?? ""));
+  return [...pois].sort(
+    (a, b) => zonaDe(a).localeCompare(zonaDe(b)) || a.nombre.localeCompare(b.nombre)
+  );
+}
+
 /** Conteo de POIs por zona/CP de una lista. */
 function conteoPorZona(pois: Poi[], nombresOrigen: string[]): Map<string, number> {
   const conteo = new Map<string, number>();
@@ -483,7 +561,23 @@ function hallazgos(d: PlanDatos): string[] {
 
 const FILAS_TABLA = 12;
 const FILAS_POR_CAPA = 8;
+const EJEMPLOS_RANKING = 5;
 const ALTO_MAPA = Math.round((CONT * 9) / 16); // 16:9 dentro del ancho
+
+type ModoTabla = "distancia" | "porZona" | "ranking";
+
+/** Criterio de la tabla de resultados según el modo del análisis:
+ * - orígenes/radio: la distancia al origen sí significa algo → tabla
+ *   individual con DIST. M.
+ * - censo de marca: lista individual (una sola marca), pero ordenada
+ *   por zona/CP — la distancia al centroide del territorio no aporta.
+ * - territoriales (CP, zona amplia, censo territorial): relevancia de
+ *   marca — qué cadenas dominan el territorio, con conteos. */
+function modoTablaDe(modo: SearchMode): ModoTabla {
+  if (modo === "origins") return "distancia";
+  if (modo === "census") return "porZona";
+  return "ranking";
+}
 
 /** Alto del lienzo calculado por bloques (una sola página vertical:
  * @react-pdf necesita el tamaño por adelantado, y el contenido es
@@ -507,15 +601,26 @@ function estimarAltura(d: PlanDatos, titulo: string): number {
   if (edades) h += 62;
   h += 46; // línea fuente + divisor + aire
   if (d.mapaDataUrl) h += 44 + ALTO_MAPA + (capas ? 20 : 0) + 26; // bloque 3
+  const modoTabla = modoTablaDe(d.modo);
   if (capas) {
     // bloque 4a: una sección de resultados por capa
     for (const c of capas) {
-      const filasCapa = Math.min(c.pois.length, FILAS_POR_CAPA);
+      const filasCapa =
+        modoTabla === "ranking"
+          ? rankingMarcas(c.pois, d.nombresOrigen, FILAS_POR_CAPA).length
+          : Math.min(c.pois.length, FILAS_POR_CAPA);
       h += 52 + 16 + 16 + filasCapa * 15.5 + 22;
     }
   } else {
-    const filas = Math.min(d.pois.length, FILAS_TABLA);
+    const filas =
+      modoTabla === "ranking"
+        ? rankingMarcas(d.pois, d.nombresOrigen, FILAS_TABLA).length
+        : Math.min(d.pois.length, FILAS_TABLA);
     if (filas > 0) h += 66 + 18 + 16 + filas * 15.5 + 22; // bloque 4a tabla
+    if (modoTabla === "ranking" && filas > 0) {
+      // bloque de ejemplos individuales bajo el ranking
+      h += 20 + Math.min(d.pois.length, EJEMPLOS_RANKING) * 15 + 8;
+    }
   }
   const colIzq = porGeocerca.length > 1 ? 26 + porGeocerca.length * 17 : 0;
   const colDer = nHallazgos > 0 ? 26 + nHallazgos * 52 : 0;
@@ -560,6 +665,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
           },
         ]
       : [];
+  const modoTabla = modoTablaDe(d.modo);
   const zonaTopGeneral = zonaConMasPois(d);
   const porGeocerca = (u?.porGeocerca ?? [])
     .filter((g) => g.poblacion > 0)
@@ -703,7 +809,9 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
               titulo={
                 capasDoc
                   ? `${capasDoc.length} categorías sobre el territorio`
-                  : `Top ${Math.min(d.pois.length, FILAS_TABLA)} puntos censados`
+                  : modoTabla === "ranking"
+                    ? `Marcas dominantes del territorio (${fmt(d.pois.length)} puntos)`
+                    : `Top ${Math.min(d.pois.length, FILAS_TABLA)} puntos censados`
               }
             />
             {!capasDoc && zonaTopGeneral && d.nombresOrigen.length > 1 && (
@@ -712,8 +820,30 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
               </Text>
             )}
             {seccionesResultados.map((sec) => {
-              const filas = sec.pois.slice(0, sec.filasMax);
               const topZonaSec = zonaTop(sec.pois, d.nombresOrigen);
+              // ranking: marcas agrupadas; porZona/distancia: filas individuales
+              const rankingCompleto =
+                modoTabla === "ranking" ? rankingMarcas(sec.pois, d.nombresOrigen, 1000) : [];
+              const filasRank = rankingCompleto.slice(0, sec.filasMax);
+              const filas =
+                modoTabla === "porZona"
+                  ? ordenarPorZona(sec.pois, d.nombresOrigen).slice(0, sec.filasMax)
+                  : sec.pois.slice(0, sec.filasMax);
+              // ejemplos individuales bajo el ranking: uno por marca para
+              // que no se repita cinco veces la misma cadena
+              const ejemplos: Poi[] = [];
+              if (modoTabla === "ranking" && !capasDoc) {
+                const marcasVistas = new Set<string>();
+                for (const p of ordenarPorZona(sec.pois, d.nombresOrigen)) {
+                  const clave = normalizarComparable(p.nombre);
+                  if (marcasVistas.has(clave)) continue;
+                  marcasVistas.add(clave);
+                  ejemplos.push(p);
+                  if (ejemplos.length >= EJEMPLOS_RANKING) break;
+                }
+              }
+              const etiquetaZona = (p: Poi) =>
+                (p.cp ? `CP ${p.cp}` : (d.nombresOrigen[p.origenIdx] ?? "—")).slice(0, 19);
               return (
                 <View key={sec.nombre ?? "unica"} style={{ marginBottom: capasDoc ? 16 : 0 }}>
                   {sec.nombre && (
@@ -730,40 +860,105 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
                       </Text>
                     </View>
                   )}
-                  <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 4 }}>
-                    <Text style={[celdaTh, { width: 190 }]}>NOMBRE</Text>
-                    <Text style={[celdaTh, { flex: 1 }]}>DIRECCIÓN</Text>
-                    <Text style={[celdaTh, { width: 118 }]}>ZONA / CP</Text>
-                    <Text style={[celdaTh, { width: 48, textAlign: "right" }]}>DIST. M</Text>
-                  </View>
-                  {filas.map((p, i) => (
-                    <View
-                      key={`${sec.nombre ?? ""}:${p.placeId}`}
-                      style={{
-                        flexDirection: "row",
-                        paddingTop: 3,
-                        paddingBottom: 3,
-                        backgroundColor: i % 2 === 1 ? PANEL : undefined,
-                      }}
-                    >
-                      <Text style={[celdaTd, { width: 190, color: BLANCO }]}>
-                        {p.nombre.length > 33 ? p.nombre.slice(0, 32) + "…" : p.nombre}
-                      </Text>
-                      <Text style={[celdaTd, { flex: 1, color: GRIS }]}>
-                        {p.direccion.length > 46 ? p.direccion.slice(0, 45) + "…" : p.direccion}
-                      </Text>
-                      <Text style={[celdaTd, { width: 118, color: GRIS }]}>
-                        {(p.cp ? `CP ${p.cp}` : (d.nombresOrigen[p.origenIdx] ?? "—")).slice(0, 19)}
-                      </Text>
-                      <Text style={[celdaTd, { width: 48, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
-                        {fmt(p.distancia)}
-                      </Text>
+                  {modoTabla === "ranking" ? (
+                    <View>
+                      <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 4 }}>
+                        <Text style={[celdaTh, { width: 250 }]}>MARCA</Text>
+                        <Text style={[celdaTh, { width: 58, textAlign: "right" }]}>PUNTOS</Text>
+                        <Text style={[celdaTh, { width: 46, textAlign: "right" }]}>%</Text>
+                        <Text style={[celdaTh, { flex: 1, paddingLeft: 18 }]}>MAYOR CONCENTRACIÓN</Text>
+                      </View>
+                      {filasRank.map((m, i) => (
+                        <View
+                          key={`${sec.nombre ?? ""}:${m.marca}`}
+                          style={{
+                            flexDirection: "row",
+                            paddingTop: 3,
+                            paddingBottom: 3,
+                            backgroundColor: i % 2 === 1 ? PANEL : undefined,
+                          }}
+                        >
+                          <Text style={[celdaTd, { width: 250, color: BLANCO }]}>
+                            {m.marca.length > 42 ? m.marca.slice(0, 41) + "…" : m.marca}
+                          </Text>
+                          <Text style={[celdaTd, { width: 58, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
+                            {fmt(m.n)}
+                          </Text>
+                          <Text style={[celdaTd, { width: 46, textAlign: "right", fontFamily: "DMMono", color: GRIS }]}>
+                            {m.pct}%
+                          </Text>
+                          <Text style={[celdaTd, { flex: 1, paddingLeft: 18, color: GRIS }]}>
+                            {m.zonaTop ? `${m.zonaTop.slice(0, 26)} (${fmt(m.zonaTopN)})` : "—"}
+                          </Text>
+                        </View>
+                      ))}
+                      {rankingCompleto.length > filasRank.length && (
+                        <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
+                          +{fmt(rankingCompleto.length - filasRank.length)} marcas más — detalle completo en el Export data (CSV).
+                        </Text>
+                      )}
+                      {ejemplos.length > 0 && (
+                        <View style={{ marginTop: 12 }}>
+                          <Text style={[celdaTh, { marginBottom: 4 }]}>EJEMPLOS DE PUNTOS</Text>
+                          {ejemplos.map((p) => (
+                            <Text
+                              key={`ej:${p.placeId}`}
+                              style={{ fontFamily: "Inter", fontSize: 8, color: GRIS, marginBottom: 3 }}
+                            >
+                              <Text style={{ color: TINTA }}>
+                                {p.nombre.length > 33 ? p.nombre.slice(0, 32) + "…" : p.nombre}
+                              </Text>
+                              {" — "}
+                              {p.direccion.length > 52 ? p.direccion.slice(0, 51) + "…" : p.direccion}
+                              {" · "}
+                              {etiquetaZona(p)}
+                            </Text>
+                          ))}
+                        </View>
+                      )}
                     </View>
-                  ))}
-                  {sec.pois.length > filas.length && (
-                    <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
-                      +{fmt(sec.pois.length - filas.length)} registros más — detalle completo en el Export data (CSV).
-                    </Text>
+                  ) : (
+                    <View>
+                      <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 4 }}>
+                        <Text style={[celdaTh, { width: 190 }]}>NOMBRE</Text>
+                        <Text style={[celdaTh, { flex: 1 }]}>DIRECCIÓN</Text>
+                        <Text style={[celdaTh, { width: modoTabla === "distancia" ? 118 : 140 }]}>ZONA / CP</Text>
+                        {modoTabla === "distancia" && (
+                          <Text style={[celdaTh, { width: 48, textAlign: "right" }]}>DIST. M</Text>
+                        )}
+                      </View>
+                      {filas.map((p, i) => (
+                        <View
+                          key={`${sec.nombre ?? ""}:${p.placeId}`}
+                          style={{
+                            flexDirection: "row",
+                            paddingTop: 3,
+                            paddingBottom: 3,
+                            backgroundColor: i % 2 === 1 ? PANEL : undefined,
+                          }}
+                        >
+                          <Text style={[celdaTd, { width: 190, color: BLANCO }]}>
+                            {p.nombre.length > 33 ? p.nombre.slice(0, 32) + "…" : p.nombre}
+                          </Text>
+                          <Text style={[celdaTd, { flex: 1, color: GRIS }]}>
+                            {p.direccion.length > 46 ? p.direccion.slice(0, 45) + "…" : p.direccion}
+                          </Text>
+                          <Text style={[celdaTd, { width: modoTabla === "distancia" ? 118 : 140, color: GRIS }]}>
+                            {etiquetaZona(p)}
+                          </Text>
+                          {modoTabla === "distancia" && (
+                            <Text style={[celdaTd, { width: 48, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
+                              {fmt(p.distancia)}
+                            </Text>
+                          )}
+                        </View>
+                      ))}
+                      {sec.pois.length > filas.length && (
+                        <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
+                          +{fmt(sec.pois.length - filas.length)} registros más — detalle completo en el Export data (CSV).
+                        </Text>
+                      )}
+                    </View>
                   )}
                 </View>
               );

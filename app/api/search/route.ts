@@ -6,7 +6,7 @@ import {
   searchText,
   type PlaceResult,
 } from "@/lib/google";
-import { haversine, normalizarComparable } from "@/lib/geo";
+import { esNombreBasura, haversine, normalizarComparable } from "@/lib/geo";
 import { getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import { createClient } from "@/lib/supabase/server";
 import { calcularUniversos } from "@/lib/universos";
@@ -270,11 +270,23 @@ export async function POST(req: Request) {
     }
     let lugares = Array.from(porId.values());
 
-    // 3) Filtro estricto de nombre: todas las palabras del filtro deben
-    //    aparecer en el nombre, comparando sin acentos ni puntuación
-    //    ("7 eleven" atrapa "7-Eleven").
+    // 3) Filtro de CALIDAD: descarta registros basura de Google
+    //    (".", "Casa", "Sin nombre"...) en todos los modos. Se reportan
+    //    en el contador de descartados por nombre, no en silencio.
     let descartadosPorNombre = 0;
     const detalleDescartados: string[] = [];
+    lugares = lugares.filter((p) => {
+      if (!esNombreBasura(p.nombre)) return true;
+      descartadosPorNombre++;
+      if (detalleDescartados.length < 300) {
+        detalleDescartados.push(p.nombre.trim() || "(sin nombre)");
+      }
+      return false;
+    });
+
+    // 3b) Filtro estricto de nombre: todas las palabras del filtro deben
+    //    aparecer en el nombre, comparando sin acentos ni puntuación
+    //    ("7 eleven" atrapa "7-Eleven").
     if (nameFilter) {
       const tokens = normalizarComparable(nameFilter).split(" ").filter(Boolean);
       lugares = lugares.filter((p) => {

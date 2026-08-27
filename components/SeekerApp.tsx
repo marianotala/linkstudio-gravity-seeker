@@ -13,6 +13,7 @@ import UniversosPanel from "./UniversosPanel";
 import { CATEGORIAS, getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import {
   esMismoEstablecimiento,
+  esNombreBasura,
   generarCuadricula,
   haversine,
   normalizarComparable,
@@ -1881,6 +1882,10 @@ export default function SeekerApp({
     let celdasCorridas = 0;
     let celdasFallidas = 0;
     let fallosSeguidos = 0;
+    // registros basura de DENUE (nombres vacíos/genéricos): se
+    // descartan pero se REPORTAN en el contador, no en silencio
+    let basuraDenue = 0;
+    const detalleBasura = new Set<string>();
 
     for (let i = 0; i < celdas.length; i++) {
       if (detenerCensoRef.current) break;
@@ -1896,6 +1901,13 @@ export default function SeekerApp({
             }
           );
           for (const d of crudos) {
+            if (esNombreBasura(d.nombre)) {
+              basuraDenue++;
+              if (detalleBasura.size < 300) {
+                detalleBasura.add(d.nombre.trim() || "(sin nombre)");
+              }
+              continue;
+            }
             if (!denueAcum.has(d.placeId)) {
               denueAcum.set(d.placeId, denuePoiAPoi(d, terCentro));
             }
@@ -1959,7 +1971,8 @@ export default function SeekerApp({
       Array.from(denueAcum.values())
     ).sort((a, b) => a.distancia - b.distancia);
     setPois(lista);
-    setContadores({ excluidos: 0, descartadosPorNombre: 0 });
+    setContadores({ excluidos: 0, descartadosPorNombre: basuraDenue });
+    setDetalles({ excluidos: [], descartados: Array.from(detalleBasura) });
     setTablaColapsada(false);
 
     const universosCenso = await calcularUniversosDeCenso(lista);

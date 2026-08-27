@@ -24,6 +24,37 @@ export function normalizarComparable(texto: string): string {
     .trim();
 }
 
+// ------------------------------------------------------------------
+// Filtro de calidad de nombres de POI (aplica a todos los modos):
+// Google y DENUE a veces regresan registros basura (".", "Casa",
+// "Sin nombre") que ensucian censos y exports. Lista EDITABLE de
+// nombres genéricos sin valor de negocio — se comparan normalizados
+// (sin acentos ni puntuación) y solo cuando el nombre es EXACTAMENTE
+// eso ("Casa" se descarta; "Casa Toño" pasa).
+// ------------------------------------------------------------------
+
+export const NOMBRES_SIN_VALOR = [
+  "casa",
+  "local",
+  "tienda",
+  "negocio",
+  "bodega",
+  "sin nombre",
+  "unnamed",
+  "s n",
+  "n a",
+  "na",
+];
+
+/** true si el nombre no identifica un negocio: 1-2 caracteres, solo
+ * números/puntuación, o un genérico de NOMBRES_SIN_VALOR a secas. */
+export function esNombreBasura(nombre: string): boolean {
+  const limpio = normalizarComparable(nombre);
+  if (limpio.length <= 2) return true;
+  if (!/[a-z]/.test(limpio)) return true;
+  return NOMBRES_SIN_VALOR.includes(limpio);
+}
+
 /**
  * Extrae la ciudad de una dirección formateada (Google o DENUE).
  * Heurística: el segmento que trae el código postal suele ser
