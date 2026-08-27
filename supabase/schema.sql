@@ -1012,7 +1012,12 @@ begin
   un as (select ST_Union(geom) as geom from gc),
   inter as (
     select a.cvegeo, a.pobtot, a.pobfem, a.pobmas, a.p_18ymas, a.p_18a24,
-           a.p_60ymas, a.pob65_mas, a.tvivhab, a.nse_proxy,
+           a.p_60ymas, a.tvivhab, a.nse_proxy,
+           -- fase 11: 65+ por fila — censal si existe, si no reparto
+           -- nacional del bloque 60+ (0.673, espejo de lib/edades.ts);
+           -- así los seis rangos SIEMPRE suman 100% del universo 18+,
+           -- también en zonas mixtas (AGEBs con y sin POB65_MAS)
+           coalesce(a.pob65_mas, coalesce(a.p_60ymas, 0) * 0.673) as p65_fila,
            ST_Area(ST_Intersection(a.geom, un.geom)::geography)
              / nullif(ST_Area(a.geom::geography), 0) as frac
     from public.agebs a, un
@@ -1035,9 +1040,8 @@ begin
       sum(p_18a24 * frac) as n_18a24,
       sum(greatest(coalesce(p_18ymas,0) - coalesce(p_18a24,0) - coalesce(p_60ymas,0), 0) * frac) as n_25a59,
       sum(p_60ymas * frac) as n_60ymas,
-      sum(pob65_mas * frac) as n_65ymas,
-      sum(greatest(coalesce(p_60ymas,0) - coalesce(pob65_mas,0), 0) * frac)
-        filter (where pob65_mas is not null) as n_60a64,
+      sum(p65_fila * frac) as n_65ymas,
+      sum(greatest(coalesce(p_60ymas,0) - p65_fila, 0) * frac) as n_60a64,
       -- distribución NSE ponderada por población (solo AGEBs con índice)
       nullif(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy is not null), 0) as w_nse,
       coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 75), 0) as w_ab,
@@ -1060,10 +1064,8 @@ begin
     'edades', case when base18 is not null then jsonb_build_object(
       'pct_18a24', round((100.0 * coalesce(n_18a24, 0) / base18)::numeric, 1),
       'pct_25a59', round((100.0 * coalesce(n_25a59, 0) / base18)::numeric, 1),
-      'pct_60a64', case when n_65ymas is not null
-        then round((100.0 * coalesce(n_60a64, 0) / base18)::numeric, 1) end,
-      'pct_65ymas', case when n_65ymas is not null
-        then round((100.0 * n_65ymas / base18)::numeric, 1) end,
+      'pct_60a64', round((100.0 * coalesce(n_60a64, 0) / base18)::numeric, 1),
+      'pct_65ymas', round((100.0 * coalesce(n_65ymas, 0) / base18)::numeric, 1),
       'pct_60ymas', round((100.0 * coalesce(n_60ymas, 0) / base18)::numeric, 1)
     ) end,
     'nse_dist', case when w_nse is not null then jsonb_build_object(

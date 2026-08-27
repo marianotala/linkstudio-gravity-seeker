@@ -61,6 +61,10 @@ export function rangosEdadEstandar(
     | undefined
 ): RangoEdad[] | null {
   if (!edades) return null;
+  // El RPC (fase 11) ya reparte el 60+ de los AGEBs sin POB65_MAS con
+  // la estructura nacional FILA POR FILA, así que pct60a64/pct65ymas
+  // siempre vienen; este fallback queda para universos guardados
+  // antes de ese cambio.
   const p6064 =
     edades.pct60a64 ?? edades.pct60ymas * W_60A64_DE_60MAS;
   const p65 =
@@ -73,6 +77,18 @@ export function rangosEdadEstandar(
     edades.pct25a59 * W_55A59 + p6064,
     p65,
   ];
+
+  // REGLA DURA: los seis rangos deben sumar 100% del universo 18+ en
+  // cualquier modo (buffers, zona, CPs). Fuera de 99.5-100.5 = regresión
+  // en el RPC o universos viejos de zona mixta: warning con desglose.
+  const suma = valores.reduce((s, v) => s + v, 0);
+  if (suma < 99.5 || suma > 100.5) {
+    console.warn(
+      `[edades] Los rangos suman ${suma.toFixed(1)}% del universo 18+ (deben sumar 100 ±0.5)`,
+      { entrada: edades, rangos: valores.map(r1) }
+    );
+  }
+
   const etiquetas = ["18-24", "25-34", "35-44", "45-54", "55-64", "65+"];
   return etiquetas.map((etiqueta, i) => ({
     etiqueta,
