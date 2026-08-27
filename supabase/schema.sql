@@ -1607,3 +1607,423 @@ $$;
 
 revoke execute on function public.buscar_cps(text[], boolean) from public, anon;
 grant execute on function public.buscar_cps(text[], boolean) to authenticated;
+
+
+-- ============================================================
+-- MIGRACIÓN FASE 12 — población rural por localidad (ITER 2020)
+-- ============================================================
+-- La base demográfica solo tenía AGEBs URBANAS (RESAGEBURB): las
+-- localidades rurales (<2,500 hab) aportaban población CERO a los
+-- universos aunque tienen habitantes. Se complementa con las
+-- localidades del ITER 2020 (INEGI) como PUNTOS con población, que
+-- se SUMAN cuando caen dentro de la geometría del análisis. No hay
+-- doble conteo: el ITER que se carga excluye localidades urbanas.
+-- El NSE sigue siendo SOLO urbano (el ITER no trae las variables del
+-- proxy) — se anota en la metodología, no se inventa.
+
+create table if not exists public.localidades_rurales (
+  cvegeo text primary key,          -- EE+MMM+LLLL (9 chars)
+  entidad text not null,            -- clave de entidad "09", "15", …
+  nom_ent text,
+  mun text,
+  nom_mun text,
+  loc text,
+  nom_loc text,
+  pobtot int,
+  pobfem int,
+  pobmas int,
+  p_18ymas int,                     -- null = confidencial INEGI (no cero)
+  p_18a24 int,
+  p_60ymas int,
+  vivtot int,
+  tvivhab int,
+  geom extensions.geometry(Point, 4326) not null
+);
+
+create index if not exists localidades_rurales_geom_gix
+  on public.localidades_rurales using gist (geom);
+create index if not exists localidades_rurales_entidad_idx
+  on public.localidades_rurales (entidad);
+
+alter table public.localidades_rurales enable row level security;
+
+drop policy if exists "localidades: leer autenticados" on public.localidades_rurales;
+create policy "localidades: leer autenticados"
+  on public.localidades_rurales for select
+  to authenticated
+  using (true);
+
+drop policy if exists "localidades: insertar admin" on public.localidades_rurales;
+create policy "localidades: insertar admin"
+  on public.localidades_rurales for insert
+  to authenticated
+  with check (public.es_admin());
+
+drop policy if exists "localidades: actualizar admin" on public.localidades_rurales;
+create policy "localidades: actualizar admin"
+  on public.localidades_rurales for update
+  to authenticated
+  using (public.es_admin());
+
+drop policy if exists "localidades: borrar admin" on public.localidades_rurales;
+create policy "localidades: borrar admin"
+  on public.localidades_rurales for delete
+  to authenticated
+  using (public.es_admin());
+
+-- Carga por lotes desde /admin. security invoker: las políticas de
+-- arriba limitan la escritura a admins. Valores confidenciales del
+-- ITER llegan como null (celda vacía), NUNCA como cero.
+create or replace function public.admin_upsert_localidades(p_localidades jsonb)
+returns int
+language plpgsql
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v_n int;
+begin
+  if coalesce(jsonb_array_length(p_localidades), 0) = 0
+     or jsonb_array_length(p_localidades) > 5000 then
+    raise exception 'Lote inválido: manda entre 1 y 5000 localidades';
+  end if;
+
+  insert into public.localidades_rurales
+    (cvegeo, entidad, nom_ent, mun, nom_mun, loc, nom_loc,
+     pobtot, pobfem, pobmas, p_18ymas, p_18a24, p_60ymas,
+     vivtot, tvivhab, geom)
+  select
+    r ->> 'cvegeo',
+    r ->> 'entidad',
+    r ->> 'nom_ent',
+    r ->> 'mun',
+    r ->> 'nom_mun',
+    r ->> 'loc',
+    r ->> 'nom_loc',
+    (r ->> 'pobtot')::int,
+    (r ->> 'pobfem')::int,
+    (r ->> 'pobmas')::int,
+    (r ->> 'p_18ymas')::int,
+    (r ->> 'p_18a24')::int,
+    (r ->> 'p_60ymas')::int,
+    (r ->> 'vivtot')::int,
+    (r ->> 'tvivhab')::int,
+    ST_SetSRID(ST_MakePoint((r ->> 'lng')::float, (r ->> 'lat')::float), 4326)
+  from jsonb_array_elements(p_localidades) as r
+  on conflict (cvegeo) do update set
+    entidad = excluded.entidad, nom_ent = excluded.nom_ent,
+    mun = excluded.mun, nom_mun = excluded.nom_mun,
+    loc = excluded.loc, nom_loc = excluded.nom_loc,
+    pobtot = excluded.pobtot, pobfem = excluded.pobfem,
+    pobmas = excluded.pobmas, p_18ymas = excluded.p_18ymas,
+    p_18a24 = excluded.p_18a24, p_60ymas = excluded.p_60ymas,
+    vivtot = excluded.vivtot, tvivhab = excluded.tvivhab,
+    geom = excluded.geom;
+
+  get diagnostics v_n = row_count;
+  return v_n;
+end;
+$$;
+
+revoke execute on function public.admin_upsert_localidades(jsonb) from public, anon;
+grant execute on function public.admin_upsert_localidades(jsonb) to authenticated;
+
+-- Resumen para /admin: total nacional y desglose por entidad.
+create or replace function public.localidades_resumen()
+returns jsonb
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'total', coalesce(sum(n), 0),
+    'poblacion', coalesce(sum(pob), 0),
+    'entidades', count(*)
+  )
+  from (
+    select entidad, count(*) as n, sum(pobtot) as pob
+    from public.localidades_rurales
+    group by entidad
+  ) t;
+$$;
+
+revoke execute on function public.localidades_resumen() from public, anon;
+grant execute on function public.localidades_resumen() to authenticated;
+
+-- calcular_universos ampliado (fase 12): SUMA la población rural de
+-- las localidades ITER cuyo punto cae dentro de la unión de
+-- geometrías (ST_Within). Agrega a `total`:
+--   pob_urbana / pob_rural           desglose del universo total
+--   adultos18_urbana / adultos18_rural
+-- y al nivel raíz `rurales` (conteo de localidades sumadas).
+-- El NSE (proxy y distribución) sigue siendo SOLO URBANO: el ITER no
+-- trae las variables del proxy — se anota en la metodología.
+-- Edades: p_18a24 y p_60ymas del ITER son directos; 25-59 se deriva;
+-- el bloque 60+ rural se reparte 60-64/65+ con estructura nacional
+-- (0.327/0.673, espejo de lib/edades.ts) para que los seis rangos
+-- SIGAN sumando 100% del universo 18+.
+create or replace function public.calcular_universos(
+  p_geocercas jsonb,
+  p_incluir_agebs boolean default false
+)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v_n int;
+  v_total jsonb;
+  v_por jsonb := '[]'::jsonb;
+  v_por_ageb jsonb := '[]'::jsonb;
+  v_agebs jsonb := null;
+  v_count_agebs int;
+  v_count_rurales int;
+begin
+  v_n := coalesce(jsonb_array_length(p_geocercas), 0);
+  if v_n = 0 or v_n > 2000 then
+    return jsonb_build_object('disponible', false, 'motivo', 'geocercas_invalidas');
+  end if;
+
+  with gc as (
+    select
+      coalesce(g.value->>'id', g.ordinality::text) as gid,
+      case
+        when g.value ? 'cp' then (select c.geom from public.cp_poligonos c where c.codigo_postal = g.value->>'cp')
+        when g.value ? 'viewport' then ST_MakeEnvelope(
+          (g.value->'viewport'->>'west')::float,
+          (g.value->'viewport'->>'south')::float,
+          (g.value->'viewport'->>'east')::float,
+          (g.value->'viewport'->>'north')::float, 4326)
+        else (ST_Buffer(
+          ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+          least(greatest((g.value->>'radio_m')::float, 10), 100000)
+        ))::geometry
+      end as geom
+    from jsonb_array_elements(p_geocercas) with ordinality as g
+  ),
+  un as (select ST_Union(geom) as geom from gc),
+  inter as (
+    select a.cvegeo, a.pobtot, a.pobfem, a.pobmas, a.p_18ymas, a.p_18a24,
+           a.p_60ymas, a.tvivhab, a.nse_proxy,
+           -- fase 11: 65+ por fila — censal si existe, si no reparto
+           -- nacional del bloque 60+ (0.673, espejo de lib/edades.ts)
+           coalesce(a.pob65_mas, coalesce(a.p_60ymas, 0) * 0.673) as p65_fila,
+           ST_Area(ST_Intersection(a.geom, un.geom)::geography)
+             / nullif(ST_Area(a.geom::geography), 0) as frac
+    from public.agebs a, un
+    where un.geom is not null and a.geom && un.geom and ST_Intersects(a.geom, un.geom)
+  ),
+  agg as (
+    select
+      count(*) as n,
+      round(coalesce(sum(pobtot * frac), 0))::int as poblacion,
+      round(coalesce(sum(p_18ymas * frac), 0))::int as adultos18,
+      round(coalesce(sum(tvivhab * frac), 0))::int as viviendas,
+      round(sum(pobfem * frac))::int as pobfem,
+      round(sum(pobmas * frac))::int as pobmas,
+      round((sum(nse_proxy * coalesce(pobtot,0) * frac)
+        / nullif(sum(case when nse_proxy is not null then coalesce(pobtot,0) * frac end), 0))::numeric, 1) as nse_proxy,
+      nullif(sum(p_18ymas * frac), 0) as base18,
+      sum(p_18a24 * frac) as n_18a24,
+      sum(greatest(coalesce(p_18ymas,0) - coalesce(p_18a24,0) - coalesce(p_60ymas,0), 0) * frac) as n_25a59,
+      sum(p_60ymas * frac) as n_60ymas,
+      sum(p65_fila * frac) as n_65ymas,
+      sum(greatest(coalesce(p_60ymas,0) - p65_fila, 0) * frac) as n_60a64,
+      nullif(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy is not null), 0) as w_nse,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 75), 0) as w_ab,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 65 and nse_proxy < 75), 0) as w_cmas,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 55 and nse_proxy < 65), 0) as w_c,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 45 and nse_proxy < 55), 0) as w_cmenos,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 35 and nse_proxy < 45), 0) as w_dmas,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy < 35), 0) as w_de
+    from inter where frac > 0
+  ),
+  -- localidades rurales (ITER 2020): puntos DENTRO de la unión. Los
+  -- valores confidenciales son null: cuentan cero al sumar (sum los
+  -- ignora) y no distorsionan promedios (aquí solo hay sumas).
+  rur as (
+    select
+      count(*) as n_loc,
+      round(coalesce(sum(l.pobtot), 0))::int as poblacion,
+      round(coalesce(sum(l.p_18ymas), 0))::int as adultos18,
+      round(coalesce(sum(l.tvivhab), 0))::int as viviendas,
+      sum(l.pobfem) as pobfem_sum,
+      sum(l.pobmas) as pobmas_sum,
+      coalesce(sum(l.p_18a24), 0)::numeric as n_18a24,
+      coalesce(sum(greatest(coalesce(l.p_18ymas,0) - coalesce(l.p_18a24,0) - coalesce(l.p_60ymas,0), 0)), 0)::numeric as n_25a59,
+      coalesce(sum(l.p_60ymas), 0)::numeric as n_60ymas,
+      coalesce(sum(l.p_18ymas), 0)::numeric as base18
+    from public.localidades_rurales l, un
+    where un.geom is not null and l.geom && un.geom and ST_Within(l.geom, un.geom)
+  )
+  select agg.n, rur.n_loc, jsonb_build_object(
+    'poblacion', agg.poblacion + rur.poblacion,
+    'adultos18', agg.adultos18 + rur.adultos18,
+    'viviendas', agg.viviendas + rur.viviendas,
+    'pobfem', case when agg.pobfem is not null or rur.pobfem_sum is not null
+      then coalesce(agg.pobfem, 0) + round(coalesce(rur.pobfem_sum, 0))::int end,
+    'pobmas', case when agg.pobmas is not null or rur.pobmas_sum is not null
+      then coalesce(agg.pobmas, 0) + round(coalesce(rur.pobmas_sum, 0))::int end,
+    'pob_urbana', agg.poblacion,
+    'pob_rural', rur.poblacion,
+    'adultos18_urbana', agg.adultos18,
+    'adultos18_rural', rur.adultos18,
+    'nse_proxy', agg.nse_proxy,
+    'pct_18a24', round((100.0 * (coalesce(agg.n_18a24, 0) + rur.n_18a24)
+      / nullif(agg.poblacion + rur.poblacion, 0))::numeric, 1),
+    'pct_60ymas', round((100.0 * (coalesce(agg.n_60ymas, 0) + rur.n_60ymas)
+      / nullif(agg.poblacion + rur.poblacion, 0))::numeric, 1),
+    'edades', case when coalesce(agg.base18, 0) + rur.base18 > 0 then jsonb_build_object(
+      'pct_18a24', round((100.0 * (coalesce(agg.n_18a24, 0) + rur.n_18a24) / (coalesce(agg.base18, 0) + rur.base18))::numeric, 1),
+      'pct_25a59', round((100.0 * (coalesce(agg.n_25a59, 0) + rur.n_25a59) / (coalesce(agg.base18, 0) + rur.base18))::numeric, 1),
+      'pct_60a64', round((100.0 * (coalesce(agg.n_60a64, 0) + rur.n_60ymas * 0.327) / (coalesce(agg.base18, 0) + rur.base18))::numeric, 1),
+      'pct_65ymas', round((100.0 * (coalesce(agg.n_65ymas, 0) + rur.n_60ymas * 0.673) / (coalesce(agg.base18, 0) + rur.base18))::numeric, 1),
+      'pct_60ymas', round((100.0 * (coalesce(agg.n_60ymas, 0) + rur.n_60ymas) / (coalesce(agg.base18, 0) + rur.base18))::numeric, 1)
+    ) end,
+    'nse_dist', case when agg.w_nse is not null then jsonb_build_object(
+      'ab', round((100.0 * agg.w_ab / agg.w_nse)::numeric, 1),
+      'c_mas', round((100.0 * agg.w_cmas / agg.w_nse)::numeric, 1),
+      'c', round((100.0 * agg.w_c / agg.w_nse)::numeric, 1),
+      'c_menos', round((100.0 * agg.w_cmenos / agg.w_nse)::numeric, 1),
+      'd_mas', round((100.0 * agg.w_dmas / agg.w_nse)::numeric, 1),
+      'de', round((100.0 * agg.w_de / agg.w_nse)::numeric, 1)
+    ) end
+  )
+  into v_count_agebs, v_count_rurales, v_total
+  from agg, rur;
+
+  -- sin AGEBs urbanas Y sin localidades rurales = falta cargar datos;
+  -- con cualquiera de las dos el universo sí se calcula
+  if coalesce(v_count_agebs, 0) = 0 and coalesce(v_count_rurales, 0) = 0 then
+    return jsonb_build_object('disponible', false, 'motivo', 'sin_agebs');
+  end if;
+
+  -- tabla de detalle por AGEB (población interpolada dentro de la zona)
+  with gc as (
+    select case
+      when g.value ? 'cp' then (select c.geom from public.cp_poligonos c where c.codigo_postal = g.value->>'cp')
+        when g.value ? 'viewport' then ST_MakeEnvelope(
+        (g.value->'viewport'->>'west')::float,
+        (g.value->'viewport'->>'south')::float,
+        (g.value->'viewport'->>'east')::float,
+        (g.value->'viewport'->>'north')::float, 4326)
+      else (ST_Buffer(
+        ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+        least(greatest((g.value->>'radio_m')::float, 10), 100000)
+      ))::geometry
+    end as geom
+    from jsonb_array_elements(p_geocercas) with ordinality as g
+  ),
+  un as (select ST_Union(geom) as geom from gc),
+  filas as (
+    select a.cvegeo,
+      round(coalesce(a.pobtot, 0) * ST_Area(ST_Intersection(a.geom, un.geom)::geography)
+        / nullif(ST_Area(a.geom::geography), 0))::int as poblacion,
+      a.nse_proxy
+    from public.agebs a, un
+    where un.geom is not null and a.geom && un.geom and ST_Intersects(a.geom, un.geom)
+    order by 2 desc nulls last
+    limit 300
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'cvegeo', cvegeo, 'poblacion', poblacion, 'nse_proxy', nse_proxy
+  )), '[]'::jsonb)
+  into v_por_ageb from filas;
+
+  if v_n <= 200 then
+    with gc as (
+      select
+        coalesce(g.value->>'id', g.ordinality::text) as gid,
+        g.ordinality as orden,
+        case
+          when g.value ? 'cp' then (select c.geom from public.cp_poligonos c where c.codigo_postal = g.value->>'cp')
+        when g.value ? 'viewport' then ST_MakeEnvelope(
+            (g.value->'viewport'->>'west')::float,
+            (g.value->'viewport'->>'south')::float,
+            (g.value->'viewport'->>'east')::float,
+            (g.value->'viewport'->>'north')::float, 4326)
+          else (ST_Buffer(
+            ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+            least(greatest((g.value->>'radio_m')::float, 10), 100000)
+          ))::geometry
+        end as geom
+      from jsonb_array_elements(p_geocercas) with ordinality as g
+    ),
+    porg as (
+      select gc.gid, gc.orden,
+        round(coalesce(sum(a.pobtot * ST_Area(ST_Intersection(a.geom, gc.geom)::geography) / nullif(ST_Area(a.geom::geography),0)), 0))::int as poblacion,
+        round(coalesce(sum(a.p_18ymas * ST_Area(ST_Intersection(a.geom, gc.geom)::geography) / nullif(ST_Area(a.geom::geography),0)), 0))::int as adultos18,
+        round((sum(a.nse_proxy * coalesce(a.pobtot,0) * ST_Area(ST_Intersection(a.geom, gc.geom)::geography) / nullif(ST_Area(a.geom::geography),0))
+          / nullif(sum(case when a.nse_proxy is not null then coalesce(a.pobtot,0) * ST_Area(ST_Intersection(a.geom, gc.geom)::geography) / nullif(ST_Area(a.geom::geography),0) end), 0))::numeric, 1) as nse_proxy
+      from gc
+      left join public.agebs a on a.geom && gc.geom and ST_Intersects(a.geom, gc.geom)
+      group by gc.gid, gc.orden
+    ),
+    -- rural por geocerca: puntos dentro de CADA geocerca (para que la
+    -- barra de población por zona/CP cuadre con el total combinado)
+    porr as (
+      select gc.gid,
+        round(coalesce(sum(l.pobtot), 0))::int as pob_r,
+        round(coalesce(sum(l.p_18ymas), 0))::int as ad_r
+      from gc
+      left join public.localidades_rurales l
+        on l.geom && gc.geom and ST_Within(l.geom, gc.geom)
+      group by gc.gid
+    )
+    select coalesce(jsonb_agg(jsonb_build_object(
+      'id', porg.gid,
+      'poblacion', porg.poblacion + coalesce(porr.pob_r, 0),
+      'adultos18', porg.adultos18 + coalesce(porr.ad_r, 0),
+      'nse_proxy', porg.nse_proxy
+    ) order by porg.orden), '[]'::jsonb)
+    into v_por from porg left join porr on porr.gid = porg.gid;
+  end if;
+
+  if p_incluir_agebs then
+    with gc as (
+      select case
+        when g.value ? 'cp' then (select c.geom from public.cp_poligonos c where c.codigo_postal = g.value->>'cp')
+        when g.value ? 'viewport' then ST_MakeEnvelope(
+          (g.value->'viewport'->>'west')::float,
+          (g.value->'viewport'->>'south')::float,
+          (g.value->'viewport'->>'east')::float,
+          (g.value->'viewport'->>'north')::float, 4326)
+        else (ST_Buffer(
+          ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+          least(greatest((g.value->>'radio_m')::float, 10), 100000)
+        ))::geometry
+      end as geom
+      from jsonb_array_elements(p_geocercas) with ordinality as g
+    ),
+    un as (select ST_Union(geom) as geom from gc),
+    sel as (
+      select a.cvegeo, a.pobtot, a.nse_proxy, a.geom
+      from public.agebs a, un
+      where a.geom && un.geom and ST_Intersects(a.geom, un.geom)
+      order by a.pobtot desc nulls last
+      limit 1500
+    )
+    select jsonb_agg(jsonb_build_object(
+      'cvegeo', cvegeo, 'pobtot', pobtot, 'nse_proxy', nse_proxy,
+      'geometria', ST_AsGeoJSON(geom, 5)::jsonb
+    ))
+    into v_agebs from sel;
+  end if;
+
+  return jsonb_build_object(
+    'disponible', true,
+    'agebs', v_count_agebs,
+    'rurales', v_count_rurales,
+    'total', v_total,
+    'por_geocerca', v_por,
+    'por_ageb', v_por_ageb,
+    'agebs_geo', v_agebs
+  );
+end;
+$$;
+
+revoke execute on function public.calcular_universos(jsonb, boolean) from public, anon;
+grant execute on function public.calcular_universos(jsonb, boolean) to authenticated;

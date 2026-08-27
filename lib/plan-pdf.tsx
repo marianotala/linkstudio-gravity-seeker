@@ -643,6 +643,8 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
     year: "numeric",
   });
   const u = d.universos?.disponible ? d.universos : null;
+  // componente rural (ITER 2020) presente en los universos
+  const hayRural = (u?.rurales ?? 0) > 0 || (u?.residencial?.pobRural ?? 0) > 0;
   const nse = segmentosNse(u);
   const edades = segmentosEdades(u);
   const capasDoc = d.capas && d.capas.length > 1 ? d.capas : null;
@@ -770,7 +772,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
         )}
         <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 12 }}>
           {u
-            ? `Censo 2020 INEGI · ${fmt(u.agebs ?? 0)} zonas censales${d.criterio ? ` · ${d.criterio}` : ""}`
+            ? `Censo 2020 INEGI · ${fmt(u.agebs ?? 0)} zonas censales${(u.rurales ?? 0) > 0 ? ` · ${fmt(u.rurales!)} localidades rurales (ITER)` : ""}${d.criterio ? ` · ${d.criterio}` : ""}`
             : "Universos demográficos no disponibles para esta zona"}
         </Text>
         <View style={{ marginTop: 18, marginBottom: 24 }}>
@@ -1044,8 +1046,10 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
           <View style={{ flex: 1 }}>
             <Text style={labelCol}>UNIVERSOS DEMOGRÁFICOS</Text>
             <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: TINTA, lineHeight: 1.5 }}>
-              Población por interpolación areal sobre AGEBs urbanas del Censo
-              2020 (INEGI), contra la unión de geometrías del análisis
+              {hayRural
+                ? "Población urbana por interpolación areal de AGEBs (Censo 2020 INEGI) + población rural por localidad puntual (ITER 2020, localidades <2,500 hab)"
+                : "Población por interpolación areal sobre AGEBs urbanas del Censo 2020 (INEGI)"}
+              , contra la unión de geometrías del análisis
               {d.criterio ? ` (${d.criterio})` : ""}
               {d.radioM ? `, radio de ${d.radioM >= 1000 ? `${d.radioM / 1000} km` : `${d.radioM} m`}` : ""}.
               Universo alcanzable: adultos 18+ con smartphone alcanzables por
@@ -1053,8 +1057,10 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
             </Text>
             <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, lineHeight: 1.5, marginTop: 8 }}>
               El índice socioeconómico es un proxy censal (escolaridad,
-              vehículos e internet por vivienda); no es NSE AMAI. Los rangos
-              de edad 25-64 se estiman con estructura nacional del Censo 2020.
+              vehículos e internet por vivienda); no es NSE AMAI
+              {hayRural ? " y considera solo la población urbana (el ITER no trae sus variables)" : ""}.
+              Los rangos de edad 25-64 se estiman con estructura nacional del
+              Censo 2020.
             </Text>
           </View>
         </View>

@@ -117,6 +117,10 @@ export default function UniversosPanel({
       ? Math.round((100 * residencial.pobfem) / residencial.poblacion)
       : null;
   const porAgeb = universos.porAgeb ?? [];
+  // componente rural (ITER 2020) ya incluido en los totales; se
+  // desglosa discreto cuando existe
+  const adultosRural = residencial.adultos18Rural ?? 0;
+  const hayRural = adultosRural > 0;
 
   return (
     <div className="shrink-0 border-b border-linea bg-panel2/50">
@@ -128,6 +132,12 @@ export default function UniversosPanel({
           <p className="mt-1 truncate font-mono text-[9px] text-zinc-500">
             Total con menores: {fmt(residencial.poblacion)}
           </p>
+          {hayRural && (
+            <p className="truncate font-mono text-[9px] text-zinc-500">
+              urbana: {fmt(residencial.adultos18 - adultosRural)} · rural:{" "}
+              {fmt(adultosRural)}
+            </p>
+          )}
         </Tarjeta>
 
         <Tarjeta etiqueta="Universo alcanzable">
@@ -154,7 +164,7 @@ export default function UniversosPanel({
             </p>
           )}
           <p className="mt-0.5 font-mono text-[9px] text-zinc-600">
-            proxy censal, no AMAI
+            proxy censal, no AMAI{hayRural && " · solo población urbana"}
           </p>
         </Tarjeta>
 
@@ -176,6 +186,8 @@ export default function UniversosPanel({
         <p className="font-mono text-[9px] text-zinc-600">
           Censo 2020 INEGI ·{" "}
           {fmt(universos.agebs ?? porAgeb.length)} zonas censales analizadas
+          {(universos.rurales ?? 0) > 0 &&
+            ` · ${fmt(universos.rurales!)} localidades rurales (ITER)`}
           {universos.criterio && ` · ${universos.criterio}`}
           {notaTerritorio && (
             <span className="text-zinc-500">

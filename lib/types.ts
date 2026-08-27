@@ -177,6 +177,8 @@ export interface Universos {
   /** Criterio de área usado, p. ej. "población a 500 m de los puntos censados". */
   criterio?: string;
   agebs?: number;
+  /** Localidades rurales (ITER 2020) sumadas dentro de la geometría. */
+  rurales?: number;
   residencial?: {
     poblacion: number;
     adultos18: number;
@@ -184,6 +186,10 @@ export interface Universos {
     /** Población por sexo (interpolada); null si la entidad se cargó sin estas variables. */
     pobfem?: number | null;
     pobmas?: number | null;
+    /** Componente rural (ITER 2020, localidades <2,500 hab) ya incluido
+     * en poblacion/adultos18; la parte urbana es la resta. */
+    pobRural?: number;
+    adultos18Rural?: number;
   };
   /** Estimado: 18+ × factor smartphone × factor match. */
   direccionable?: {

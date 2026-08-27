@@ -2224,6 +2224,9 @@ export default function SeekerApp({
         ...(universos?.disponible
           ? ["Censo de Población y Vivienda 2020, INEGI — demografía por AGEB urbana"]
           : []),
+        ...(universos?.disponible && (universos.rurales ?? 0) > 0
+          ? ["ITER 2020, INEGI — población rural por localidad (<2,500 hab)"]
+          : []),
         ...(mode === "cp"
           ? ["Catálogo Nacional de Códigos Postales, Correos de México — polígonos y colonias"]
           : []),

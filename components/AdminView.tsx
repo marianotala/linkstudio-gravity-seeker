@@ -12,6 +12,7 @@ import {
   construirCps,
   parsearCatalogoColonias,
   parsearCensoInegi,
+  parsearLocalidadesRurales,
   parsearShapefileInegi,
 } from "@/lib/ingesta-cliente";
 import type { PerfilUsuario } from "@/lib/types";
@@ -64,6 +65,17 @@ export default function AdminView({
   const [mensajeCp, setMensajeCp] = useState<{ tipo: "ok" | "error" | "info"; texto: string } | null>(null);
   const inputCpRef = useRef<HTMLInputElement>(null);
 
+  // ---- localidades rurales (ITER 2020)
+  const [resumenRural, setResumenRural] = useState<{
+    total: number;
+    poblacion: number;
+    entidades: number;
+  } | null>(null);
+  const [cargandoRural, setCargandoRural] = useState(false);
+  const [progresoRural, setProgresoRural] = useState<{ hecho: number; total: number } | null>(null);
+  const [mensajeRural, setMensajeRural] = useState<{ tipo: "ok" | "error" | "info"; texto: string } | null>(null);
+  const inputRuralRef = useRef<HTMLInputElement>(null);
+
   // ---- catálogo CP → colonias (Correos de México)
   const [totalColonias, setTotalColonias] = useState<number | null>(null);
   const [cargandoColonias, setCargandoColonias] = useState(false);
@@ -81,6 +93,11 @@ export default function AdminView({
       .from("cp_colonias")
       .select("codigo_postal", { count: "exact", head: true });
     setTotalColonias(count ?? 0);
+    const { data: rural } = await supabase.rpc("localidades_resumen");
+    setResumenRural(
+      (rural as { total: number; poblacion: number; entidades: number } | null) ??
+        null
+    );
   }
   useEffect(() => {
     cargarResumen();
@@ -301,6 +318,78 @@ export default function AdminView({
     } finally {
       setCargandoColonias(false);
       setProgresoColonias(null);
+    }
+  }
+
+  // ---- localidades rurales: CSV nacional procesado del ITER 2020
+  async function cargarLocalidadesRurales(file: File | undefined) {
+    if (!file) return;
+    setCargandoRural(true);
+    setMensajeRural(null);
+    setProgresoRural(null);
+    try {
+      setMensajeRural({ tipo: "info", texto: "Leyendo el CSV del ITER…" });
+      const { registros, saltados } = await parsearLocalidadesRurales(file);
+      if (registros.length === 0) {
+        setMensajeRural({
+          tipo: "error",
+          texto:
+            "El archivo no trae localidades válidas (claves entidad/mun/loc + lng/lat en grados decimales).",
+        });
+        return;
+      }
+      const supabase = createClient();
+      // lotes grandes: son puntos, no polígonos (185 mil filas ≈ 75 lotes)
+      const LOTE_RURAL = 2500;
+      let hecho = 0;
+      for (let i = 0; i < registros.length; i += LOTE_RURAL) {
+        const lote = registros.slice(i, i + LOTE_RURAL);
+        const { error } = await supabase.rpc("admin_upsert_localidades", {
+          p_localidades: lote,
+        });
+        if (error) {
+          throw new Error(
+            /row-level security/i.test(error.message)
+              ? "Tu usuario no tiene rol admin: no puede cargar datos."
+              : error.message
+          );
+        }
+        hecho += lote.length;
+        setProgresoRural({ hecho, total: registros.length });
+        setMensajeRural({
+          tipo: "info",
+          texto: `Cargando localidades: ${hecho.toLocaleString("es-MX")} de ${registros.length.toLocaleString("es-MX")}…`,
+        });
+      }
+      setMensajeRural({
+        tipo: "ok",
+        texto: `Listo: ${registros.length.toLocaleString("es-MX")} localidades rurales cargadas${saltados > 0 ? ` · ${saltados.toLocaleString("es-MX")} filas saltadas (sin clave o sin coordenadas)` : ""}. Los universos ya suman población rural en todos los modos.`,
+      });
+      if (inputRuralRef.current) inputRuralRef.current.value = "";
+      await cargarResumen();
+    } catch (e) {
+      setMensajeRural({
+        tipo: "error",
+        texto: e instanceof Error ? e.message : "Error al cargar el CSV",
+      });
+    } finally {
+      setCargandoRural(false);
+      setProgresoRural(null);
+    }
+  }
+
+  async function borrarLocalidadesRurales() {
+    const supabase = createClient();
+    // borra todo el nacional (la carga siempre es el CSV completo)
+    const { error } = await supabase
+      .from("localidades_rurales")
+      .delete()
+      .neq("cvegeo", "");
+    if (error) {
+      setMensajeRural({ tipo: "error", texto: `No se pudo borrar: ${error.message}` });
+    } else {
+      setMensajeRural({ tipo: "ok", texto: "Localidades rurales eliminadas de la base" });
+      await cargarResumen();
     }
   }
 
@@ -594,6 +683,76 @@ export default function AdminView({
                 </p>
               )}
             </div>
+          </div>
+
+          {/* localidades rurales (ITER 2020) */}
+          <div className="tarjeta glow-magenta px-6 py-6">
+            <h2 className="font-display text-xl font-extrabold tracking-tight text-white">
+              Cargar localidades rurales (ITER)
+            </h2>
+            <p className="mt-1 font-mono text-[11px] leading-relaxed text-zinc-500">
+              Sube el CSV nacional procesado del ITER 2020 (INEGI):
+              localidades rurales <span className="text-zinc-300">&lt;2,500 hab</span>{" "}
+              como puntos con población — complementan a los AGEBs urbanos
+              en el cálculo de universos (pueblos, barrancas, localidades
+              pequeñas). Columnas:{" "}
+              <span className="text-zinc-300">
+                entidad, nom_ent, mun, nom_mun, loc, nom_loc, lng, lat,
+                pobtot, pobfem, pobmas, p_18ymas, p_18a24, p_60ymas, vivtot,
+                tvivhab
+              </span>{" "}
+              (lng/lat en grados decimales WGS84; confidenciales de INEGI
+              como celda vacía). No hay doble conteo: las urbanas ya están
+              en los AGEBs.
+              {resumenRural && resumenRural.total > 0 && (
+                <span className="text-zinc-300">
+                  {" "}
+                  Hoy: {resumenRural.total.toLocaleString("es-MX")} localidades
+                  de {resumenRural.entidades} entidades ·{" "}
+                  {resumenRural.poblacion.toLocaleString("es-MX")} habitantes.
+                </span>
+              )}
+            </p>
+            <div className="mt-3 flex gap-2">
+              <input
+                ref={inputRuralRef}
+                type="file"
+                accept=".csv,.txt"
+                disabled={cargandoRural}
+                onChange={(e) => cargarLocalidadesRurales(e.target.files?.[0])}
+                className={`${inputCls} file:mr-3 file:rounded file:border-0 file:bg-magenta/20 file:px-3 file:py-1 file:font-mono file:text-[11px] file:text-magenta`}
+              />
+              {resumenRural && resumenRural.total > 0 && (
+                <button
+                  onClick={borrarLocalidadesRurales}
+                  disabled={cargandoRural}
+                  className="shrink-0 rounded border border-linea bg-panel2 px-3 py-1 font-mono text-[11px] text-zinc-500 transition-colors hover:border-magenta hover:text-magenta disabled:opacity-40"
+                >
+                  Eliminar todas
+                </button>
+              )}
+            </div>
+            {progresoRural && (
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-fondo">
+                <div
+                  className="h-full rounded-full bg-magenta transition-all"
+                  style={{ width: `${Math.round((progresoRural.hecho / progresoRural.total) * 100)}%` }}
+                />
+              </div>
+            )}
+            {mensajeRural && (
+              <p
+                className={`mt-3 font-mono text-[11px] leading-relaxed ${
+                  mensajeRural.tipo === "ok"
+                    ? "text-emerald-400"
+                    : mensajeRural.tipo === "error"
+                      ? "text-magenta"
+                      : "text-zinc-400"
+                }`}
+              >
+                {mensajeRural.texto}
+              </p>
+            )}
           </div>
 
           {/* entidades cargadas */}

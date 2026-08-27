@@ -31,12 +31,16 @@ interface RpcUniversos {
   disponible: boolean;
   motivo?: string;
   agebs?: number;
+  /** Localidades rurales (ITER 2020) sumadas dentro de la geometría. */
+  rurales?: number;
   total?: {
     poblacion: number;
     adultos18: number;
     viviendas: number;
     pobfem: number | null;
     pobmas: number | null;
+    pob_rural?: number;
+    adultos18_rural?: number;
     nse_proxy: number | null;
     pct_18a24: number | null;
     pct_60ymas: number | null;
@@ -104,12 +108,15 @@ export async function calcularUniversos(
       disponible: true,
       fuente: ETIQUETA_FUENTE_UNIVERSOS,
       agebs: r.agebs,
+      rurales: r.rurales ?? 0,
       residencial: {
         poblacion: r.total.poblacion,
         adultos18: r.total.adultos18,
         viviendas: r.total.viviendas,
         pobfem: r.total.pobfem ?? null,
         pobmas: r.total.pobmas ?? null,
+        pobRural: r.total.pob_rural ?? 0,
+        adultos18Rural: r.total.adultos18_rural ?? 0,
       },
       direccionable: {
         dispositivos: Math.round(

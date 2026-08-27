@@ -542,3 +542,106 @@ export async function parsearCatalogoColonias(
   }
   return registros;
 }
+
+// ------------------------------------------------------------------
+// Localidades rurales (ITER 2020)
+// ------------------------------------------------------------------
+
+/** Registro listo para admin_upsert_localidades. */
+export interface LocalidadRegistro {
+  cvegeo: string;
+  entidad: string;
+  nom_ent: string | null;
+  mun: string | null;
+  nom_mun: string | null;
+  loc: string | null;
+  nom_loc: string | null;
+  lng: number;
+  lat: number;
+  pobtot: number | null;
+  pobfem: number | null;
+  pobmas: number | null;
+  p_18ymas: number | null;
+  p_18a24: number | null;
+  p_60ymas: number | null;
+  vivtot: number | null;
+  tvivhab: number | null;
+}
+
+const COLUMNAS_ITER = [
+  "entidad", "nom_ent", "mun", "nom_mun", "loc", "nom_loc",
+  "lng", "lat", "pobtot", "pobfem", "pobmas", "p_18ymas",
+  "p_18a24", "p_60ymas", "vivtot", "tvivhab",
+] as const;
+
+/**
+ * Parsea el CSV nacional YA PROCESADO de localidades rurales del ITER
+ * 2020 (columnas exactas de COLUMNAS_ITER; lng/lat en grados decimales
+ * WGS84; solo localidades <2,500 hab, sin filas de totales). Los
+ * valores confidenciales de INEGI vienen como celda vacía y quedan
+ * como null — cuentan cero al sumar pero no distorsionan promedios.
+ * UTF-8 con detección automática (decodificarTextoPlano).
+ */
+export async function parsearLocalidadesRurales(
+  archivo: File
+): Promise<{ registros: LocalidadRegistro[]; saltados: number }> {
+  const texto = decodificarTextoPlano(await archivo.arrayBuffer());
+  const res = Papa.parse<Record<string, string>>(texto, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (h) => h.replace(/^﻿/, "").trim().toLowerCase(),
+  });
+  const headers = (res.meta.fields ?? []).map((h) => h.toLowerCase());
+  const faltantes = COLUMNAS_ITER.filter((c) => !headers.includes(c));
+  if (faltantes.length > 0) {
+    throw new Error(
+      `Al CSV le faltan columnas del ITER procesado: ${faltantes.join(", ")}`
+    );
+  }
+
+  const registros: LocalidadRegistro[] = [];
+  const vistos = new Set<string>();
+  let saltados = 0;
+  for (const fila of res.data) {
+    const entidad = String(fila.entidad ?? "").trim().padStart(2, "0");
+    const mun = String(fila.mun ?? "").trim().padStart(3, "0");
+    const loc = String(fila.loc ?? "").trim().padStart(4, "0");
+    const lng = num(fila.lng);
+    const lat = num(fila.lat);
+    // sin clave o sin coordenadas válidas de México no hay punto que cargar
+    if (
+      !/^\d{2}$/.test(entidad) || !/^\d{3}$/.test(mun) || !/^\d{4}$/.test(loc) ||
+      lng === null || lat === null ||
+      lng < -120 || lng > -85 || lat < 13 || lat > 34
+    ) {
+      saltados++;
+      continue;
+    }
+    const cvegeo = `${entidad}${mun}${loc}`;
+    if (vistos.has(cvegeo)) {
+      saltados++;
+      continue;
+    }
+    vistos.add(cvegeo);
+    registros.push({
+      cvegeo,
+      entidad,
+      nom_ent: String(fila.nom_ent ?? "").trim() || null,
+      mun,
+      nom_mun: String(fila.nom_mun ?? "").trim() || null,
+      loc,
+      nom_loc: String(fila.nom_loc ?? "").trim() || null,
+      lng,
+      lat,
+      pobtot: num(fila.pobtot),
+      pobfem: num(fila.pobfem),
+      pobmas: num(fila.pobmas),
+      p_18ymas: num(fila.p_18ymas),
+      p_18a24: num(fila.p_18a24),
+      p_60ymas: num(fila.p_60ymas),
+      vivtot: num(fila.vivtot),
+      tvivhab: num(fila.tvivhab),
+    });
+  }
+  return { registros, saltados };
+}
