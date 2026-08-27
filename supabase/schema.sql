@@ -1307,8 +1307,8 @@ declare
   v_enc jsonb;
   v_no jsonb;
 begin
-  if coalesce(array_length(p_cps, 1), 0) = 0 or array_length(p_cps, 1) > 100 then
-    raise exception 'Manda entre 1 y 100 códigos postales';
+  if coalesce(array_length(p_cps, 1), 0) = 0 or array_length(p_cps, 1) > 500 then
+    raise exception 'Manda entre 1 y 500 códigos postales';
   end if;
 
   select coalesce(jsonb_agg(jsonb_build_object(
@@ -1356,8 +1356,8 @@ as $$
 declare
   v_res jsonb;
 begin
-  if coalesce(array_length(p_cps, 1), 0) = 0 or array_length(p_cps, 1) > 100 then
-    raise exception 'Manda entre 1 y 100 códigos postales';
+  if coalesce(array_length(p_cps, 1), 0) = 0 or array_length(p_cps, 1) > 500 then
+    raise exception 'Manda entre 1 y 500 códigos postales';
   end if;
   if coalesce(jsonb_array_length(p_puntos), 0) = 0
      or jsonb_array_length(p_puntos) > 5000 then
@@ -1411,8 +1411,8 @@ as $$
 declare
   v_res int[];
 begin
-  if coalesce(array_length(p_cps, 1), 0) = 0 or array_length(p_cps, 1) > 100 then
-    raise exception 'Manda entre 1 y 100 códigos postales';
+  if coalesce(array_length(p_cps, 1), 0) = 0 or array_length(p_cps, 1) > 500 then
+    raise exception 'Manda entre 1 y 500 códigos postales';
   end if;
   if coalesce(jsonb_array_length(p_celdas), 0) = 0
      or jsonb_array_length(p_celdas) > 2000 then

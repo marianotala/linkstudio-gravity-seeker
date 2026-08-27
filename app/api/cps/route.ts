@@ -16,10 +16,13 @@ export const dynamic = "force-dynamic";
 //                    qué CP (filtro espacial final)
 
 const BodySchema = z.object({
+  // dibujar polígonos y calcular universos no consume Google, solo
+  // PostGIS propio: el tope alto soporta listas reales de clientes.
+  // El límite operativo del censo de POIs vive en las CELDAS.
   cps: z
     .array(z.string().regex(/^\d{5}$/, "CP inválido: usa 5 dígitos"))
     .min(1, "Manda al menos un código postal")
-    .max(100, "Máximo 100 códigos postales"),
+    .max(500, "Máximo 500 códigos postales"),
   celdas: z
     .array(
       z.object({
