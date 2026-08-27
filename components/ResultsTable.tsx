@@ -26,6 +26,13 @@ export default function ResultsTable({
   seleccionado,
   poblacionPorOrigen,
 }: ResultsTableProps) {
+  // columna término/marca: solo cuando el filtro múltiple capturó POIs
+  // con 2+ términos distintos (con uno solo es redundante)
+  const terminosDistintos = new Set(
+    pois.map((p) => p.termino).filter(Boolean)
+  );
+  const conTermino = terminosDistintos.size >= 2;
+
   if (pois.length === 0) return null;
 
   return (
@@ -50,6 +57,9 @@ export default function ResultsTable({
               <tr>
                 <th className="px-4 py-2 font-medium">#</th>
                 <th className="px-2 py-2 font-medium">Nombre</th>
+                {conTermino && (
+                  <th className="px-2 py-2 font-medium">Término / marca</th>
+                )}
                 <th className="px-2 py-2 font-medium">Dirección</th>
                 <th className="px-2 py-2 font-medium">Ciudad</th>
                 <th className="px-2 py-2 font-medium">Estrato</th>
@@ -94,6 +104,11 @@ export default function ResultsTable({
                       />
                       {p.nombre}
                     </td>
+                    {conTermino && (
+                      <td className="max-w-[120px] truncate px-2 py-1.5 text-cian">
+                        {p.termino ?? "—"}
+                      </td>
+                    )}
                     <td className="max-w-[240px] truncate px-2 py-1.5 text-zinc-500">
                       {p.direccion}
                     </td>

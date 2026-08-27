@@ -335,7 +335,13 @@ export default function SeekerApp({
   const [zona, setZona] = useState<Origin | null>(null);
   const [radio, setRadio] = useState(1000);
   const [categoria, setCategoria] = useState(CATEGORIAS[0].key);
-  const [nameFilter, setNameFilter] = useState("");
+  /** Filtro de nombre MÚLTIPLE (chips): OR entre términos, filtro
+   * estricto dentro de cada término. */
+  const [nameFilters, setNameFilters] = useState<string[]>([]);
+  const [nameFilterInput, setNameFilterInput] = useState("");
+  /** Con 2+ términos: cada término como capa propia (default) o todos
+   * los resultados juntos en una sola capa. */
+  const [separarEnCapas, setSepararEnCapas] = useState(true);
   const [excludes, setExcludes] = useState<string[]>([]);
   const [excludeInput, setExcludeInput] = useState("");
 
@@ -424,7 +430,8 @@ export default function SeekerApp({
   function iniciarAgregarCapa() {
     agregarCapaRef.current = true;
     setAgregandoCapa(true);
-    setNameFilter("");
+    setNameFilters([]);
+    setNameFilterInput("");
     seccionBuscarRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     reportar(
       "ok",
@@ -524,11 +531,37 @@ export default function SeekerApp({
     [capas]
   );
 
+  /** Términos del filtro unidos, para etiquetas y compatibilidad. */
+  const filtroNombreTexto = nameFilters.join(", ");
+
   /** Nombre visible de la búsqueda actual (para la capa). */
   function nombreCapaActual(): string {
     return categoria === SOLO_NOMBRE
-      ? nameFilter.trim() || "Búsqueda"
+      ? filtroNombreTexto || "Búsqueda"
       : (CATEGORIAS.find((c) => c.key === categoria)?.label ?? categoria);
+  }
+
+  /** Divide un texto en términos de filtro (comas), sin duplicados. */
+  function dividirTerminos(texto: string, existentes: string[] = []): string[] {
+    const vistos = new Set(existentes.map(normalizarComparable));
+    const salida: string[] = [];
+    for (const t of texto.split(",").map((v) => v.trim()).filter(Boolean)) {
+      const clave = normalizarComparable(t);
+      if (!clave || vistos.has(clave)) continue;
+      vistos.add(clave);
+      salida.push(t);
+    }
+    return salida;
+  }
+
+  // límite práctico de términos: los mismos 6 de las capas
+  const MAX_TERMINOS = MAX_CAPAS;
+  function agregarFiltroNombre() {
+    const nuevos = dividirTerminos(nameFilterInput, nameFilters);
+    if (nuevos.length > 0) {
+      setNameFilters([...nameFilters, ...nuevos].slice(0, MAX_TERMINOS));
+    }
+    setNameFilterInput("");
   }
 
   /** Registra la búsqueda recién terminada como capa. Sin el flag de
@@ -554,6 +587,40 @@ export default function SeekerApp({
           pois: lista.map((p) => ({ ...p, capa: nombre })),
         },
       ];
+    });
+    agregarCapaRef.current = false;
+    setAgregandoCapa(false);
+  }
+
+  /**
+   * Filtro múltiple + "separar en capas": convierte los resultados de
+   * UNA búsqueda en una capa por término (el servidor etiqueta cada
+   * POI con el término que lo capturó). En modo "agregar capa" se
+   * suman a las existentes; si no, reemplazan el set.
+   */
+  function registrarCapasPorTermino(terminos: string[], lista: Poi[]) {
+    setCapas((prev) => {
+      const base = agregarCapaRef.current
+        ? prev.filter((c) => !terminos.includes(c.nombre))
+        : [];
+      const usados = new Set(base.map((c) => c.color));
+      const nuevas = terminos.map((t, i) => {
+        const color =
+          PALETA_CAPAS.find((c) => !usados.has(c)) ??
+          PALETA_CAPAS[(base.length + i) % PALETA_CAPAS.length];
+        usados.add(color);
+        const propios = lista.filter((p) => p.termino === t);
+        return {
+          id: `${t}-${propios.length}-${base.length + i}`,
+          nombre: t,
+          color,
+          visible: true,
+          excluidos: 0,
+          descartadosPorNombre: 0,
+          pois: propios.map((p) => ({ ...p, capa: t })),
+        };
+      });
+      return [...base, ...nuevas].slice(0, MAX_CAPAS);
     });
     agregarCapaRef.current = false;
     setAgregandoCapa(false);
@@ -611,7 +678,11 @@ export default function SeekerApp({
       setMode(p.mode);
       setRadio(p.radius);
       setCategoria(p.category);
-      setNameFilter(p.nameFilter ?? "");
+      setNameFilters(
+        p.nameFilters?.length
+          ? p.nameFilters
+          : dividirTerminos(p.nameFilter ?? "")
+      );
       setExcludes(p.excludes ?? []);
       if (p.mode === "origins") {
         setOrigenes(p.centers);
@@ -804,9 +875,12 @@ export default function SeekerApp({
       setCensoSugerido(null);
       return;
     }
+    // el censo guardado es de UNA marca: solo se sugiere con un término
     const objetivo =
       categoria === SOLO_NOMBRE
-        ? nameFilter.trim()
+        ? nameFilters.length === 1
+          ? nameFilters[0]
+          : ""
         : (getCategoria(categoria)?.label ?? "");
     if (!objetivo) {
       setCensoSugerido(null);
@@ -828,7 +902,7 @@ export default function SeekerApp({
       setAvisoDescartado(false);
     }, 600);
     return () => clearTimeout(timer);
-  }, [mode, origenes.length, categoria, nameFilter]);
+  }, [mode, origenes.length, categoria, nameFilters]);
 
   // ---- usar un censo guardado en lugar de buscar en vivo (cero llamadas)
   async function usarCensoGuardado() {
@@ -1166,8 +1240,8 @@ export default function SeekerApp({
       reportar("error", "Primero carga tus códigos postales y sus polígonos (paso 02)");
       return;
     }
-    if (categoria === SOLO_NOMBRE && !nameFilter.trim()) {
-      reportar("error", 'Para buscar "solo por nombre" escribe un nombre en el filtro');
+    if (categoria === SOLO_NOMBRE && nameFilters.length === 0) {
+      reportar("error", 'Para buscar "solo por nombre" agrega al menos un término al filtro');
       return;
     }
     setOcupado(true);
@@ -1200,7 +1274,11 @@ export default function SeekerApp({
       reportar(
         celdas.length <= MAX_CELDAS_CP ? "ok" : "error",
         celdas.length <= MAX_CELDAS_CP
-          ? `Esta búsqueda usará ~${celdas.length} celdas de Google (tope ${MAX_CELDAS_CP}). Confirma para ejecutar.`
+          ? `Esta búsqueda usará ~${celdas.length} celdas de Google${
+              categoria === SOLO_NOMBRE && nameFilters.length > 1
+                ? ` × ${nameFilters.length} términos = ${celdas.length * nameFilters.length} llamadas`
+                : ""
+            } (tope ${MAX_CELDAS_CP} celdas). Confirma para ejecutar.`
           : `La cobertura necesita ~${celdas.length} celdas y el tope es ${MAX_CELDAS_CP} por censo: elige una opción abajo.`
       );
     } catch (e) {
@@ -1291,54 +1369,69 @@ export default function SeekerApp({
       let celdasFallidas = 0;
       let fallosSeguidos = 0;
 
-      for (let i = 0; i < celdasCp.length; i++) {
-        if (detenerCensoRef.current) break;
-        try {
-          const data = await postJson<SearchResponse>("/api/search", {
-            mode: "census",
-            centers: [{ lat: celdasCp[i].lat, lng: celdasCp[i].lng }],
-            radius: celdasCp[i].radio_m,
-            category: categoria,
-            nameFilter: nameFilter.trim(),
-            excludes,
-            persist: false,
-          } satisfies SearchRequest);
-          fallosSeguidos = 0;
-          excluidosTotal += data.excluidos;
-          descartadosTotal += data.descartadosPorNombre;
-          (data.detalleExcluidos ?? []).forEach((n) => {
-            if (detExcluidos.size < 300) detExcluidos.add(n);
+      // Filtro múltiple: con "separar en capas" y "solo por nombre" se
+      // corre UNA PASADA POR TÉRMINO sobre la misma malla (Google no
+      // soporta OR en una query), con progreso por término. En los
+      // demás casos, una sola pasada: el servidor aplica el OR (y hace
+      // sus propias subconsultas por término cuando es solo-nombre).
+      const pasadas =
+        categoria === SOLO_NOMBRE && separarEnCapas && nameFilters.length >= 2
+          ? nameFilters.map((t) => ({ etiqueta: `buscando ${t}`, filtros: [t] }))
+          : [{ etiqueta: "CP", filtros: nameFilters }];
+      const totalPasos = celdasCp.length * pasadas.length;
+
+      bucle: for (let pi = 0; pi < pasadas.length; pi++) {
+        const pasada = pasadas[pi];
+        for (let i = 0; i < celdasCp.length; i++) {
+          if (detenerCensoRef.current) break bucle;
+          try {
+            const data = await postJson<SearchResponse>("/api/search", {
+              mode: "census",
+              centers: [{ lat: celdasCp[i].lat, lng: celdasCp[i].lng }],
+              radius: celdasCp[i].radio_m,
+              category: categoria,
+              nameFilter: pasada.filtros.join(", "),
+              nameFilters: pasada.filtros,
+              excludes,
+              persist: false,
+            } satisfies SearchRequest);
+            fallosSeguidos = 0;
+            excluidosTotal += data.excluidos;
+            descartadosTotal += data.descartadosPorNombre;
+            (data.detalleExcluidos ?? []).forEach((n) => {
+              if (detExcluidos.size < 300) detExcluidos.add(n);
+            });
+            (data.detalleDescartados ?? []).forEach((n) => {
+              if (detDescartados.size < 300) detDescartados.add(n);
+            });
+            for (const p of data.pois) {
+              if (!acumulados.has(p.placeId)) acumulados.set(p.placeId, p);
+            }
+          } catch (e) {
+            const mensaje = e instanceof Error ? e.message : "Error en la celda";
+            if (esErrorFatalDeCenso(mensaje)) {
+              errorFatal = mensaje;
+              break bucle;
+            }
+            celdasFallidas++;
+            fallosSeguidos++;
+            if (fallosSeguidos >= MAX_FALLOS_SEGUIDOS) {
+              errorFatal = `${MAX_FALLOS_SEGUIDOS} celdas seguidas fallaron (${mensaje})`;
+              break bucle;
+            }
+          }
+          setProgresoCenso({
+            actual: pi * celdasCp.length + i + 1,
+            total: totalPasos,
+            pois: acumulados.size,
           });
-          (data.detalleDescartados ?? []).forEach((n) => {
-            if (detDescartados.size < 300) detDescartados.add(n);
-          });
-          for (const p of data.pois) {
-            if (!acumulados.has(p.placeId)) acumulados.set(p.placeId, p);
+          reportar(
+            "busy",
+            `${pasada.etiqueta}: celda ${i + 1} de ${celdasCp.length} · ${acumulados.size} POIs acumulados`
+          );
+          if (pi * celdasCp.length + i + 1 < totalPasos) {
+            await new Promise((r) => setTimeout(r, THROTTLE_CENSO_MS));
           }
-        } catch (e) {
-          const mensaje = e instanceof Error ? e.message : "Error en la celda";
-          if (esErrorFatalDeCenso(mensaje)) {
-            errorFatal = mensaje;
-            break;
-          }
-          celdasFallidas++;
-          fallosSeguidos++;
-          if (fallosSeguidos >= MAX_FALLOS_SEGUIDOS) {
-            errorFatal = `${MAX_FALLOS_SEGUIDOS} celdas seguidas fallaron (${mensaje})`;
-            break;
-          }
-        }
-        setProgresoCenso({
-          actual: i + 1,
-          total: celdasCp.length,
-          pois: acumulados.size,
-        });
-        reportar(
-          "busy",
-          `CP: celda ${i + 1} de ${celdasCp.length} · ${acumulados.size} POIs acumulados`
-        );
-        if (i < celdasCp.length - 1) {
-          await new Promise((r) => setTimeout(r, THROTTLE_CENSO_MS));
         }
       }
       if (errorFatal) {
@@ -1384,7 +1477,12 @@ export default function SeekerApp({
       // al AGREGAR capa el universo del territorio no cambia: se reusa
       const reutilizarUniversos =
         agregarCapaRef.current && (universos?.disponible ?? false);
-      registrarCapa(nombreCapaActual(), lista, excluidosTotal, descartadosTotal);
+      if (separarEnCapas && nameFilters.length >= 2) {
+        // filtro múltiple: una capa por término (marca) con su color
+        registrarCapasPorTermino(nameFilters, lista);
+      } else {
+        registrarCapa(nombreCapaActual(), lista, excluidosTotal, descartadosTotal);
+      }
       setContadores({
         excluidos: excluidosTotal,
         descartadosPorNombre: descartadosTotal,
@@ -1433,7 +1531,8 @@ export default function SeekerApp({
               mode: "cp",
               cps: cpsCodigos,
               category: categoria,
-              nameFilter: nameFilter.trim(),
+              nameFilter: filtroNombreTexto,
+              nameFilters,
               excludes,
               radius: 0,
               centers: [],
@@ -1494,7 +1593,9 @@ export default function SeekerApp({
     setZona(null);
     setRadio(1000);
     setCategoria(CATEGORIAS[0].key);
-    setNameFilter("");
+    setNameFilters([]);
+    setNameFilterInput("");
+    setSepararEnCapas(true);
     setExcludes([]);
     setExcludeInput("");
     setMarca("");
@@ -2057,8 +2158,8 @@ export default function SeekerApp({
       );
       return;
     }
-    if (categoria === SOLO_NOMBRE && !nameFilter.trim()) {
-      reportar("error", 'Para buscar "solo por nombre" escribe un nombre en el filtro');
+    if (categoria === SOLO_NOMBRE && nameFilters.length === 0) {
+      reportar("error", 'Para buscar "solo por nombre" agrega al menos un término al filtro');
       return;
     }
 
@@ -2076,16 +2177,21 @@ export default function SeekerApp({
         centers: centrosActivos,
         radius: radio,
         category: categoria,
-        nameFilter: nameFilter.trim(),
+        nameFilter: filtroNombreTexto,
+        nameFilters,
         excludes,
       };
       const data = await postJson<SearchResponse>("/api/search", body);
       setPois(data.pois);
+      // filtro múltiple + "separar en capas": una capa por término
+      const multiCapas = separarEnCapas && nameFilters.length >= 2;
       // en modo zona la búsqueda se acumula como capa (misma geografía);
       // al AGREGAR capa, el universo del territorio no cambia: se reusa
       const reutilizarUniversos =
         mode === "zone" && agregarCapaRef.current && universos?.disponible;
-      if (mode === "zone") {
+      if (multiCapas) {
+        registrarCapasPorTermino(nameFilters, data.pois);
+      } else if (mode === "zone") {
         registrarCapa(
           nombreCapaActual(),
           data.pois,
@@ -2224,7 +2330,7 @@ export default function SeekerApp({
           : mode === "territorial"
             ? (getCategoria(terCategoria)?.label ?? terCategoria)
             : categoria === SOLO_NOMBRE
-              ? nameFilter.trim() || "Búsqueda"
+              ? filtroNombreTexto || "Búsqueda"
               : (CATEGORIAS.find((c) => c.key === categoria)?.label ?? categoria);
       const alcance =
         mode === "census"
@@ -2329,8 +2435,8 @@ export default function SeekerApp({
   // ---- datos derivados para la barra de resumen y los KPIs
   const etiquetaCategoria =
     categoria === SOLO_NOMBRE
-      ? nameFilter.trim()
-        ? `Nombre: "${nameFilter.trim()}"`
+      ? filtroNombreTexto
+        ? `Nombre: "${filtroNombreTexto}"`
         : "Solo por nombre"
       : (CATEGORIAS.find((c) => c.key === categoria)?.label ?? categoria);
   const chipMapa =
@@ -3368,15 +3474,56 @@ export default function SeekerApp({
             </select>
 
             <input
-              value={nameFilter}
-              onChange={(e) => setNameFilter(e.target.value)}
-              placeholder="Filtro de nombre · p. ej. oxxo"
+              value={nameFilterInput}
+              onChange={(e) => setNameFilterInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === ",") {
+                  e.preventDefault();
+                  agregarFiltroNombre();
+                }
+              }}
+              onBlur={agregarFiltroNombre}
+              placeholder={
+                nameFilters.length > 0
+                  ? "Agrega otra marca · comas o Enter"
+                  : "Filtro de nombre · p. ej. walmart, oxxo, chedraui"
+              }
               className={`${inputCls} mt-3`}
             />
+            {nameFilters.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {nameFilters.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() =>
+                      setNameFilters(nameFilters.filter((x) => x !== t))
+                    }
+                    className="group flex items-center gap-1 rounded-full border border-cian/50 bg-cian/10 px-2.5 py-0.5 font-mono text-[11px] text-cian"
+                    title="Quitar término"
+                  >
+                    {t}
+                    <span className="text-cian/60 group-hover:text-cian">×</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <p className="mt-1 font-mono text-[10px] text-zinc-600">
-              Filtro estricto: sin acentos ni mayúsculas, todas las palabras
-              deben aparecer en el nombre.
+              Filtro estricto por término: sin acentos ni mayúsculas, todas
+              sus palabras deben aparecer en el nombre. Con varios términos,
+              un POI pasa si cumple CUALQUIERA (máx {MAX_CAPAS}).
             </p>
+            {nameFilters.length >= 2 && (
+              <label className="mt-2 flex cursor-pointer items-center gap-2 font-mono text-[11px] text-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={separarEnCapas}
+                  onChange={(e) => setSepararEnCapas(e.target.checked)}
+                  className="accent-cian"
+                />
+                Separar en capas: cada término con su color y conteo en el
+                mapa (ideal para comparar marcas)
+              </label>
+            )}
             </>
             )}
 

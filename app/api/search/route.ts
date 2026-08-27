@@ -80,6 +80,9 @@ const BodySchema = z
       .max(50000, "El radio máximo es 50 km"),
     category: z.string().min(1, "Falta la categoría"),
     nameFilter: z.string().trim().default(""),
+    /** Filtro de nombre MÚLTIPLE (OR entre términos). Si viene, manda
+     * sobre nameFilter. */
+    nameFilters: z.array(z.string().trim().min(1)).max(10).optional(),
     excludes: z.array(z.string().trim().min(1)).max(50).default([]),
     persist: z.boolean().optional(),
     /** Solo modo cp: códigos postales de 5 dígitos. */
@@ -92,10 +95,16 @@ const BodySchema = z
     message: "Categoría desconocida",
     path: ["category"],
   })
-  .refine((b) => b.category !== SOLO_NOMBRE || b.nameFilter.length > 0, {
-    message: 'Para buscar "solo por nombre" escribe un nombre',
-    path: ["nameFilter"],
-  })
+  .refine(
+    (b) =>
+      b.category !== SOLO_NOMBRE ||
+      b.nameFilter.length > 0 ||
+      (b.nameFilters?.length ?? 0) > 0,
+    {
+      message: 'Para buscar "solo por nombre" escribe al menos un nombre',
+      path: ["nameFilter"],
+    }
+  )
   .refine((b) => b.mode !== "census" || b.centers.length === 1, {
     message: "El modo censo procesa una celda por llamada",
     path: ["centers"],
@@ -156,6 +165,18 @@ export async function POST(req: Request) {
   }
 
   const { mode, radius, category, nameFilter, excludes } = parsed.data;
+  // términos del filtro de nombre: OR entre ellos, estricto por dentro.
+  // nameFilters manda; nameFilter solo es compatibilidad (un término).
+  const terminos = (
+    parsed.data.nameFilters?.length
+      ? parsed.data.nameFilters
+      : nameFilter
+        ? [nameFilter]
+        : []
+  )
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 10);
   let centers = parsed.data.centers;
   // Las celdas de censo no se guardan como búsquedas individuales.
   const persistir = parsed.data.persist ?? mode !== "census";
@@ -248,17 +269,26 @@ export async function POST(req: Request) {
       // cada zona (viewport de Geocoding), paginado hasta 60 por zona.
       // Modo CP: mismo mecanismo sobre el bbox de cada código postal;
       // el recorte al polígono real viene después.
-      const query = categoria ? categoria.textQuery : nameFilter;
-      const porZona = await enLotes(centers, LOTE_CENTROS, (c) =>
-        searchText(query, { rectangle: c.viewport ?? viewportDeRespaldo(c) })
+      // "Solo por nombre" con VARIOS términos: Google no soporta OR en
+      // una query, así que corre una pasada por término sobre los
+      // mismos centros (con categoría basta una: el OR es post-filtro).
+      const queries = categoria ? [categoria.textQuery] : terminos;
+      const porZona = await enLotes(
+        queries.flatMap((q) => centers.map((c) => ({ q, c }))),
+        LOTE_CENTROS,
+        ({ q, c }) =>
+          searchText(q, { rectangle: c.viewport ?? viewportDeRespaldo(c) })
       );
       crudos = porZona.flat();
     } else {
       // Censo y "solo por nombre" en orígenes: searchText con sesgo
-      // circular, paginado hasta 60 por centro.
-      const query = categoria ? categoria.textQuery : nameFilter;
-      const porCentro = await enLotes(centers, LOTE_CENTROS, (c) =>
-        searchText(query, { circle: { center: c, radius } })
+      // circular, paginado hasta 60 por centro (una pasada por término
+      // cuando el filtro trae varios).
+      const queries = categoria ? [categoria.textQuery] : terminos;
+      const porCentro = await enLotes(
+        queries.flatMap((q) => centers.map((c) => ({ q, c }))),
+        LOTE_CENTROS,
+        ({ q, c }) => searchText(q, { circle: { center: c, radius } })
       );
       crudos = porCentro.flat();
     }
@@ -284,19 +314,29 @@ export async function POST(req: Request) {
       return false;
     });
 
-    // 3b) Filtro estricto de nombre: todas las palabras del filtro deben
-    //    aparecer en el nombre, comparando sin acentos ni puntuación
-    //    ("7 eleven" atrapa "7-Eleven").
-    if (nameFilter) {
-      const tokens = normalizarComparable(nameFilter).split(" ").filter(Boolean);
+    // 3b) Filtro estricto de nombre: OR entre términos, y DENTRO de
+    //    cada término todas sus palabras deben aparecer en el nombre,
+    //    comparando sin acentos ni puntuación ("7 eleven" atrapa
+    //    "7-Eleven"). Cada POI queda etiquetado con el PRIMER término
+    //    que lo captura (columna término/marca).
+    const terminoPorId = new Map<string, string>();
+    if (terminos.length > 0) {
+      const tokensPorTermino = terminos.map((t) => ({
+        termino: t,
+        tokens: normalizarComparable(t).split(" ").filter(Boolean),
+      }));
       lugares = lugares.filter((p) => {
         const nombre = normalizarComparable(p.nombre);
-        const pasa = tokens.every((t) => nombre.includes(t));
-        if (!pasa) {
+        const captura = tokensPorTermino.find(({ tokens }) =>
+          tokens.every((t) => nombre.includes(t))
+        );
+        if (!captura) {
           descartadosPorNombre++;
           if (detalleDescartados.length < 300) detalleDescartados.push(p.nombre);
+          return false;
         }
-        return pasa;
+        terminoPorId.set(p.placeId, captura.termino);
+        return true;
       });
     }
 
@@ -349,6 +389,7 @@ export async function POST(req: Request) {
           distancia: Math.round(mejorDist),
           origenIdx: mejorIdx,
           fuente: "google",
+          termino: terminoPorId.get(p.placeId) ?? null,
         });
       }
     }
@@ -436,7 +477,9 @@ export async function POST(req: Request) {
         centers,
         radius,
         category,
-        nameFilter,
+        // en historial se guardan los términos unidos por coma (el
+        // cargador los divide de vuelta en chips)
+        nameFilter: terminos.join(", "),
         excludes,
         ...(mode === "cp" ? { cps: cpsPedidos } : {}),
       };

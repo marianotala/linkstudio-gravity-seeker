@@ -60,6 +60,9 @@ export interface Poi {
   /** Capa de categoría a la que pertenece (multi-búsqueda en la misma
    * geografía); null/ausente en búsquedas de una sola capa. */
   capa?: string | null;
+  /** Término del filtro de nombre múltiple que capturó este POI
+   * (columna "término/marca" en resultados y exports). */
+  termino?: string | null;
 }
 
 /** Una búsqueda de POIs acumulada sobre la geografía activa (capa de
@@ -238,7 +241,11 @@ export interface SearchRequest {
   radius: number;
   /** Key de categoría de lib/categories.ts, o "solo_nombre". */
   category: string;
+  /** Compatibilidad: términos unidos por coma (se guarda en historial). */
   nameFilter: string;
+  /** Filtro de nombre MÚLTIPLE: OR entre términos, filtro estricto
+   * dentro de cada término. Si viene, manda sobre nameFilter. */
+  nameFilters?: string[];
   excludes: string[];
   /**
    * Si guardar la búsqueda en el historial. Default: true, excepto en
