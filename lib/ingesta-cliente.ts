@@ -101,16 +101,10 @@ export async function parsearCensoInegi(
         )
       );
   } else {
-    // INEGI publica los CSV a veces en latin1 y a veces en UTF-8 con
-    // BOM: si el archivo empieza con EF BB BF se decodifica como UTF-8
-    // (el decoder descarta el BOM); si no, latin1.
-    const buffer = await archivo.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    const esUtf8ConBom =
-      bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
-    const texto = new TextDecoder(esUtf8ConBom ? "utf-8" : "latin1").decode(
-      buffer
-    );
+    // INEGI publica los CSV a veces en latin1 y a veces en UTF-8 (con
+    // o sin BOM): detección automática con fallback (ver
+    // decodificarTextoPlano).
+    const texto = decodificarTextoPlano(await archivo.arrayBuffer());
     filas = Papa.parse<Record<string, unknown>>(texto, {
       header: true,
       skipEmptyLines: true,
@@ -457,35 +451,63 @@ export interface ColoniaRegistro {
 }
 
 /**
+ * Decodifica texto plano detectando el encoding: BOM → UTF-8; sin BOM
+ * se intenta UTF-8 ESTRICTO (fatal) y solo si los bytes no son UTF-8
+ * válido se cae a latin-1. Un archivo latin-1 real con acentos siempre
+ * tiene secuencias inválidas en UTF-8, así que el fallback es seguro;
+ * forzar latin-1 por default sobre un archivo UTF-8 produce mojibake
+ * ("MÃ©xico"). SOLO para texto plano — los .dbf de shapefiles siguen
+ * leyéndose como latin-1 en su propio pipeline.
+ */
+function decodificarTextoPlano(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    return new TextDecoder("utf-8").decode(buffer);
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    return new TextDecoder("latin1").decode(buffer);
+  }
+}
+
+/**
  * Parsea el txt/csv del Catálogo Nacional de Códigos Postales de
- * Correos de México: delimitado por "|", latin-1 (o UTF-8 con BOM),
- * primera línea de copyright y encabezados en la segunda (d_codigo,
- * d_asenta, d_tipo_asenta, D_mnpio, d_estado, …). También acepta la
- * variante separada por comas si los encabezados coinciden.
+ * Correos de México: delimitado por "|" (txt oficial) o por comas
+ * (variante CSV, con campos entrecomillados que pueden traer comas),
+ * UTF-8 o latin-1 con detección automática, primera línea de
+ * copyright y encabezados en la segunda (d_codigo, d_asenta,
+ * d_tipo_asenta, D_mnpio, d_estado, …).
  */
 export async function parsearCatalogoColonias(
   archivo: File
 ): Promise<ColoniaRegistro[]> {
-  const buffer = await archivo.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  const esUtf8ConBom =
-    bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
-  const texto = new TextDecoder(esUtf8ConBom ? "utf-8" : "latin1").decode(
-    buffer
-  );
-  const lineas = texto.split(/\r?\n/);
+  const texto = decodificarTextoPlano(await archivo.arrayBuffer());
 
-  // encuentra la línea de encabezados (la primera suele ser copyright)
-  const idxHeader = lineas.findIndex((l) => /d_codigo/i.test(l));
-  if (idxHeader === -1) {
+  // delimitador según la línea de encabezados
+  const lineaHeader = texto
+    .split(/\r?\n/)
+    .find((l) => /d_codigo/i.test(l));
+  if (!lineaHeader) {
     throw new Error(
-      'No encontré la columna d_codigo: ¿es el txt/csv del Catálogo Nacional de Códigos Postales?'
+      "No encontré la columna d_codigo: ¿es el txt/csv del Catálogo Nacional de Códigos Postales?"
     );
   }
-  const sep = lineas[idxHeader].includes("|") ? "|" : ",";
-  const headers = lineas[idxHeader]
-    .split(sep)
-    .map((h) => h.replace(/^﻿/, "").trim().toLowerCase());
+  const sep = lineaHeader.includes("|") ? "|" : ",";
+
+  // Papa maneja los campos entrecomillados (una colonia con coma en el
+  // nombre NO debe desplazar las columnas, como pasaba con split)
+  const filasArr = Papa.parse<string[]>(texto, {
+    delimiter: sep,
+    header: false,
+    skipEmptyLines: true,
+  }).data;
+  const idxHeader = filasArr.findIndex((f) =>
+    f.some((c) => /d_codigo/i.test(c))
+  );
+  const headers = filasArr[idxHeader].map((h) =>
+    h.replace(/^﻿/, "").trim().toLowerCase()
+  );
   const col = (nombre: string) => headers.indexOf(nombre);
   const iCp = col("d_codigo");
   const iColonia = col("d_asenta");
@@ -500,8 +522,8 @@ export async function parsearCatalogoColonias(
 
   const vistos = new Set<string>();
   const registros: ColoniaRegistro[] = [];
-  for (let i = idxHeader + 1; i < lineas.length; i++) {
-    const campos = lineas[i].split(sep);
+  for (let i = idxHeader + 1; i < filasArr.length; i++) {
+    const campos = filasArr[i];
     const cpCrudo = String(campos[iCp] ?? "").trim();
     const colonia = String(campos[iColonia] ?? "").trim();
     if (!/^\d{4,5}$/.test(cpCrudo) || !colonia) continue;
