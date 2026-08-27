@@ -388,6 +388,8 @@ export default function SeekerApp({
     celdas: CeldaCp[];
     factor: number;
   } | null>(null);
+  /** Etiquetas fijas de CP sobre los polígonos (apagadas por default). */
+  const [etiquetasCp, setEtiquetasCp] = useState(false);
 
   // ---- universos demográficos y capa AGEB
   const [universos, setUniversos] = useState<Universos | null>(null);
@@ -445,6 +447,15 @@ export default function SeekerApp({
     () => (estratoFiltro ? pois.filter((p) => p.estrato === estratoFiltro) : pois),
     [pois, estratoFiltro]
   );
+
+  // población por CP (de universos.porGeocerca: id = código postal),
+  // para el popup de cada polígono en el mapa
+  const poblacionPorCp = useMemo<Record<string, number>>(() => {
+    if (mode !== "cp" || !universos?.disponible) return {};
+    return Object.fromEntries(
+      (universos.porGeocerca ?? []).map((g) => [g.id, g.poblacion])
+    );
+  }, [mode, universos]);
 
   function reportar(tipo: StatusTipo, texto: string) {
     setStatus({ tipo, texto });
@@ -3190,6 +3201,19 @@ export default function SeekerApp({
               >
                 {cargandoCapa ? "Cargando AGEBs…" : "◆ Capa demográfica"}
               </button>
+              {mode === "cp" && cpsGeo.length > 0 && (
+                <button
+                  onClick={() => setEtiquetasCp((v) => !v)}
+                  className={`rounded-full border px-3 py-1 font-mono text-[10px] transition-colors ${
+                    etiquetasCp
+                      ? "border-emerald-400 bg-emerald-400/15 text-emerald-400"
+                      : "border-linea bg-panel2 text-zinc-400 hover:border-emerald-400 hover:text-emerald-400"
+                  }`}
+                  title="Mostrar u ocultar la etiqueta fija de cada CP (con muchos CPs se enciman)"
+                >
+                  {etiquetasCp ? "◈ Ocultar etiquetas" : "◈ Mostrar etiquetas"}
+                </button>
+              )}
               {(mode === "census" || mode === "territorial") && (
                 <select
                   value={radioInfluencia}
@@ -3265,6 +3289,8 @@ export default function SeekerApp({
               }
               agebs={capaDemografica ? agebsGeo : null}
               cps={mode === "cp" ? cpsGeo : undefined}
+              etiquetasCp={etiquetasCp}
+              poblacionCp={poblacionPorCp}
             />
             <ResultsTable
               pois={poisVisibles}

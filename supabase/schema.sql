@@ -1470,3 +1470,138 @@ where not extensions.ST_IsValid(geom);
 update public.cp_poligonos
 set geom = extensions.ST_Multi(extensions.ST_CollectionExtract(extensions.ST_MakeValid(geom), 3))
 where not extensions.ST_IsValid(geom);
+
+
+-- ============================================================
+-- MIGRACIÓN FASE 10 — catálogo CP → colonias (Correos de México)
+-- ============================================================
+
+create table if not exists public.cp_colonias (
+  codigo_postal text not null check (codigo_postal ~ '^\d{5}$'),
+  colonia text not null,
+  tipo_asentamiento text,
+  municipio text,
+  estado text,
+  primary key (codigo_postal, colonia)
+);
+
+create index if not exists cp_colonias_cp_idx on public.cp_colonias (codigo_postal);
+
+alter table public.cp_colonias enable row level security;
+
+drop policy if exists "colonias: leer autenticados" on public.cp_colonias;
+create policy "colonias: leer autenticados"
+  on public.cp_colonias for select
+  to authenticated
+  using (true);
+
+drop policy if exists "colonias: escribir admin" on public.cp_colonias;
+create policy "colonias: escribir admin"
+  on public.cp_colonias for all
+  to authenticated
+  using (public.es_admin())
+  with check (public.es_admin());
+
+create or replace function public.admin_upsert_colonias(p_colonias jsonb)
+returns int
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_n int;
+begin
+  if coalesce(jsonb_array_length(p_colonias), 0) = 0
+     or jsonb_array_length(p_colonias) > 2000 then
+    raise exception 'Lote inválido: manda entre 1 y 2000 colonias';
+  end if;
+
+  insert into public.cp_colonias
+    (codigo_postal, colonia, tipo_asentamiento, municipio, estado)
+  select
+    r ->> 'codigo_postal',
+    r ->> 'colonia',
+    r ->> 'tipo_asentamiento',
+    r ->> 'municipio',
+    r ->> 'estado'
+  from jsonb_array_elements(p_colonias) as r
+  on conflict (codigo_postal, colonia) do update set
+    tipo_asentamiento = excluded.tipo_asentamiento,
+    municipio = excluded.municipio,
+    estado = excluded.estado;
+
+  get diagnostics v_n = row_count;
+  return v_n;
+end;
+$$;
+
+revoke execute on function public.admin_upsert_colonias(jsonb) from public, anon;
+grant execute on function public.admin_upsert_colonias(jsonb) to authenticated;
+
+-- buscar_cps con datos del catálogo para el popup del mapa:
+-- colonias (máx 6), total_colonias, municipio y estado.
+create or replace function public.buscar_cps(
+  p_cps text[],
+  p_incluir_geometria boolean default true
+)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v_enc jsonb;
+  v_no jsonb;
+begin
+  if coalesce(array_length(p_cps, 1), 0) = 0 or array_length(p_cps, 1) > 500 then
+    raise exception 'Manda entre 1 y 500 códigos postales';
+  end if;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'codigo_postal', c.codigo_postal,
+    'entidad', c.entidad,
+    'bbox', jsonb_build_object(
+      'north', ST_YMax(c.geom), 'south', ST_YMin(c.geom),
+      'east', ST_XMax(c.geom), 'west', ST_XMin(c.geom)
+    ),
+    'geometria', case when p_incluir_geometria
+      then ST_AsGeoJSON(c.geom, 5)::jsonb end,
+    'colonias', (
+      select jsonb_agg(s.colonia order by s.colonia)
+      from (
+        select k.colonia from public.cp_colonias k
+        where k.codigo_postal = c.codigo_postal
+        order by k.colonia limit 6
+      ) s
+    ),
+    'total_colonias', (
+      select count(*) from public.cp_colonias k
+      where k.codigo_postal = c.codigo_postal
+    ),
+    'municipio', (
+      select k.municipio from public.cp_colonias k
+      where k.codigo_postal = c.codigo_postal limit 1
+    ),
+    'estado', (
+      select k.estado from public.cp_colonias k
+      where k.codigo_postal = c.codigo_postal limit 1
+    )
+  ) order by c.codigo_postal), '[]'::jsonb)
+  into v_enc
+  from public.cp_poligonos c
+  where c.codigo_postal = any(p_cps);
+
+  select coalesce(jsonb_agg(cp order by cp), '[]'::jsonb)
+  into v_no
+  from unnest(p_cps) as cp
+  where not exists (
+    select 1 from public.cp_poligonos c where c.codigo_postal = cp
+  );
+
+  return jsonb_build_object('encontrados', v_enc, 'no_encontrados', v_no);
+end;
+$$;
+
+revoke execute on function public.buscar_cps(text[], boolean) from public, anon;
+grant execute on function public.buscar_cps(text[], boolean) to authenticated;

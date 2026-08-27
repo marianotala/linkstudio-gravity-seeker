@@ -66,6 +66,11 @@ export interface CpPoligono {
   bbox: Viewport;
   /** GeoJSON geometry (MultiPolygon), para dibujar en el mapa. */
   geometria: Record<string, unknown> | null;
+  /** Del catálogo de Correos (cp_colonias); null si no está cargado. */
+  colonias?: string[] | null;
+  total_colonias?: number | null;
+  municipio?: string | null;
+  estado?: string | null;
 }
 
 /** Establecimiento crudo que regresa /api/denue. */

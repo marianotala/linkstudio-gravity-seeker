@@ -4,7 +4,7 @@
 // orígenes en cian con su radio, zona en violeta, POIs en magenta.
 // Este componente SOLO se importa con dynamic(..., { ssr: false }).
 
-import { Fragment, useEffect } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -42,32 +42,48 @@ function colorPoi(fuente: string): { color: string; fillColor: string } {
 // Centro inicial: CDMX
 const CENTRO_INICIAL: [number, number] = [19.4326, -99.1332];
 
-// Proveedor de tiles:
-// - Con NEXT_PUBLIC_CARTO_API_KEY: CARTO dark_all (?key= según la
-//   documentación de CartoDB/basemap-styles).
-// - Sin key: OpenStreetMap estándar SIN key, oscurecido con un filtro
-//   CSS (clase .tiles-osm-oscuro) para conservar la identidad Gravity.
-//   Así el mapa nunca queda rehén de una API key.
-const CARTO_KEY = process.env.NEXT_PUBLIC_CARTO_API_KEY;
-const USAR_CARTO = Boolean(CARTO_KEY);
+// El proveedor de tiles vive en UN solo lugar (lib/basemap.ts) para
+// que TODAS las vistas de mapa usen el mismo basemap oscuro. Si los
+// tiles de CARTO fallan en runtime (key inválida = placeholders
+// CLAROS), se cae automáticamente a OSM oscurecido.
+import { TILES, TILES_OSM_OSCURO, USA_CARTO } from "@/lib/basemap";
 
-const TILES = USAR_CARTO
-  ? {
-      url: `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=${CARTO_KEY}`,
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-      subdomains: "abcd",
-      maxZoom: 20,
-      className: "",
-    }
-  : {
-      url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-      subdomains: "",
-      maxZoom: 19,
-      className: "tiles-osm-oscuro",
-    };
+function escaparHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Popup del polígono de CP: código grande, colonias (máx 5 + "+N
+ * más"), municipio/estado del catálogo y población si ya hay universos. */
+function popupCp(c: CpPoligono, poblacion?: number): string {
+  const colonias = (c.colonias ?? []).slice(0, 5);
+  const total = c.total_colonias ?? colonias.length;
+  const extra = total - colonias.length;
+  const partes = [
+    `<div style="font-family:monospace;font-size:12px;min-width:170px;max-width:230px">`,
+    `<div style="font-size:20px;font-weight:800;letter-spacing:0.04em">${escaparHtml(c.codigo_postal)}</div>`,
+  ];
+  if (colonias.length > 0) {
+    partes.push(
+      `<div style="margin-top:4px;line-height:1.5">${colonias.map(escaparHtml).join(", ")}${extra > 0 ? ` <span style="opacity:0.6">+${extra} más</span>` : ""}</div>`
+    );
+  }
+  if (c.municipio || c.estado) {
+    partes.push(
+      `<div style="margin-top:4px;opacity:0.75">${escaparHtml([c.municipio, c.estado].filter(Boolean).join(" · "))}</div>`
+    );
+  }
+  if (poblacion !== undefined) {
+    partes.push(
+      `<div style="margin-top:4px;color:#9d5cf0">población: ${poblacion.toLocaleString("es-MX")}</div>`
+    );
+  }
+  partes.push(`</div>`);
+  return partes.join("");
+}
 
 interface MapViewProps {
   mode: SearchMode;
@@ -88,6 +104,10 @@ interface MapViewProps {
   agebs?: AgebGeo[] | null;
   /** Modo CP: polígonos reales de los códigos postales. */
   cps?: CpPoligono[];
+  /** Mostrar la etiqueta de CP fija sobre cada polígono (default: no). */
+  etiquetasCp?: boolean;
+  /** Población por CP (de universos.porGeocerca), para el popup. */
+  poblacionCp?: Record<string, number>;
 }
 
 /** Ajusta la vista cuando cambian orígenes/zona/POIs, y vuela al foco. */
@@ -159,7 +179,33 @@ export default function MapView(props: MapViewProps) {
     radioCelda,
     agebs,
     cps,
+    etiquetasCp,
+    poblacionCp,
   } = props;
+
+  // Fallback de basemap en runtime: si CARTO rechaza la key, sus
+  // placeholders son claros — al primer tileerror cambiamos a OSM
+  // oscurecido para mantener el fondo oscuro en todas las vistas.
+  const [tilesCaidos, setTilesCaidos] = useState(false);
+  const tiles = tilesCaidos ? TILES_OSM_OSCURO : TILES;
+
+  // Selección/hover de polígonos de CP, manejados imperativamente
+  // sobre las capas de Leaflet (react-leaflet no re-aplica `style`).
+  const capasCpRef = useRef<globalThis.Map<string, L.Path>>(new globalThis.Map());
+  const cpSeleccionadoRef = useRef<string | null>(null);
+  const estiloCp = (cp: string): L.PathOptions => {
+    const sel = cpSeleccionadoRef.current;
+    if (sel === cp)
+      // seleccionado: borde más grueso y relleno más intenso
+      return { color: CIAN, weight: 3, opacity: 1, fillColor: VIOLETA, fillOpacity: 0.3 };
+    if (sel)
+      // los demás se atenúan ligeramente mientras hay selección
+      return { color: VIOLETA, weight: 1.5, opacity: 0.45, fillColor: VIOLETA, fillOpacity: 0.06 };
+    return { color: VIOLETA, weight: 2, opacity: 0.9, fillColor: VIOLETA, fillOpacity: 0.16 };
+  };
+  const aplicarEstilosCp = () => {
+    capasCpRef.current.forEach((capa, cp) => capa.setStyle(estiloCp(cp)));
+  };
 
   return (
     <MapContainer
@@ -170,11 +216,17 @@ export default function MapView(props: MapViewProps) {
       attributionControl={true}
     >
       <TileLayer
-        url={TILES.url}
-        attribution={TILES.attribution}
-        subdomains={TILES.subdomains}
-        maxZoom={TILES.maxZoom}
-        className={TILES.className}
+        key={tiles.url}
+        url={tiles.url}
+        attribution={tiles.attribution}
+        subdomains={tiles.subdomains}
+        maxZoom={tiles.maxZoom}
+        className={tiles.className}
+        eventHandlers={{
+          tileerror: () => {
+            if (USA_CARTO && !tilesCaidos) setTilesCaidos(true);
+          },
+        }}
       />
 
       {mode === "origins" &&
@@ -235,31 +287,54 @@ export default function MapView(props: MapViewProps) {
         />
       ))}
 
-      {/* modo CP: polígonos reales de códigos postales (estilo zona),
-          con la etiqueta del CP fija en cada polígono */}
+      {/* modo CP: polígonos reales interactivos — clic abre el popup
+          (CP, colonias, municipio/estado, población) y resalta el
+          polígono; hover solo cambia la opacidad como affordance; las
+          etiquetas fijas van apagadas por default (toggle en la UI) */}
       {mode === "cp" &&
         (cps ?? []).map(
           (c) =>
             c.geometria && (
               <GeoJSON
-                key={c.codigo_postal}
+                key={`cp-${c.codigo_postal}-${etiquetasCp ? 1 : 0}-${poblacionCp?.[c.codigo_postal] ?? "s"}`}
                 data={c.geometria as unknown as GeoJSON.GeoJsonObject}
-                style={{
-                  color: VIOLETA,
-                  weight: 1.5,
-                  opacity: 0.75,
-                  fillColor: VIOLETA,
-                  fillOpacity: 0.07,
-                }}
+                style={() => estiloCp(c.codigo_postal)}
                 onEachFeature={(_f, layer) => {
-                  layer.bindTooltip(
-                    `<span style="font-family:monospace;font-size:11px;font-weight:700">${c.codigo_postal}</span>`,
-                    {
-                      permanent: true,
-                      direction: "center",
-                      className: "etiqueta-cp",
+                  const capa = layer as L.Path;
+                  capasCpRef.current.set(c.codigo_postal, capa);
+                  layer.bindPopup(popupCp(c, poblacionCp?.[c.codigo_postal]), {
+                    maxWidth: 260,
+                  });
+                  if (etiquetasCp) {
+                    layer.bindTooltip(
+                      `<span style="font-family:monospace;font-size:11px;font-weight:700">${c.codigo_postal}</span>`,
+                      {
+                        permanent: true,
+                        direction: "center",
+                        className: "etiqueta-cp",
+                      }
+                    );
+                  }
+                  layer.on("click", () => {
+                    cpSeleccionadoRef.current = c.codigo_postal;
+                    aplicarEstilosCp();
+                  });
+                  layer.on("popupclose", () => {
+                    if (cpSeleccionadoRef.current === c.codigo_postal) {
+                      cpSeleccionadoRef.current = null;
+                      aplicarEstilosCp();
                     }
-                  );
+                  });
+                  layer.on("mouseover", () => {
+                    if (cpSeleccionadoRef.current !== c.codigo_postal) {
+                      capa.setStyle({
+                        fillOpacity: cpSeleccionadoRef.current ? 0.12 : 0.24,
+                      });
+                    }
+                  });
+                  layer.on("mouseout", () => {
+                    capa.setStyle(estiloCp(c.codigo_postal));
+                  });
                 }}
               />
             )

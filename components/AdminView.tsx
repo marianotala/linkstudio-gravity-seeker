@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   construirAgebs,
   construirCps,
+  parsearCatalogoColonias,
   parsearCensoInegi,
   parsearShapefileInegi,
 } from "@/lib/ingesta-cliente";
@@ -63,12 +64,23 @@ export default function AdminView({
   const [mensajeCp, setMensajeCp] = useState<{ tipo: "ok" | "error" | "info"; texto: string } | null>(null);
   const inputCpRef = useRef<HTMLInputElement>(null);
 
+  // ---- catálogo CP → colonias (Correos de México)
+  const [totalColonias, setTotalColonias] = useState<number | null>(null);
+  const [cargandoColonias, setCargandoColonias] = useState(false);
+  const [progresoColonias, setProgresoColonias] = useState<{ hecho: number; total: number } | null>(null);
+  const [mensajeColonias, setMensajeColonias] = useState<{ tipo: "ok" | "error" | "info"; texto: string } | null>(null);
+  const inputColoniasRef = useRef<HTMLInputElement>(null);
+
   async function cargarResumen() {
     const supabase = createClient();
     const { data } = await supabase.rpc("agebs_resumen");
     setResumen(((data ?? []) as ResumenEntidad[]) ?? []);
     const { data: cps } = await supabase.rpc("cps_resumen");
     setResumenCps(((cps ?? []) as ResumenCps[]) ?? []);
+    const { count } = await supabase
+      .from("cp_colonias")
+      .select("codigo_postal", { count: "exact", head: true });
+    setTotalColonias(count ?? 0);
   }
   useEffect(() => {
     cargarResumen();
@@ -234,6 +246,61 @@ export default function AdminView({
     } finally {
       setCargandoCp(false);
       setProgresoCp(null);
+    }
+  }
+
+  // ---- catálogo CP → colonias: txt/csv oficial de Correos de México
+  async function cargarCatalogoColonias(file: File | undefined) {
+    if (!file) return;
+    setCargandoColonias(true);
+    setMensajeColonias(null);
+    setProgresoColonias(null);
+    try {
+      setMensajeColonias({ tipo: "info", texto: "Leyendo el catálogo…" });
+      const registros = await parsearCatalogoColonias(file);
+      if (registros.length === 0) {
+        setMensajeColonias({
+          tipo: "error",
+          texto: "El archivo no trae filas válidas (d_codigo + d_asenta).",
+        });
+        return;
+      }
+      const supabase = createClient();
+      const LOTE_COL = 2000;
+      let hecho = 0;
+      for (let i = 0; i < registros.length; i += LOTE_COL) {
+        const lote = registros.slice(i, i + LOTE_COL);
+        const { error } = await supabase.rpc("admin_upsert_colonias", {
+          p_colonias: lote,
+        });
+        if (error) {
+          throw new Error(
+            /row-level security/i.test(error.message)
+              ? "Tu usuario no tiene rol admin: no puede cargar datos."
+              : error.message
+          );
+        }
+        hecho += lote.length;
+        setProgresoColonias({ hecho, total: registros.length });
+        setMensajeColonias({
+          tipo: "info",
+          texto: `Cargando colonias: ${hecho.toLocaleString("es-MX")} de ${registros.length.toLocaleString("es-MX")}…`,
+        });
+      }
+      setMensajeColonias({
+        tipo: "ok",
+        texto: `Listo: ${registros.length.toLocaleString("es-MX")} colonias cargadas. Los popups del mapa ya muestran colonia, municipio y estado.`,
+      });
+      if (inputColoniasRef.current) inputColoniasRef.current.value = "";
+      await cargarResumen();
+    } catch (e) {
+      setMensajeColonias({
+        tipo: "error",
+        texto: e instanceof Error ? e.message : "Error al cargar el catálogo",
+      });
+    } finally {
+      setCargandoColonias(false);
+      setProgresoColonias(null);
     }
   }
 
@@ -479,6 +546,54 @@ export default function AdminView({
                 </tbody>
               </table>
             )}
+
+            {/* catálogo CP → colonias */}
+            <div className="mt-5 border-t border-linea pt-4">
+              <h3 className="font-display text-sm font-extrabold text-white">
+                Catálogo de colonias (CP → colonia)
+              </h3>
+              <p className="mt-1 font-mono text-[11px] leading-relaxed text-zinc-500">
+                Sube el txt/csv del Catálogo Nacional de Códigos Postales de
+                Correos de México (columnas d_codigo, d_asenta, D_mnpio,
+                d_estado; nacional o por entidad). Alimenta el popup del mapa
+                con colonias, municipio y estado.
+                {totalColonias !== null && (
+                  <span className="text-zinc-300">
+                    {" "}
+                    Hoy: {totalColonias.toLocaleString("es-MX")} colonias.
+                  </span>
+                )}
+              </p>
+              <input
+                ref={inputColoniasRef}
+                type="file"
+                accept=".txt,.csv"
+                disabled={cargandoColonias}
+                onChange={(e) => cargarCatalogoColonias(e.target.files?.[0])}
+                className={`${inputCls} mt-3 file:mr-3 file:rounded file:border-0 file:bg-cian/20 file:px-3 file:py-1 file:font-mono file:text-[11px] file:text-cian`}
+              />
+              {progresoColonias && (
+                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-fondo">
+                  <div
+                    className="h-full rounded-full bg-cian transition-all"
+                    style={{ width: `${Math.round((progresoColonias.hecho / progresoColonias.total) * 100)}%` }}
+                  />
+                </div>
+              )}
+              {mensajeColonias && (
+                <p
+                  className={`mt-3 font-mono text-[11px] leading-relaxed ${
+                    mensajeColonias.tipo === "ok"
+                      ? "text-emerald-400"
+                      : mensajeColonias.tipo === "error"
+                        ? "text-magenta"
+                        : "text-zinc-400"
+                  }`}
+                >
+                  {mensajeColonias.texto}
+                </p>
+              )}
+            </div>
           </div>
 
           {/* entidades cargadas */}

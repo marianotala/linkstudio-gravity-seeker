@@ -442,3 +442,81 @@ export function construirCps(
   );
   return { registros, sinCp, campoCp };
 }
+
+// ------------------------------------------------------------------
+// Catálogo Nacional de Códigos Postales (CP → colonias)
+// ------------------------------------------------------------------
+
+/** Registro listo para admin_upsert_colonias. */
+export interface ColoniaRegistro {
+  codigo_postal: string;
+  colonia: string;
+  tipo_asentamiento: string | null;
+  municipio: string | null;
+  estado: string | null;
+}
+
+/**
+ * Parsea el txt/csv del Catálogo Nacional de Códigos Postales de
+ * Correos de México: delimitado por "|", latin-1 (o UTF-8 con BOM),
+ * primera línea de copyright y encabezados en la segunda (d_codigo,
+ * d_asenta, d_tipo_asenta, D_mnpio, d_estado, …). También acepta la
+ * variante separada por comas si los encabezados coinciden.
+ */
+export async function parsearCatalogoColonias(
+  archivo: File
+): Promise<ColoniaRegistro[]> {
+  const buffer = await archivo.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const esUtf8ConBom =
+    bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+  const texto = new TextDecoder(esUtf8ConBom ? "utf-8" : "latin1").decode(
+    buffer
+  );
+  const lineas = texto.split(/\r?\n/);
+
+  // encuentra la línea de encabezados (la primera suele ser copyright)
+  const idxHeader = lineas.findIndex((l) => /d_codigo/i.test(l));
+  if (idxHeader === -1) {
+    throw new Error(
+      'No encontré la columna d_codigo: ¿es el txt/csv del Catálogo Nacional de Códigos Postales?'
+    );
+  }
+  const sep = lineas[idxHeader].includes("|") ? "|" : ",";
+  const headers = lineas[idxHeader]
+    .split(sep)
+    .map((h) => h.replace(/^﻿/, "").trim().toLowerCase());
+  const col = (nombre: string) => headers.indexOf(nombre);
+  const iCp = col("d_codigo");
+  const iColonia = col("d_asenta");
+  const iTipo = col("d_tipo_asenta");
+  const iMun = col("d_mnpio");
+  const iEdo = col("d_estado");
+  if (iCp === -1 || iColonia === -1) {
+    throw new Error(
+      "El archivo no trae las columnas d_codigo y d_asenta del catálogo"
+    );
+  }
+
+  const vistos = new Set<string>();
+  const registros: ColoniaRegistro[] = [];
+  for (let i = idxHeader + 1; i < lineas.length; i++) {
+    const campos = lineas[i].split(sep);
+    const cpCrudo = String(campos[iCp] ?? "").trim();
+    const colonia = String(campos[iColonia] ?? "").trim();
+    if (!/^\d{4,5}$/.test(cpCrudo) || !colonia) continue;
+    const codigo_postal = cpCrudo.padStart(5, "0");
+    const llave = `${codigo_postal}|${colonia}`;
+    if (vistos.has(llave)) continue;
+    vistos.add(llave);
+    registros.push({
+      codigo_postal,
+      colonia,
+      tipo_asentamiento:
+        iTipo >= 0 ? String(campos[iTipo] ?? "").trim() || null : null,
+      municipio: iMun >= 0 ? String(campos[iMun] ?? "").trim() || null : null,
+      estado: iEdo >= 0 ? String(campos[iEdo] ?? "").trim() || null : null,
+    });
+  }
+  return registros;
+}
