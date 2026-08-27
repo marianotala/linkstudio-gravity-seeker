@@ -76,29 +76,66 @@ export function nseProxyCenso(
 export async function parsearCensoInegi(
   archivo: File
 ): Promise<Map<string, VarsCenso>> {
+  // normaliza headers: quita el BOM (﻿, o "ï»¿" si un BOM UTF-8 se
+  // decodificó como latin1), espacios y mayúsculas
+  const limpiarHeader = (h: string) =>
+    h.replace(/^﻿/, "").replace(/^ï»¿/, "").trim().toUpperCase();
+
   let filas: Record<string, unknown>[];
   const nombre = archivo.name.toLowerCase();
   if (nombre.endsWith(".xls") || nombre.endsWith(".xlsx")) {
     const wb = XLSX.read(await archivo.arrayBuffer(), { type: "array" });
-    filas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+    filas = XLSX.utils
+      .sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], {
+        defval: "",
+      })
+      .map((f) =>
+        Object.fromEntries(
+          Object.entries(f).map(([k, v]) => [limpiarHeader(k), v])
+        )
+      );
   } else {
-    // los CSV de INEGI vienen en latin1
-    const texto = new TextDecoder("latin1").decode(await archivo.arrayBuffer());
+    // INEGI publica los CSV a veces en latin1 y a veces en UTF-8 con
+    // BOM: si el archivo empieza con EF BB BF se decodifica como UTF-8
+    // (el decoder descarta el BOM); si no, latin1.
+    const buffer = await archivo.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    const esUtf8ConBom =
+      bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+    const texto = new TextDecoder(esUtf8ConBom ? "utf-8" : "latin1").decode(
+      buffer
+    );
     filas = Papa.parse<Record<string, unknown>>(texto, {
       header: true,
       skipEmptyLines: true,
-      transformHeader: (h) => h.trim().toUpperCase(),
+      transformHeader: limpiarHeader,
     }).data;
   }
 
   const mapa = new Map<string, VarsCenso>();
   for (const fila of filas) {
-    const nomLoc = String(fila.NOM_LOC ?? "").trim().toLowerCase();
-    if (!nomLoc.includes("total ageb")) continue;
-    const ent = String(fila.ENTIDAD ?? "").padStart(2, "0");
-    const mun = String(fila.MUN ?? "").padStart(3, "0");
-    const loc = String(fila.LOC ?? "").padStart(4, "0");
-    const ageb = String(fila.AGEB ?? "").trim().padStart(4, "0");
+    // Filas de nivel AGEB: NOM_LOC = "Total AGEB urbana". Si la columna
+    // NOM_LOC no existiera, respaldo: MZA = 0 excluyendo los totales de
+    // entidad/municipio/localidad (AGEB = "0000").
+    const agebCrudo = String(fila.AGEB ?? "").trim().toUpperCase();
+    const mzaCrudo = String(fila.MZA ?? "").trim();
+    if (fila.NOM_LOC !== undefined) {
+      const nomLoc = String(fila.NOM_LOC ?? "").trim().toLowerCase();
+      if (!nomLoc.includes("total ageb")) continue;
+    } else {
+      const esMzaCero = mzaCrudo !== "" && Number(mzaCrudo) === 0;
+      const esTotalAgregado = /^0+$/.test(agebCrudo) || agebCrudo === "";
+      if (!esMzaCero || esTotalAgregado) continue;
+    }
+
+    // CVEGEO = ENTIDAD(2)+MUN(3)+LOC(4)+AGEB(4), SIEMPRE como strings
+    // con ceros a la izquierda. Sin ENTIDAD no hay llave válida.
+    const entCrudo = String(fila.ENTIDAD ?? "").trim();
+    if (!entCrudo) continue;
+    const ent = entCrudo.padStart(2, "0");
+    const mun = String(fila.MUN ?? "").trim().padStart(3, "0");
+    const loc = String(fila.LOC ?? "").trim().padStart(4, "0");
+    const ageb = agebCrudo.padStart(4, "0");
     const cvegeo = `${ent}${mun}${loc}${ageb}`;
 
     const graproes = num(fila.GRAPROES);

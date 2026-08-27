@@ -85,18 +85,39 @@ function nseProxy(graproes, vphAutom, vphInter, tvivhab) {
 }
 
 console.log(`→ Leyendo censo: ${args.censo}`);
-const csvTexto = readFileSync(args.censo, "latin1"); // INEGI usa latin1/ansi
-const censo = Papa.parse(csvTexto, { header: true, skipEmptyLines: true });
+// INEGI publica el RESAGEBURB en latin1/ansi O en UTF-8 con BOM
+// (EF BB BF). Si el BOM se decodifica como latin1 queda "ï»¿ENTIDAD"
+// y el join por CVEGEO falla al 100%: detectamos por bytes.
+const csvBuffer = readFileSync(args.censo);
+const esUtf8ConBom =
+  csvBuffer[0] === 0xef && csvBuffer[1] === 0xbb && csvBuffer[2] === 0xbf;
+const csvTexto = csvBuffer.toString(esUtf8ConBom ? "utf8" : "latin1");
+const censo = Papa.parse(csvTexto, {
+  header: true,
+  skipEmptyLines: true,
+  // limpia BOM residual y espacios en los headers
+  transformHeader: (h) =>
+    h.replace(/^\ufeff/, "").replace(/^ï»¿/, "").trim().toUpperCase(),
+});
 
 const porCvegeo = new Map();
 for (const fila of censo.data) {
-  // Filas de nivel AGEB: NOM_LOC = "Total AGEB urbana" (MZA = 0)
-  const nomLoc = String(fila.NOM_LOC ?? "").trim().toLowerCase();
-  if (!nomLoc.includes("total ageb")) continue;
-  const ent = String(fila.ENTIDAD ?? "").padStart(2, "0");
-  const mun = String(fila.MUN ?? "").padStart(3, "0");
-  const loc = String(fila.LOC ?? "").padStart(4, "0");
-  const ageb = String(fila.AGEB ?? "").trim().padStart(4, "0");
+  // Filas de nivel AGEB: NOM_LOC = "Total AGEB urbana" (MZA = 0).
+  // Si el archivo no trae NOM_LOC, respaldo: MZA = 0 y AGEB real
+  // (excluye totales de entidad/municipio, que traen AGEB "0000").
+  const agebCrudo = String(fila.AGEB ?? "").trim();
+  if (fila.NOM_LOC !== undefined) {
+    const nomLoc = String(fila.NOM_LOC).trim().toLowerCase();
+    if (!nomLoc.includes("total ageb")) continue;
+  } else {
+    const mza = Number(String(fila.MZA ?? "").trim());
+    if (mza !== 0 || agebCrudo === "" || /^0+$/.test(agebCrudo)) continue;
+  }
+  if (String(fila.ENTIDAD ?? "").trim() === "") continue;
+  const ent = String(fila.ENTIDAD).trim().padStart(2, "0");
+  const mun = String(fila.MUN ?? "").trim().padStart(3, "0");
+  const loc = String(fila.LOC ?? "").trim().padStart(4, "0");
+  const ageb = agebCrudo.toUpperCase().padStart(4, "0");
   const cvegeo = `${ent}${mun}${loc}${ageb}`;
 
   const graproes = num(fila.GRAPROES);

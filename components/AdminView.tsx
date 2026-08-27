@@ -96,6 +96,17 @@ export default function AdminView({
         return;
       }
 
+      // Si el cruce por CVEGEO falla en masa (headers con BOM, archivo
+      // censal de otra entidad, formato inesperado) es mejor no cargar
+      // nada que llenar la base de geometrías sin datos demográficos.
+      if (sinCenso / registros.length > 0.8) {
+        setMensaje({
+          tipo: "error",
+          texto: `El cruce por CVEGEO falló: solo ${(registros.length - sinCenso).toLocaleString("es-MX")} de ${registros.length.toLocaleString("es-MX")} AGEBs tienen datos censales — no se cargó nada. Verifica que el RESAGEBURB sea de la misma entidad que el shapefile.`,
+        });
+        return;
+      }
+
       // la reproyección y su verificación de sanidad (rango de México)
       // viven en parsearShapefileInegi; si algo falla, lanza un error
       // claro que se muestra abajo
