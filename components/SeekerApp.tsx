@@ -2024,6 +2024,118 @@ export default function SeekerApp({
     setExcludeInput("");
   }
 
+  // ---- Export plan (PDF): documento comercial con branding Gravity a
+  //      partir del análisis ACTIVO, más el Export data en el mismo
+  //      clic. La generación es 100% client-side (@react-pdf/renderer,
+  //      importado bajo demanda) y el mapa se captura en canvas.
+  async function exportarPlan() {
+    if (poisVisibles.length === 0 && !universos?.disponible) {
+      reportar("error", "Corre una búsqueda primero para exportar el plan");
+      return;
+    }
+    setOcupado(true);
+    reportar("busy", "Generando Export plan (PDF)…");
+    try {
+      const [{ generarPlanPdf, nombreArchivoPlan }, { capturarMapaPlan }] =
+        await Promise.all([import("@/lib/plan-pdf"), import("@/lib/plan-mapa")]);
+
+      const mapaDataUrl = await capturarMapaPlan({
+        pois: poisVisibles,
+        origenes: mode === "origins" ? origenes : undefined,
+        radioM: mode === "origins" ? radio : undefined,
+        cps: mode === "cp" ? cpsGeo : undefined,
+        zonas: mode === "zone" ? zonas : undefined,
+      });
+
+      const termino =
+        mode === "census"
+          ? marca.trim() || "Censo de marca"
+          : mode === "territorial"
+            ? (getCategoria(terCategoria)?.label ?? terCategoria)
+            : categoria === SOLO_NOMBRE
+              ? nameFilter.trim() || "Búsqueda"
+              : (CATEGORIAS.find((c) => c.key === categoria)?.label ?? categoria);
+      const alcance =
+        mode === "census"
+          ? (zona?.nombre?.split(",")[0] ?? ciudadQuery.trim() ?? "")
+          : mode === "territorial"
+            ? (terCentro?.nombre?.split(",")[0] ?? terLugarQuery.trim())
+            : mode === "zone"
+              ? zonas
+                  .map((z) => z.nombre?.split(",")[0] ?? "zona")
+                  .slice(0, 3)
+                  .join(", ") + (zonas.length > 3 ? ` +${zonas.length - 3}` : "")
+              : mode === "cp"
+                ? `CPs ${cpsGeo
+                    .slice(0, 4)
+                    .map((c) => c.codigo_postal)
+                    .join(", ")}${cpsGeo.length > 4 ? ` +${cpsGeo.length - 4}` : ""}`
+                : `${origenes.length} orígenes`;
+
+      const hayDenue = poisVisibles.some((p) => p.fuente !== "google");
+      const hayGoogle =
+        poisVisibles.length === 0 || poisVisibles.some((p) => p.fuente !== "denue");
+      const fuentes = [
+        ...(hayGoogle ? ["Google Places API (New) — establecimientos"] : []),
+        ...(hayDenue ? ["DENUE, INEGI — establecimientos"] : []),
+        ...(universos?.disponible
+          ? ["Censo de Población y Vivienda 2020, INEGI — demografía por AGEB urbana"]
+          : []),
+        ...(mode === "cp"
+          ? ["Catálogo Nacional de Códigos Postales, Correos de México — polígonos y colonias"]
+          : []),
+      ];
+
+      const fecha = new Date();
+      const blob = await generarPlanPdf({
+        modo: mode,
+        termino,
+        alcance,
+        usuario: usuario?.nombre ?? usuario?.email ?? "Seeker",
+        fecha,
+        pois: poisVisibles,
+        nombresOrigen: centrosActivos.map(
+          (c, i) => c.nombre ?? `Origen ${i + 1}`
+        ),
+        universos,
+        criterio: universos?.criterio ?? null,
+        fuentes,
+        radioM:
+          mode === "origins"
+            ? radio
+            : mode === "census" || mode === "territorial"
+              ? radioInfluencia
+              : null,
+        mapaDataUrl,
+        exclusiones: excludes,
+        esCompetencia: mode === "census" && excludes.length > 0,
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = nombreArchivoPlan(termino, fecha);
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      // dos entregables, un clic: el Export data acompaña al plan
+      if (poisVisibles.length > 0) {
+        exportarCsv(poisVisibles, centrosActivos, universos);
+      }
+      reportar("ok", "Export plan (PDF) + Export data (CSV) descargados");
+    } catch (e) {
+      console.error(e);
+      reportar(
+        "error",
+        e instanceof Error ? `No se pudo generar el plan: ${e.message}` : "No se pudo generar el plan"
+      );
+    } finally {
+      setOcupado(false);
+    }
+  }
+
   // ---- estilos compartidos
   const inputCls =
     "w-full rounded-md border border-linea bg-panel2 px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-cian focus:outline-none";
@@ -3127,6 +3239,17 @@ export default function SeekerApp({
               </div>
             </div>
             <div className="grid grid-cols-1 gap-2">
+              <button
+                onClick={exportarPlan}
+                disabled={
+                  ocupado || (poisVisibles.length === 0 && !universos?.disponible)
+                }
+                className="rounded-md border border-magenta bg-magenta/10 px-3 py-2 text-left font-mono text-[11px] font-medium text-magenta transition-colors hover:bg-magenta/20 disabled:opacity-30"
+                title="PDF comercial con branding Gravity + CSV de datos, en un clic"
+              >
+                ⤓ Export plan (PDF){" "}
+                <span className="text-magenta/60">+ Export data · Gravity_Plan_*.pdf</span>
+              </button>
               <button
                 onClick={() => exportarCsv(poisVisibles, centrosActivos, universos)}
                 disabled={poisVisibles.length === 0}
