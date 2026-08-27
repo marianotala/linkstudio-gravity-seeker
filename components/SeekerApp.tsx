@@ -407,8 +407,29 @@ export default function SeekerApp({
 
   // ---- capas de categoría (multi-búsqueda sobre la misma geografía)
   const [capas, setCapas] = useState<CapaBusqueda[]>([]);
-  /** true = la PRÓXIMA búsqueda se agrega como capa en vez de reemplazar. */
+  /** true = la PRÓXIMA búsqueda se agrega como capa en vez de reemplazar.
+   * El ref es la fuente de verdad para los flujos async; el estado
+   * espejo maneja la UI (banner, resaltado del paso "Qué buscar"). */
   const agregarCapaRef = useRef(false);
+  const [agregandoCapa, setAgregandoCapa] = useState(false);
+  const seccionBuscarRef = useRef<HTMLElement>(null);
+
+  function iniciarAgregarCapa() {
+    agregarCapaRef.current = true;
+    setAgregandoCapa(true);
+    setNameFilter("");
+    seccionBuscarRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    reportar(
+      "ok",
+      "La geografía se mantiene: elige la nueva categoría o término y presiona Buscar"
+    );
+  }
+
+  function cancelarAgregarCapa() {
+    agregarCapaRef.current = false;
+    setAgregandoCapa(false);
+    reportar("idle", "Listo para buscar");
+  }
 
   // ---- universos demográficos y capa AGEB
   const [universos, setUniversos] = useState<Universos | null>(null);
@@ -524,12 +545,14 @@ export default function SeekerApp({
       ];
     });
     agregarCapaRef.current = false;
+    setAgregandoCapa(false);
   }
 
   // cambiar de modo cambia la geografía: las capas no sobreviven
   useEffect(() => {
     setCapas([]);
     agregarCapaRef.current = false;
+    setAgregandoCapa(false);
   }, [mode]);
 
   function reportar(tipo: StatusTipo, texto: string) {
@@ -1344,6 +1367,9 @@ export default function SeekerApp({
       }
 
       setPois(lista);
+      // al AGREGAR capa el universo del territorio no cambia: se reusa
+      const reutilizarUniversos =
+        agregarCapaRef.current && (universos?.disponible ?? false);
       registrarCapa(nombreCapaActual(), lista, excluidosTotal, descartadosTotal);
       setContadores({
         excluidos: excluidosTotal,
@@ -1357,8 +1383,10 @@ export default function SeekerApp({
       setTablaColapsada(false);
 
       // 3) universos sobre la geometría real de los CPs censados
-      let universosCp: Universos | null = null;
-      if (lista.length > 0) {
+      //    (si se está agregando capa, el territorio es el mismo: se
+      //    reusa el universo en pantalla sin recalcular)
+      let universosCp: Universos | null = reutilizarUniversos ? universos : null;
+      if (lista.length > 0 && !reutilizarUniversos) {
         try {
           const { universos: u } = await postJson<{ universos: Universos }>(
             "/api/universos",
@@ -1375,10 +1403,12 @@ export default function SeekerApp({
           console.error("No se pudieron calcular universos de los CPs:", e);
         }
       }
-      setUniversos(universosCp);
-      setAgebsGeo(null);
-      setCapaDemografica(false);
-      geocercasRef.current = cpsCodigos.map((cp) => ({ id: cp, cp }));
+      if (!reutilizarUniversos) {
+        setUniversos(universosCp);
+        setAgebsGeo(null);
+        setCapaDemografica(false);
+        geocercasRef.current = cpsCodigos.map((cp) => ({ id: cp, cp }));
+      }
 
       // 4) guardar en el historial como UNA búsqueda
       if (lista.length > 0) {
@@ -1467,6 +1497,7 @@ export default function SeekerApp({
     setTituloPlan("");
     setCapas([]);
     agregarCapaRef.current = false;
+    setAgregandoCapa(false);
     setCensoSugerido(null);
     setAvisoDescartado(false);
     setActualizarDe(null);
@@ -2023,7 +2054,10 @@ export default function SeekerApp({
       };
       const data = await postJson<SearchResponse>("/api/search", body);
       setPois(data.pois);
-      // en modo zona la búsqueda se acumula como capa (misma geografía)
+      // en modo zona la búsqueda se acumula como capa (misma geografía);
+      // al AGREGAR capa, el universo del territorio no cambia: se reusa
+      const reutilizarUniversos =
+        mode === "zone" && agregarCapaRef.current && universos?.disponible;
       if (mode === "zone") {
         registrarCapa(
           nombreCapaActual(),
@@ -2044,14 +2078,16 @@ export default function SeekerApp({
       });
       setVerLista(null);
       // universos calculados por el servidor + geocercas para el choropleth
-      setUniversos(data.universos ?? null);
-      setAgebsGeo(null);
-      setCapaDemografica(false);
-      geocercasRef.current = centrosActivos.map((c, i) =>
-        mode === "zone"
-          ? { id: c.nombre ?? String(i), viewport: c.viewport }
-          : { id: c.nombre ?? String(i), lat: c.lat, lng: c.lng, radio_m: radio }
-      );
+      if (!reutilizarUniversos) {
+        setUniversos(data.universos ?? null);
+        setAgebsGeo(null);
+        setCapaDemografica(false);
+        geocercasRef.current = centrosActivos.map((c, i) =>
+          mode === "zone"
+            ? { id: c.nombre ?? String(i), viewport: c.viewport }
+            : { id: c.nombre ?? String(i), lat: c.lat, lng: c.lng, radio_m: radio }
+        );
+      }
       setTablaColapsada(false);
       const extras: string[] = [];
       if (data.excluidos > 0) extras.push(`${data.excluidos} excluidos`);
@@ -3184,21 +3220,30 @@ export default function SeekerApp({
                   </button>
                 </div>
               ))}
-              {capas.length < MAX_CAPAS && (
-                <button
-                  onClick={() => {
-                    agregarCapaRef.current = true;
-                    setNameFilter("");
-                    reportar(
-                      "ok",
-                      "La geografía se mantiene: elige la nueva categoría o término y presiona Buscar"
-                    );
-                  }}
-                  disabled={ocupado}
-                  className="mt-2 w-full rounded-md border border-dashed border-linea bg-panel2 px-3 py-2 font-mono text-[11px] text-zinc-400 transition-colors hover:border-emerald-400 hover:text-emerald-400 disabled:opacity-40"
-                >
-                  + Agregar otra búsqueda en esta zona
-                </button>
+              {agregandoCapa ? (
+                <div className="mt-2 rounded-md border border-emerald-400/60 bg-emerald-400/10 px-3 py-2.5">
+                  <p className="font-mono text-[11px] leading-relaxed text-emerald-400">
+                    Capa nueva ({capas.length + 1}/{MAX_CAPAS}): elige la
+                    categoría o término en &quot;Qué buscar&quot; y presiona
+                    Buscar. La geografía se mantiene.
+                  </p>
+                  <button
+                    onClick={cancelarAgregarCapa}
+                    className="mt-1.5 font-mono text-[10px] text-zinc-500 transition-colors hover:text-zinc-300"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              ) : (
+                capas.length < MAX_CAPAS && (
+                  <button
+                    onClick={iniciarAgregarCapa}
+                    disabled={ocupado}
+                    className="mt-2 w-full rounded-md border border-dashed border-linea bg-panel2 px-3 py-2 font-mono text-[11px] text-zinc-400 transition-colors hover:border-emerald-400 hover:text-emerald-400 disabled:opacity-40"
+                  >
+                    + Agregar otra búsqueda en esta zona
+                  </button>
+                )
               )}
               <p className="mt-2 font-mono text-[10px] leading-relaxed text-zinc-600">
                 El universo demográfico es del territorio y se comparte
@@ -3246,13 +3291,21 @@ export default function SeekerApp({
           {/* 04 · qué buscar (censo: solo exclusiones; territorial: nada,
               su categoría vive en el paso 02) */}
           {mode !== "territorial" && (
-          <section className={pasoCls}>
+          <section
+            ref={seccionBuscarRef}
+            className={`${pasoCls} ${agregandoCapa ? "border-l-2 border-l-emerald-400 bg-emerald-400/5" : ""}`}
+          >
             <label className={labelCls}>
               {mode === "census"
                 ? "03 · Exclusiones"
                 : mode === "zone"
                   ? "03 · Qué buscar"
                   : "04 · Qué buscar"}
+              {agregandoCapa && (
+                <span className="ml-2 normal-case tracking-normal text-emerald-400">
+                  → capa nueva
+                </span>
+              )}
             </label>
             {mode !== "census" && (
             <>
