@@ -13,6 +13,7 @@
 import { useState } from "react";
 import type { Universos } from "@/lib/types";
 import { clasificarNse, NIVELES_NSE } from "@/lib/nse";
+import { rangosEdadEstandar } from "@/lib/edades";
 
 const fmt = (n: number) => n.toLocaleString("es-MX");
 const fmtPct = (n: number) => `${n.toLocaleString("es-MX")}%`;
@@ -34,58 +35,38 @@ function Tarjeta({
   );
 }
 
-/** Barra apilada de la distribución NSE + porcentajes por nivel. */
-function DistribucionNse({
-  dist,
+/**
+ * Barra apilada horizontal + leyenda de porcentajes debajo. La usan
+ * NSE y Edades para que ambas distribuciones se lean igual.
+ */
+function BarraApilada({
+  segmentos,
 }: {
-  dist: NonNullable<NonNullable<Universos["perfil"]>["nseDist"]>;
+  segmentos: { etiqueta: string; pct: number; color: string }[];
 }) {
-  const niveles = NIVELES_NSE.map((n) => ({ ...n, pct: dist[n.clave] }));
   return (
     <div className="mt-1.5">
       <div className="flex h-2 w-full overflow-hidden rounded-full bg-fondo">
-        {niveles.map(
-          (n) =>
-            n.pct > 0 && (
+        {segmentos.map(
+          (s) =>
+            s.pct > 0 && (
               <div
-                key={n.clave}
-                style={{ width: `${n.pct}%`, backgroundColor: n.color }}
-                title={`${n.etiqueta} ${fmtPct(n.pct)}`}
+                key={s.etiqueta}
+                style={{ width: `${s.pct}%`, backgroundColor: s.color }}
+                title={`${s.etiqueta} ${fmtPct(s.pct)}`}
               />
             )
         )}
       </div>
       <p className="mt-1 font-mono text-[9px] leading-relaxed text-zinc-400">
-        {niveles.map((n, i) => (
-          <span key={n.clave}>
+        {segmentos.map((s, i) => (
+          <span key={s.etiqueta}>
             {i > 0 && <span className="text-zinc-700"> · </span>}
-            <span style={{ color: n.color }}>{n.etiqueta}</span>{" "}
-            {fmtPct(n.pct)}
+            <span style={{ color: s.color }}>{s.etiqueta}</span>{" "}
+            {fmtPct(s.pct)}
           </span>
         ))}
       </p>
-    </div>
-  );
-}
-
-/** Mini barra horizontal de un rango de edad. */
-function BarraEdad({ rango, pct }: { rango: string; pct: number | null }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="w-9 shrink-0 font-mono text-[9px] text-zinc-500">
-        {rango}
-      </span>
-      <div className="h-1 flex-1 overflow-hidden rounded-full bg-fondo">
-        {pct !== null && (
-          <div
-            className="h-full rounded-full bg-emerald-400"
-            style={{ width: `${Math.min(pct, 100)}%` }}
-          />
-        )}
-      </div>
-      <span className="w-9 shrink-0 text-right font-mono text-[9px] text-zinc-300">
-        {pct !== null ? fmtPct(pct) : "—"}
-      </span>
     </div>
   );
 }
@@ -120,25 +101,10 @@ export default function UniversosPanel({
   const residencial = universos.residencial!;
   const direccionable = universos.direccionable!;
   const perfil = universos.perfil!;
-  const edades = perfil.edades ?? null;
-  const con65 = edades !== null && edades.pct65ymas !== null;
-  // rangos reales del censo; con datos viejos (sin POB65_MAS) el
-  // último rango colapsa a 60+
-  const rangosEdad: [string, number | null][] =
-    edades === null
-      ? []
-      : con65
-        ? [
-            ["18-24", edades.pct18a24],
-            ["25-59", edades.pct25a59],
-            ["60-64", edades.pct60a64],
-            ["65+", edades.pct65ymas],
-          ]
-        : [
-            ["18-24", edades.pct18a24],
-            ["25-59", edades.pct25a59],
-            ["60+", edades.pct60ymas],
-          ];
+  // seis rangos estándar de medios; 25-64 estimado con estructura
+  // nacional porque INEGI no publica quinquenios adultos por AGEB
+  // (detalle en lib/edades.ts)
+  const rangosEdad = rangosEdadEstandar(perfil.edades);
   const promOcupantes =
     residencial.viviendas > 0
       ? Math.round((residencial.poblacion / residencial.viviendas) * 10) / 10
@@ -172,7 +138,13 @@ export default function UniversosPanel({
 
         <Tarjeta etiqueta="NSE">
           {perfil.nseDist ? (
-            <DistribucionNse dist={perfil.nseDist} />
+            <BarraApilada
+              segmentos={NIVELES_NSE.map((n) => ({
+                etiqueta: n.etiqueta,
+                pct: perfil.nseDist![n.clave],
+                color: n.color,
+              }))}
+            />
           ) : (
             <p className="mt-0.5 font-display text-xl font-extrabold leading-none text-violeta">
               {perfil.nseProxy !== null ? perfil.nseProxy : "—"}
@@ -184,19 +156,15 @@ export default function UniversosPanel({
         </Tarjeta>
 
         <Tarjeta etiqueta="Edades">
-          {rangosEdad.length > 0 ? (
-            <div className="mt-1 space-y-0.5">
-              {rangosEdad.map(([rango, pct]) => (
-                <BarraEdad key={rango} rango={rango} pct={pct} />
-              ))}
-            </div>
+          {rangosEdad ? (
+            <BarraApilada segmentos={rangosEdad} />
           ) : (
             <p className="mt-0.5 font-display text-xl font-extrabold leading-none text-emerald-400">
               —
             </p>
           )}
           <p className="mt-0.5 font-mono text-[9px] text-zinc-600">
-            % del universo 18+
+            % del universo 18+ · 25-64 estimado (estructura nacional)
           </p>
         </Tarjeta>
       </div>
