@@ -21,9 +21,10 @@ const ResultadoSchema = z.object({
 });
 
 const BodySchema = z.object({
-  mode: z.enum(["origins", "zone", "census"]),
+  mode: z.enum(["origins", "zone", "census", "cp"]),
   params: z.record(z.unknown()),
   results: z.array(ResultadoSchema).max(5000, "Máximo 5000 resultados"),
+  universos: z.record(z.unknown()).nullish(),
 });
 
 export async function POST(req: Request) {
@@ -53,11 +54,15 @@ export async function POST(req: Request) {
     );
   }
 
-  const { mode, params, results } = parsed.data;
+  const { mode, params, results, universos } = parsed.data;
   const { data: searchId, error } = await supabase.rpc("guardar_busqueda", {
     p_mode: mode,
     p_params: params,
     p_results: results,
+    // sin detalle por AGEB ni geometrías en el historial
+    p_universos: universos
+      ? { ...universos, porAgeb: undefined, agebsGeo: undefined }
+      : null,
   });
   if (error) {
     console.error("No se pudo guardar la búsqueda:", error.message);

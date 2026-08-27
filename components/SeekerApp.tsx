@@ -951,6 +951,271 @@ export default function SeekerApp({
     setCpsInput(quedan.map((c) => c.codigo_postal).join(", "));
   }
 
+  // ---- búsqueda por CP: cobertura por celdas (mismo mecanismo que el
+  //      censo de marca). searchText con bias circular trae ~60 POIs
+  //      por punto: un solo centro por CP deja fuera resultados, así
+  //      que se cubre TODO el bbox con malla hexagonal, se descartan
+  //      las celdas que no tocan el polígono real (PostGIS, sin gastar
+  //      llamadas), se pagina por celda, se deduplica por place_id y
+  //      el filtro espacial final recorta al polígono.
+
+  /** Malla hexagonal que cubre el bbox de un CP, con radio de celda
+   * adaptado a su tamaño (CP urbano: 500-800 m; grandes: hasta 2 km). */
+  function celdasParaCp(c: CpPoligono): { lat: number; lng: number; radio_m: number }[] {
+    const lat = (c.bbox.north + c.bbox.south) / 2;
+    const lng = (c.bbox.east + c.bbox.west) / 2;
+    const anchoM = haversine({ lat, lng: c.bbox.west }, { lat, lng: c.bbox.east });
+    const altoM = haversine({ lat: c.bbox.south, lng }, { lat: c.bbox.north, lng });
+    const maxDim = Math.max(anchoM, altoM, 1);
+    const radio = Math.min(2000, Math.max(500, Math.round(maxDim / 5 / 100) * 100));
+    const alcance = Math.hypot(anchoM, altoM) / 2 + radio;
+    return generarCuadricula({ lat, lng }, alcance, radio, "hex").map((p) => ({
+      lat: p.lat,
+      lng: p.lng,
+      radio_m: radio,
+    }));
+  }
+
+  async function buscarPorCps() {
+    if (cpsGeo.length === 0) {
+      reportar("error", "Primero carga tus códigos postales y sus polígonos (paso 02)");
+      return;
+    }
+    if (categoria === SOLO_NOMBRE && !nameFilter.trim()) {
+      reportar("error", 'Para buscar "solo por nombre" escribe un nombre en el filtro');
+      return;
+    }
+    setOcupado(true);
+    setFoco(null);
+    detenerCensoRef.current = false;
+    setPois([]);
+    setProgresoCenso(null);
+
+    try {
+      // 1) malla candidata sobre el bbox de cada CP, deduplicada entre
+      //    CPs vecinos (celdas casi encimadas no aportan cobertura)
+      const candidatas: { lat: number; lng: number; radio_m: number }[] = [];
+      for (const c of cpsGeo) {
+        for (const celda of celdasParaCp(c)) {
+          const encimada = candidatas.some(
+            (k) =>
+              haversine(k, celda) < Math.min(k.radio_m, celda.radio_m) * 0.8
+          );
+          if (!encimada) candidatas.push(celda);
+        }
+      }
+      if (candidatas.length > 2000) {
+        reportar("error", "Demasiadas celdas de cobertura: busca menos CPs a la vez");
+        return;
+      }
+
+      // 2) descartar las celdas del bbox que NO tocan el polígono real
+      reportar("busy", `Calculando cobertura: ${candidatas.length} celdas candidatas…`);
+      const cpsCodigos = cpsGeo.map((c) => c.codigo_postal);
+      const { indices } = await postJson<{ indices: number[] }>("/api/cps", {
+        cps: cpsCodigos,
+        celdas: candidatas,
+      });
+      const celdasCp = indices.map((i) => candidatas[i]);
+      if (celdasCp.length === 0) {
+        reportar("error", "Ninguna celda toca los polígonos de tus CPs");
+        return;
+      }
+      if (celdasCp.length > 300) {
+        reportar(
+          "error",
+          `La cobertura necesita ${celdasCp.length} llamadas a Google: busca menos CPs a la vez (máx ~300 celdas)`
+        );
+        return;
+      }
+
+      // 3) buscar celda por celda (paginado a 60 por celda en el
+      //    servidor), con el mismo loop resiliente del censo
+      const acumulados = new Map<string, Poi>();
+      const detExcluidos = new Set<string>();
+      const detDescartados = new Set<string>();
+      let excluidosTotal = 0;
+      let descartadosTotal = 0;
+      let errorFatal: string | null = null;
+      let celdasFallidas = 0;
+      let fallosSeguidos = 0;
+
+      for (let i = 0; i < celdasCp.length; i++) {
+        if (detenerCensoRef.current) break;
+        try {
+          const data = await postJson<SearchResponse>("/api/search", {
+            mode: "census",
+            centers: [{ lat: celdasCp[i].lat, lng: celdasCp[i].lng }],
+            radius: celdasCp[i].radio_m,
+            category: categoria,
+            nameFilter: nameFilter.trim(),
+            excludes,
+            persist: false,
+          } satisfies SearchRequest);
+          fallosSeguidos = 0;
+          excluidosTotal += data.excluidos;
+          descartadosTotal += data.descartadosPorNombre;
+          (data.detalleExcluidos ?? []).forEach((n) => {
+            if (detExcluidos.size < 300) detExcluidos.add(n);
+          });
+          (data.detalleDescartados ?? []).forEach((n) => {
+            if (detDescartados.size < 300) detDescartados.add(n);
+          });
+          for (const p of data.pois) {
+            if (!acumulados.has(p.placeId)) acumulados.set(p.placeId, p);
+          }
+        } catch (e) {
+          const mensaje = e instanceof Error ? e.message : "Error en la celda";
+          if (esErrorFatalDeCenso(mensaje)) {
+            errorFatal = mensaje;
+            break;
+          }
+          celdasFallidas++;
+          fallosSeguidos++;
+          if (fallosSeguidos >= MAX_FALLOS_SEGUIDOS) {
+            errorFatal = `${MAX_FALLOS_SEGUIDOS} celdas seguidas fallaron (${mensaje})`;
+            break;
+          }
+        }
+        setProgresoCenso({
+          actual: i + 1,
+          total: celdasCp.length,
+          pois: acumulados.size,
+        });
+        reportar(
+          "busy",
+          `CP: celda ${i + 1} de ${celdasCp.length} · ${acumulados.size} POIs acumulados`
+        );
+        if (i < celdasCp.length - 1) {
+          await new Promise((r) => setTimeout(r, THROTTLE_CENSO_MS));
+        }
+      }
+      if (errorFatal) {
+        reportar("error", errorFatal);
+        return;
+      }
+
+      // 4) filtro espacial final: solo lo que cae DENTRO del polígono
+      //    real, etiquetado con su CP
+      const candidatos = Array.from(acumulados.values());
+      let lista: Poi[] = [];
+      if (candidatos.length > 0) {
+        reportar("busy", "Recortando al polígono real de los CPs…");
+        const { dentro } = await postJson<{ dentro: { id: string; cp: string }[] }>(
+          "/api/cps",
+          {
+            cps: cpsCodigos,
+            puntos: candidatos
+              .slice(0, 5000)
+              .map((p) => ({ id: p.placeId, lat: p.lat, lng: p.lng })),
+          }
+        );
+        const cpPorId = new Map(dentro.map((d) => [d.id, d.cp]));
+        lista = candidatos
+          .filter((p) => cpPorId.has(p.placeId))
+          .map((p) => {
+            const cp = cpPorId.get(p.placeId)!;
+            const idx = Math.max(
+              0,
+              cpsGeo.findIndex((c) => c.codigo_postal === cp)
+            );
+            return {
+              ...p,
+              cp,
+              origenIdx: idx,
+              distancia: Math.round(haversine(centrosActivos[idx], p)),
+            };
+          })
+          .sort((a, b) => a.distancia - b.distancia);
+      }
+
+      setPois(lista);
+      setContadores({
+        excluidos: excluidosTotal,
+        descartadosPorNombre: descartadosTotal,
+      });
+      setDetalles({
+        excluidos: Array.from(detExcluidos),
+        descartados: Array.from(detDescartados),
+      });
+      setVerLista(null);
+      setTablaColapsada(false);
+
+      // 5) universos sobre la geometría real de los CPs
+      let universosCp: Universos | null = null;
+      if (lista.length > 0) {
+        try {
+          const { universos: u } = await postJson<{ universos: Universos }>(
+            "/api/universos",
+            { geocercas: cpsCodigos.map((cp) => ({ id: cp, cp })) }
+          );
+          const mostrados = cpsCodigos.slice(0, 8).join(", ");
+          universosCp = u?.disponible
+            ? {
+                ...u,
+                criterio: `población dentro de los CPs ${mostrados}${cpsCodigos.length > 8 ? ` y ${cpsCodigos.length - 8} más` : ""}`,
+              }
+            : u;
+        } catch (e) {
+          console.error("No se pudieron calcular universos de los CPs:", e);
+        }
+      }
+      setUniversos(universosCp);
+      setAgebsGeo(null);
+      setCapaDemografica(false);
+      geocercasRef.current = cpsCodigos.map((cp) => ({ id: cp, cp }));
+
+      // 6) guardar en el historial como UNA búsqueda
+      if (lista.length > 0) {
+        try {
+          await postJson<{ searchId: string }>("/api/searches", {
+            mode: "cp",
+            params: {
+              mode: "cp",
+              cps: cpsCodigos,
+              category: categoria,
+              nameFilter: nameFilter.trim(),
+              excludes,
+              radius: 0,
+              centers: [],
+            },
+            universos: universosCp,
+            results: lista.map((p) => ({
+              name: p.nombre,
+              category: etiquetaCategoria,
+              lat: p.lat,
+              lng: p.lng,
+              address: p.direccion,
+              origin_name: `CP ${p.cp}`,
+              distance_m: p.distancia,
+              place_id: p.placeId,
+            })),
+          });
+        } catch (e) {
+          console.error("No se pudo guardar la búsqueda por CP:", e);
+        }
+      }
+
+      const extras: string[] = [];
+      if (excluidosTotal > 0) extras.push(`${excluidosTotal} excluidos`);
+      if (descartadosTotal > 0) extras.push(`${descartadosTotal} descartados por nombre`);
+      if (candidatos.length - lista.length > 0)
+        extras.push(`${candidatos.length - lista.length} fuera del polígono`);
+      if (celdasFallidas > 0) extras.push(`${celdasFallidas} celdas fallaron`);
+      reportar(
+        lista.length > 0 ? "ok" : "error",
+        lista.length > 0
+          ? `${lista.length} POIs dentro de ${cpsCodigos.length} ${cpsCodigos.length === 1 ? "CP" : "CPs"} (${celdasCp.length} celdas)${extras.length ? " · " + extras.join(" · ") : ""}`
+          : `Sin resultados dentro de los CPs${extras.length ? " · " + extras.join(" · ") : ""}`
+      );
+    } catch (e) {
+      reportar("error", e instanceof Error ? e.message : "Error al buscar por CP");
+    } finally {
+      setOcupado(false);
+      setProgresoCenso(null);
+    }
+  }
+
   // ---- nueva búsqueda: limpia todo y regresa al estado inicial
   function nuevaBusqueda() {
     detenerCensoRef.current = true;
@@ -1494,14 +1759,17 @@ export default function SeekerApp({
 
   // ---- paso 4: buscar POIs
   async function buscar() {
+    // el modo CP corre por cobertura de celdas, como el censo
+    if (mode === "cp") {
+      await buscarPorCps();
+      return;
+    }
     if (centrosActivos.length === 0) {
       reportar(
         "error",
         mode === "origins"
           ? "Primero procesa tus orígenes (paso 02)"
-          : mode === "cp"
-            ? "Primero carga tus códigos postales y sus polígonos (paso 02)"
-            : "Primero agrega al menos una zona (paso 02)"
+          : "Primero agrega al menos una zona (paso 02)"
       );
       return;
     }
@@ -1516,21 +1784,16 @@ export default function SeekerApp({
       "busy",
       mode === "origins"
         ? `Buscando POIs alrededor de ${centrosActivos.length} orígenes…`
-        : mode === "cp"
-          ? `Buscando POIs dentro de ${cpsGeo.length} ${cpsGeo.length === 1 ? "código postal" : "códigos postales"}…`
-          : `Buscando POIs en ${centrosActivos.length} ${centrosActivos.length === 1 ? "zona" : "zonas"}…`
+        : `Buscando POIs en ${centrosActivos.length} ${centrosActivos.length === 1 ? "zona" : "zonas"}…`
     );
     try {
       const body: SearchRequest = {
         mode,
-        centers: mode === "cp" ? [] : centrosActivos,
+        centers: centrosActivos,
         radius: radio,
         category: categoria,
         nameFilter: nameFilter.trim(),
         excludes,
-        ...(mode === "cp"
-          ? { cps: cpsGeo.map((c) => c.codigo_postal) }
-          : {}),
       };
       const data = await postJson<SearchResponse>("/api/search", body);
       setPois(data.pois);
@@ -1547,14 +1810,11 @@ export default function SeekerApp({
       setUniversos(data.universos ?? null);
       setAgebsGeo(null);
       setCapaDemografica(false);
-      geocercasRef.current =
-        mode === "cp"
-          ? cpsGeo.map((c) => ({ id: c.codigo_postal, cp: c.codigo_postal }))
-          : centrosActivos.map((c, i) =>
-              mode === "zone"
-                ? { id: c.nombre ?? String(i), viewport: c.viewport }
-                : { id: c.nombre ?? String(i), lat: c.lat, lng: c.lng, radio_m: radio }
-            );
+      geocercasRef.current = centrosActivos.map((c, i) =>
+        mode === "zone"
+          ? { id: c.nombre ?? String(i), viewport: c.viewport }
+          : { id: c.nombre ?? String(i), lat: c.lat, lng: c.lng, radio_m: radio }
+      );
       setTablaColapsada(false);
       const extras: string[] = [];
       if (data.excluidos > 0) extras.push(`${data.excluidos} excluidos`);
@@ -1786,7 +2046,11 @@ export default function SeekerApp({
               ? progresoCenso
                 ? `censo: celda ${progresoCenso.actual} de ${progresoCenso.total}`
                 : "censo de marca por cuadrícula"
-              : `en ${centrosActivos.length} ${centrosActivos.length === 1 ? "centro activo" : "centros activos"}`
+              : mode === "cp"
+                ? progresoCenso
+                  ? `cobertura: celda ${progresoCenso.actual} de ${progresoCenso.total}`
+                  : `dentro de ${cpsGeo.length} ${cpsGeo.length === 1 ? "CP" : "CPs"}`
+                : `en ${centrosActivos.length} ${centrosActivos.length === 1 ? "centro activo" : "centros activos"}`
           }
           glow="glow-cian"
           colorValor="text-white"

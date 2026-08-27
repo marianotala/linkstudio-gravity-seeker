@@ -6,16 +6,40 @@ import type { CpPoligono } from "@/lib/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Resuelve una lista de códigos postales a sus polígonos reales
-// (tabla cp_poligonos, cargada por entidad desde /admin). Un CP
-// inexistente no bloquea a los demás: regresa en noEncontrados con
-// una sugerencia de qué entidad cargar.
+// Operaciones sobre códigos postales (tabla cp_poligonos, cargada
+// por entidad desde /admin):
+//   {cps}          → polígonos reales + no encontrados con sugerencia
+//   {cps, celdas}  → índices de las celdas de cobertura que intersectan
+//                    el polígono real de algún CP (descarta las del
+//                    bounding box que caen fuera, sin gastar llamadas)
+//   {cps, puntos}  → de una lista de puntos, cuáles caen dentro y en
+//                    qué CP (filtro espacial final)
 
 const BodySchema = z.object({
   cps: z
     .array(z.string().regex(/^\d{5}$/, "CP inválido: usa 5 dígitos"))
     .min(1, "Manda al menos un código postal")
     .max(100, "Máximo 100 códigos postales"),
+  celdas: z
+    .array(
+      z.object({
+        lat: z.number().min(-90).max(90),
+        lng: z.number().min(-180).max(180),
+        radio_m: z.number().min(10).max(50000),
+      })
+    )
+    .max(2000, "Máximo 2000 celdas")
+    .optional(),
+  puntos: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(300),
+        lat: z.number().min(-90).max(90),
+        lng: z.number().min(-180).max(180),
+      })
+    )
+    .max(5000, "Máximo 5000 puntos")
+    .optional(),
 });
 
 // Rangos de prefijo postal (2 dígitos) por entidad — SOLO para
@@ -88,6 +112,40 @@ export async function POST(req: Request) {
     );
   }
   const cps = Array.from(new Set(parsed.data.cps));
+
+  // ---- filtro de celdas de cobertura contra el polígono real
+  if (parsed.data.celdas && parsed.data.celdas.length > 0) {
+    const { data, error } = await supabase.rpc("celdas_en_cps", {
+      p_cps: cps,
+      p_celdas: parsed.data.celdas,
+    });
+    if (error) {
+      console.error("celdas_en_cps falló:", error.message);
+      return NextResponse.json(
+        { error: "No se pudieron filtrar las celdas de cobertura" },
+        { status: 502 }
+      );
+    }
+    return NextResponse.json({ indices: (data ?? []) as number[] });
+  }
+
+  // ---- filtro espacial final de puntos
+  if (parsed.data.puntos && parsed.data.puntos.length > 0) {
+    const { data, error } = await supabase.rpc("puntos_en_cps", {
+      p_cps: cps,
+      p_puntos: parsed.data.puntos,
+    });
+    if (error) {
+      console.error("puntos_en_cps falló:", error.message);
+      return NextResponse.json(
+        { error: "No se pudo aplicar el filtro espacial de los CPs" },
+        { status: 502 }
+      );
+    }
+    return NextResponse.json({
+      dentro: (data ?? []) as { id: string; cp: string }[],
+    });
+  }
 
   const { data, error } = await supabase.rpc("buscar_cps", {
     p_cps: cps,

@@ -1387,3 +1387,59 @@ $$;
 
 revoke execute on function public.puntos_en_cps(text[], jsonb) from public, anon;
 grant execute on function public.puntos_en_cps(text[], jsonb) to authenticated;
+
+
+-- ============================================================
+-- MIGRACIÓN FASE 8b — cobertura por celdas en el modo por CP
+-- ============================================================
+
+-- Filtro de celdas de cobertura: de una lista de celdas circulares
+-- [{lat, lng, radio_m}], regresa los ÍNDICES (base 0, en el orden
+-- recibido) de las que intersectan el polígono REAL de alguno de los
+-- CPs pedidos. Las celdas del bounding box que caen fuera del
+-- polígono se descartan aquí, sin gastar llamadas a Google.
+create or replace function public.celdas_en_cps(
+  p_cps text[],
+  p_celdas jsonb
+)
+returns int[]
+language plpgsql
+stable
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v_res int[];
+begin
+  if coalesce(array_length(p_cps, 1), 0) = 0 or array_length(p_cps, 1) > 100 then
+    raise exception 'Manda entre 1 y 100 códigos postales';
+  end if;
+  if coalesce(jsonb_array_length(p_celdas), 0) = 0
+     or jsonb_array_length(p_celdas) > 2000 then
+    raise exception 'Manda entre 1 y 2000 celdas';
+  end if;
+
+  select coalesce(array_agg(idx order by idx), '{}')
+  into v_res
+  from (
+    select (c.ordinality - 1)::int as idx
+    from jsonb_array_elements(p_celdas) with ordinality as c
+    where exists (
+      select 1 from public.cp_poligonos cp
+      where cp.codigo_postal = any(p_cps)
+        and ST_DWithin(
+          cp.geom::geography,
+          ST_SetSRID(ST_MakePoint(
+            (c.value ->> 'lng')::float, (c.value ->> 'lat')::float
+          ), 4326)::geography,
+          least(greatest((c.value ->> 'radio_m')::float, 10), 50000)
+        )
+    )
+  ) t;
+
+  return v_res;
+end;
+$$;
+
+revoke execute on function public.celdas_en_cps(text[], jsonb) from public, anon;
+grant execute on function public.celdas_en_cps(text[], jsonb) to authenticated;
