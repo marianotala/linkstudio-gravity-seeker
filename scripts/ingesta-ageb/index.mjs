@@ -129,9 +129,12 @@ for (const fila of censo.data) {
     entidad: ent,
     municipio: mun,
     pobtot: num(fila.POBTOT),
+    pobfem: num(fila.POBFEM),
+    pobmas: num(fila.POBMAS),
     p_18ymas: num(fila.P_18YMAS),
     p_18a24: num(fila.P_18A24),
     p_60ymas: num(fila.P_60YMAS),
+    pob65_mas: num(fila.POB65_MAS),
     graproes,
     tvivhab,
     vph_autom: vphAutom,
@@ -195,29 +198,32 @@ async function flush() {
   const valores = [];
   const params = [];
   lote.forEach((f, i) => {
-    const base = i * 14;
+    const base = i * 17;
     valores.push(
-      `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},$${base + 9},$${base + 10},$${base + 11},$${base + 12},$${base + 13}, extensions.ST_Multi(extensions.ST_SetSRID(extensions.ST_GeomFromGeoJSON($${base + 14}),4326)))`
+      `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},$${base + 9},$${base + 10},$${base + 11},$${base + 12},$${base + 13},$${base + 14},$${base + 15},$${base + 16}, extensions.ST_Multi(extensions.ST_SetSRID(extensions.ST_GeomFromGeoJSON($${base + 17}),4326)))`
     );
     params.push(
-      f.cvegeo, f.entidad, f.municipio, f.pobtot, f.p_18ymas, f.p_18a24,
-      f.p_60ymas, f.graproes, f.tvivhab, f.vph_autom, f.vph_inter, f.vph_pc,
-      f.nse_proxy, JSON.stringify(f.geometry)
+      f.cvegeo, f.entidad, f.municipio, f.pobtot, f.pobfem, f.pobmas,
+      f.p_18ymas, f.p_18a24, f.p_60ymas, f.pob65_mas, f.graproes, f.tvivhab,
+      f.vph_autom, f.vph_inter, f.vph_pc, f.nse_proxy,
+      JSON.stringify(f.geometry)
     );
   });
   await cliente.query(
     `insert into public.agebs
-      (cvegeo, entidad, municipio, pobtot, p_18ymas, p_18a24, p_60ymas,
-       graproes, tvivhab, vph_autom, vph_inter, vph_pc, nse_proxy, geom)
+      (cvegeo, entidad, municipio, pobtot, pobfem, pobmas, p_18ymas,
+       p_18a24, p_60ymas, pob65_mas, graproes, tvivhab, vph_autom,
+       vph_inter, vph_pc, nse_proxy, geom)
      values ${valores.join(",")}
      on conflict (cvegeo) do update set
        entidad = excluded.entidad, municipio = excluded.municipio,
-       pobtot = excluded.pobtot, p_18ymas = excluded.p_18ymas,
+       pobtot = excluded.pobtot, pobfem = excluded.pobfem,
+       pobmas = excluded.pobmas, p_18ymas = excluded.p_18ymas,
        p_18a24 = excluded.p_18a24, p_60ymas = excluded.p_60ymas,
-       graproes = excluded.graproes, tvivhab = excluded.tvivhab,
-       vph_autom = excluded.vph_autom, vph_inter = excluded.vph_inter,
-       vph_pc = excluded.vph_pc, nse_proxy = excluded.nse_proxy,
-       geom = excluded.geom`,
+       pob65_mas = excluded.pob65_mas, graproes = excluded.graproes,
+       tvivhab = excluded.tvivhab, vph_autom = excluded.vph_autom,
+       vph_inter = excluded.vph_inter, vph_pc = excluded.vph_pc,
+       nse_proxy = excluded.nse_proxy, geom = excluded.geom`,
     params
   );
   cargados += lote.length;
@@ -252,9 +258,12 @@ for (const f of features) {
     entidad: censoAgeb?.entidad ?? cvegeo.slice(0, 2),
     municipio: censoAgeb?.municipio ?? cvegeo.slice(2, 5),
     pobtot: censoAgeb?.pobtot ?? null,
+    pobfem: censoAgeb?.pobfem ?? null,
+    pobmas: censoAgeb?.pobmas ?? null,
     p_18ymas: censoAgeb?.p_18ymas ?? null,
     p_18a24: censoAgeb?.p_18a24 ?? null,
     p_60ymas: censoAgeb?.p_60ymas ?? null,
+    pob65_mas: censoAgeb?.pob65_mas ?? null,
     graproes: censoAgeb?.graproes ?? null,
     tvivhab: censoAgeb?.tvivhab ?? null,
     vph_autom: censoAgeb?.vph_autom ?? null,

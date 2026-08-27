@@ -13,9 +13,12 @@ export interface AgebRegistro {
   entidad: string;
   municipio: string;
   pobtot: number | null;
+  pobfem: number | null;
+  pobmas: number | null;
   p_18ymas: number | null;
   p_18a24: number | null;
   p_60ymas: number | null;
+  pob65_mas: number | null;
   graproes: number | null;
   tvivhab: number | null;
   vph_autom: number | null;
@@ -29,9 +32,12 @@ interface VarsCenso {
   entidad: string;
   municipio: string;
   pobtot: number | null;
+  pobfem: number | null;
+  pobmas: number | null;
   p_18ymas: number | null;
   p_18a24: number | null;
   p_60ymas: number | null;
+  pob65_mas: number | null;
   graproes: number | null;
   tvivhab: number | null;
   vph_autom: number | null;
@@ -146,9 +152,12 @@ export async function parsearCensoInegi(
       entidad: ent,
       municipio: mun,
       pobtot: num(fila.POBTOT),
+      pobfem: num(fila.POBFEM),
+      pobmas: num(fila.POBMAS),
       p_18ymas: num(fila.P_18YMAS),
       p_18a24: num(fila.P_18A24),
       p_60ymas: num(fila.P_60YMAS),
+      pob65_mas: num(fila.POB65_MAS),
       graproes,
       tvivhab,
       vph_autom: vphAutom,
@@ -306,9 +315,12 @@ export function construirAgebs(
       entidad: vars?.entidad ?? cvegeo.slice(0, 2),
       municipio: vars?.municipio ?? cvegeo.slice(2, 5),
       pobtot: vars?.pobtot ?? null,
+      pobfem: vars?.pobfem ?? null,
+      pobmas: vars?.pobmas ?? null,
       p_18ymas: vars?.p_18ymas ?? null,
       p_18a24: vars?.p_18a24 ?? null,
       p_60ymas: vars?.p_60ymas ?? null,
+      pob65_mas: vars?.pob65_mas ?? null,
       graproes: vars?.graproes ?? null,
       tvivhab: vars?.tvivhab ?? null,
       vph_autom: vars?.vph_autom ?? null,

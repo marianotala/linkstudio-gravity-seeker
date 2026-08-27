@@ -145,6 +145,9 @@ export interface Universos {
     poblacion: number;
     adultos18: number;
     viviendas: number;
+    /** Población por sexo (interpolada); null si la entidad se cargó sin estas variables. */
+    pobfem?: number | null;
+    pobmas?: number | null;
   };
   /** Estimado: 18+ × factor smartphone × factor match. */
   direccionable?: {
@@ -157,8 +160,32 @@ export interface Universos {
     nseProxy: number | null;
     pct18a24: number | null;
     pct60ymas: number | null;
+    /**
+     * Rangos de edad como % del universo 18+. INEGI no publica cortes
+     * adultos 25-34/35-44/45-54/55-64 a nivel AGEB: los rangos reales
+     * son 18-24, 25-59 (derivado), 60-64 y 65+ (con POB65_MAS);
+     * pct60ymas es el respaldo cuando la entidad no trae POB65_MAS.
+     */
+    edades?: {
+      pct18a24: number;
+      pct25a59: number;
+      pct60a64: number | null;
+      pct65ymas: number | null;
+      pct60ymas: number;
+    } | null;
+    /** Distribución % por nivel tipo NSE (proxy censal, NO AMAI), ponderada por población. Cortes en lib/nse.ts. */
+    nseDist?: {
+      ab: number;
+      c_mas: number;
+      c: number;
+      c_menos: number;
+      d_mas: number;
+      de: number;
+    } | null;
   };
   porGeocerca?: UniversoPorGeocerca[];
+  /** Detalle por AGEB (población interpolada dentro de la zona, máx 300). */
+  porAgeb?: { cvegeo: string; poblacion: number; nse_proxy: number | null }[];
   /** Solo cuando se pide la capa demográfica. */
   agebsGeo?: AgebGeo[];
 }

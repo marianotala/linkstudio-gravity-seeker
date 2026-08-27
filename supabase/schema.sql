@@ -878,3 +878,307 @@ end;
 $$;
 
 revoke execute on function public.handle_new_user() from public, anon, authenticated;
+
+
+-- ============================================================
+-- MIGRACIÓN FASE 7 — perfil demográfico ampliado
+-- (sexo, 65+, distribución NSE por nivel y tabla por AGEB)
+-- ============================================================
+
+-- Nuevas variables del RESAGEBURB: POBFEM, POBMAS y POB65_MAS.
+-- Nota: INEGI NO publica rangos adultos 25-34/35-44/45-54/55-64 a
+-- nivel AGEB; los rangos reales disponibles son 18-24 (P_18A24),
+-- 60+ (P_60YMAS) y 65+ (POB65_MAS) — 25-59 y 60-64 se derivan.
+alter table public.agebs add column if not exists pobfem int;
+alter table public.agebs add column if not exists pobmas int;
+alter table public.agebs add column if not exists pob65_mas int;
+
+-- admin_upsert_agebs con las variables nuevas
+create or replace function public.admin_upsert_agebs(p_agebs jsonb)
+returns int
+language plpgsql
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v_n int;
+begin
+  if coalesce(jsonb_array_length(p_agebs), 0) = 0
+     or jsonb_array_length(p_agebs) > 300 then
+    raise exception 'Lote inválido: manda entre 1 y 300 AGEBs';
+  end if;
+
+  insert into public.agebs
+    (cvegeo, entidad, municipio, pobtot, pobfem, pobmas, p_18ymas,
+     p_18a24, p_60ymas, pob65_mas, graproes, tvivhab, vph_autom,
+     vph_inter, vph_pc, nse_proxy, geom)
+  select
+    r ->> 'cvegeo',
+    r ->> 'entidad',
+    r ->> 'municipio',
+    (r ->> 'pobtot')::int,
+    (r ->> 'pobfem')::int,
+    (r ->> 'pobmas')::int,
+    (r ->> 'p_18ymas')::int,
+    (r ->> 'p_18a24')::int,
+    (r ->> 'p_60ymas')::int,
+    (r ->> 'pob65_mas')::int,
+    (r ->> 'graproes')::numeric,
+    (r ->> 'tvivhab')::int,
+    (r ->> 'vph_autom')::int,
+    (r ->> 'vph_inter')::int,
+    (r ->> 'vph_pc')::int,
+    (r ->> 'nse_proxy')::numeric,
+    ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(r -> 'geometria'), 4326))
+  from jsonb_array_elements(p_agebs) as r
+  on conflict (cvegeo) do update set
+    entidad = excluded.entidad, municipio = excluded.municipio,
+    pobtot = excluded.pobtot, pobfem = excluded.pobfem,
+    pobmas = excluded.pobmas, p_18ymas = excluded.p_18ymas,
+    p_18a24 = excluded.p_18a24, p_60ymas = excluded.p_60ymas,
+    pob65_mas = excluded.pob65_mas, graproes = excluded.graproes,
+    tvivhab = excluded.tvivhab, vph_autom = excluded.vph_autom,
+    vph_inter = excluded.vph_inter, vph_pc = excluded.vph_pc,
+    nse_proxy = excluded.nse_proxy, geom = excluded.geom;
+
+  get diagnostics v_n = row_count;
+  return v_n;
+end;
+$$;
+
+revoke execute on function public.admin_upsert_agebs(jsonb) from public, anon;
+grant execute on function public.admin_upsert_agebs(jsonb) to authenticated;
+
+-- calcular_universos ampliado. Agrega a `total`:
+--   pobfem/pobmas          población por sexo (interpolada)
+--   edades                 % del universo 18+ por rango REAL del censo:
+--                          18-24, 25-59 (derivado), 60-64 (derivado,
+--                          solo si hay POB65_MAS) y 65+; pct_60ymas
+--                          como respaldo para datos sin POB65_MAS
+--   nse_dist               distribución % por nivel tipo NSE ponderada
+--                          por población del AGEB (proxy censal, NO
+--                          AMAI). Cortes heurísticos — espejo de
+--                          lib/nse.ts, cambiar en ambos lados:
+--                          AB ≥75 · C+ 65 · C 55 · C- 45 · D+ 35 · DE <35
+-- y al nivel raíz `por_ageb`: hasta 300 AGEBs (cvegeo, población
+-- interpolada, nse_proxy) para la tabla de detalle.
+create or replace function public.calcular_universos(
+  p_geocercas jsonb,
+  p_incluir_agebs boolean default false
+)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v_n int;
+  v_total jsonb;
+  v_por jsonb := '[]'::jsonb;
+  v_por_ageb jsonb := '[]'::jsonb;
+  v_agebs jsonb := null;
+  v_count_agebs int;
+begin
+  v_n := coalesce(jsonb_array_length(p_geocercas), 0);
+  if v_n = 0 or v_n > 2000 then
+    return jsonb_build_object('disponible', false, 'motivo', 'geocercas_invalidas');
+  end if;
+
+  with gc as (
+    select
+      coalesce(g.value->>'id', g.ordinality::text) as gid,
+      case
+        when g.value ? 'viewport' then ST_MakeEnvelope(
+          (g.value->'viewport'->>'west')::float,
+          (g.value->'viewport'->>'south')::float,
+          (g.value->'viewport'->>'east')::float,
+          (g.value->'viewport'->>'north')::float, 4326)
+        else (ST_Buffer(
+          ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+          least(greatest((g.value->>'radio_m')::float, 10), 100000)
+        ))::geometry
+      end as geom
+    from jsonb_array_elements(p_geocercas) with ordinality as g
+  ),
+  un as (select ST_Union(geom) as geom from gc),
+  inter as (
+    select a.cvegeo, a.pobtot, a.pobfem, a.pobmas, a.p_18ymas, a.p_18a24,
+           a.p_60ymas, a.pob65_mas, a.tvivhab, a.nse_proxy,
+           ST_Area(ST_Intersection(a.geom, un.geom)::geography)
+             / nullif(ST_Area(a.geom::geography), 0) as frac
+    from public.agebs a, un
+    where un.geom is not null and a.geom && un.geom and ST_Intersects(a.geom, un.geom)
+  ),
+  agg as (
+    select
+      count(*) as n,
+      round(coalesce(sum(pobtot * frac), 0))::int as poblacion,
+      round(coalesce(sum(p_18ymas * frac), 0))::int as adultos18,
+      round(coalesce(sum(tvivhab * frac), 0))::int as viviendas,
+      round(sum(pobfem * frac))::int as pobfem,
+      round(sum(pobmas * frac))::int as pobmas,
+      round((sum(nse_proxy * coalesce(pobtot,0) * frac)
+        / nullif(sum(case when nse_proxy is not null then coalesce(pobtot,0) * frac end), 0))::numeric, 1) as nse_proxy,
+      round((100.0 * sum(p_18a24 * frac) / nullif(sum(pobtot * frac), 0))::numeric, 1) as pct_18a24,
+      round((100.0 * sum(p_60ymas * frac) / nullif(sum(pobtot * frac), 0))::numeric, 1) as pct_60ymas,
+      -- rangos de edad como % del universo 18+
+      nullif(sum(p_18ymas * frac), 0) as base18,
+      sum(p_18a24 * frac) as n_18a24,
+      sum(greatest(coalesce(p_18ymas,0) - coalesce(p_18a24,0) - coalesce(p_60ymas,0), 0) * frac) as n_25a59,
+      sum(p_60ymas * frac) as n_60ymas,
+      sum(pob65_mas * frac) as n_65ymas,
+      sum(greatest(coalesce(p_60ymas,0) - coalesce(pob65_mas,0), 0) * frac)
+        filter (where pob65_mas is not null) as n_60a64,
+      -- distribución NSE ponderada por población (solo AGEBs con índice)
+      nullif(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy is not null), 0) as w_nse,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 75), 0) as w_ab,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 65 and nse_proxy < 75), 0) as w_cmas,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 55 and nse_proxy < 65), 0) as w_c,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 45 and nse_proxy < 55), 0) as w_cmenos,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 35 and nse_proxy < 45), 0) as w_dmas,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy < 35), 0) as w_de
+    from inter where frac > 0
+  )
+  select n, jsonb_build_object(
+    'poblacion', poblacion,
+    'adultos18', adultos18,
+    'viviendas', viviendas,
+    'pobfem', pobfem,
+    'pobmas', pobmas,
+    'nse_proxy', nse_proxy,
+    'pct_18a24', pct_18a24,
+    'pct_60ymas', pct_60ymas,
+    'edades', case when base18 is not null then jsonb_build_object(
+      'pct_18a24', round((100.0 * coalesce(n_18a24, 0) / base18)::numeric, 1),
+      'pct_25a59', round((100.0 * coalesce(n_25a59, 0) / base18)::numeric, 1),
+      'pct_60a64', case when n_65ymas is not null
+        then round((100.0 * coalesce(n_60a64, 0) / base18)::numeric, 1) end,
+      'pct_65ymas', case when n_65ymas is not null
+        then round((100.0 * n_65ymas / base18)::numeric, 1) end,
+      'pct_60ymas', round((100.0 * coalesce(n_60ymas, 0) / base18)::numeric, 1)
+    ) end,
+    'nse_dist', case when w_nse is not null then jsonb_build_object(
+      'ab', round((100.0 * w_ab / w_nse)::numeric, 1),
+      'c_mas', round((100.0 * w_cmas / w_nse)::numeric, 1),
+      'c', round((100.0 * w_c / w_nse)::numeric, 1),
+      'c_menos', round((100.0 * w_cmenos / w_nse)::numeric, 1),
+      'd_mas', round((100.0 * w_dmas / w_nse)::numeric, 1),
+      'de', round((100.0 * w_de / w_nse)::numeric, 1)
+    ) end
+  )
+  into v_count_agebs, v_total
+  from agg;
+
+  if coalesce(v_count_agebs, 0) = 0 then
+    return jsonb_build_object('disponible', false, 'motivo', 'sin_agebs');
+  end if;
+
+  -- tabla de detalle por AGEB (población interpolada dentro de la zona)
+  with gc as (
+    select case
+      when g.value ? 'viewport' then ST_MakeEnvelope(
+        (g.value->'viewport'->>'west')::float,
+        (g.value->'viewport'->>'south')::float,
+        (g.value->'viewport'->>'east')::float,
+        (g.value->'viewport'->>'north')::float, 4326)
+      else (ST_Buffer(
+        ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+        least(greatest((g.value->>'radio_m')::float, 10), 100000)
+      ))::geometry
+    end as geom
+    from jsonb_array_elements(p_geocercas) with ordinality as g
+  ),
+  un as (select ST_Union(geom) as geom from gc),
+  filas as (
+    select a.cvegeo,
+      round(coalesce(a.pobtot, 0) * ST_Area(ST_Intersection(a.geom, un.geom)::geography)
+        / nullif(ST_Area(a.geom::geography), 0))::int as poblacion,
+      a.nse_proxy
+    from public.agebs a, un
+    where un.geom is not null and a.geom && un.geom and ST_Intersects(a.geom, un.geom)
+    order by 2 desc nulls last
+    limit 300
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'cvegeo', cvegeo, 'poblacion', poblacion, 'nse_proxy', nse_proxy
+  )), '[]'::jsonb)
+  into v_por_ageb from filas;
+
+  if v_n <= 200 then
+    with gc as (
+      select
+        coalesce(g.value->>'id', g.ordinality::text) as gid,
+        g.ordinality as orden,
+        case
+          when g.value ? 'viewport' then ST_MakeEnvelope(
+            (g.value->'viewport'->>'west')::float,
+            (g.value->'viewport'->>'south')::float,
+            (g.value->'viewport'->>'east')::float,
+            (g.value->'viewport'->>'north')::float, 4326)
+          else (ST_Buffer(
+            ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+            least(greatest((g.value->>'radio_m')::float, 10), 100000)
+          ))::geometry
+        end as geom
+      from jsonb_array_elements(p_geocercas) with ordinality as g
+    ),
+    porg as (
+      select gc.gid, gc.orden,
+        round(coalesce(sum(a.pobtot * ST_Area(ST_Intersection(a.geom, gc.geom)::geography) / nullif(ST_Area(a.geom::geography),0)), 0))::int as poblacion,
+        round(coalesce(sum(a.p_18ymas * ST_Area(ST_Intersection(a.geom, gc.geom)::geography) / nullif(ST_Area(a.geom::geography),0)), 0))::int as adultos18,
+        round((sum(a.nse_proxy * coalesce(a.pobtot,0) * ST_Area(ST_Intersection(a.geom, gc.geom)::geography) / nullif(ST_Area(a.geom::geography),0))
+          / nullif(sum(case when a.nse_proxy is not null then coalesce(a.pobtot,0) * ST_Area(ST_Intersection(a.geom, gc.geom)::geography) / nullif(ST_Area(a.geom::geography),0) end), 0))::numeric, 1) as nse_proxy
+      from gc
+      left join public.agebs a on a.geom && gc.geom and ST_Intersects(a.geom, gc.geom)
+      group by gc.gid, gc.orden
+    )
+    select coalesce(jsonb_agg(jsonb_build_object(
+      'id', gid, 'poblacion', poblacion, 'adultos18', adultos18, 'nse_proxy', nse_proxy
+    ) order by orden), '[]'::jsonb)
+    into v_por from porg;
+  end if;
+
+  if p_incluir_agebs then
+    with gc as (
+      select case
+        when g.value ? 'viewport' then ST_MakeEnvelope(
+          (g.value->'viewport'->>'west')::float,
+          (g.value->'viewport'->>'south')::float,
+          (g.value->'viewport'->>'east')::float,
+          (g.value->'viewport'->>'north')::float, 4326)
+        else (ST_Buffer(
+          ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+          least(greatest((g.value->>'radio_m')::float, 10), 100000)
+        ))::geometry
+      end as geom
+      from jsonb_array_elements(p_geocercas) with ordinality as g
+    ),
+    un as (select ST_Union(geom) as geom from gc),
+    sel as (
+      select a.cvegeo, a.pobtot, a.nse_proxy, a.geom
+      from public.agebs a, un
+      where a.geom && un.geom and ST_Intersects(a.geom, un.geom)
+      order by a.pobtot desc nulls last
+      limit 1500
+    )
+    select jsonb_agg(jsonb_build_object(
+      'cvegeo', cvegeo, 'pobtot', pobtot, 'nse_proxy', nse_proxy,
+      'geometria', ST_AsGeoJSON(geom, 5)::jsonb
+    ))
+    into v_agebs from sel;
+  end if;
+
+  return jsonb_build_object(
+    'disponible', true,
+    'agebs', v_count_agebs,
+    'total', v_total,
+    'por_geocerca', v_por,
+    'por_ageb', v_por_ageb,
+    'agebs_geo', v_agebs
+  );
+end;
+$$;
+
+revoke execute on function public.calcular_universos(jsonb, boolean) from public, anon;
+grant execute on function public.calcular_universos(jsonb, boolean) to authenticated;

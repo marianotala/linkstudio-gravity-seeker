@@ -29,9 +29,28 @@ interface RpcUniversos {
     poblacion: number;
     adultos18: number;
     viviendas: number;
+    pobfem: number | null;
+    pobmas: number | null;
     nse_proxy: number | null;
     pct_18a24: number | null;
     pct_60ymas: number | null;
+    /** % del universo 18+ por rango real del censo (ver lib/types.ts). */
+    edades: {
+      pct_18a24: number;
+      pct_25a59: number;
+      pct_60a64: number | null;
+      pct_65ymas: number | null;
+      pct_60ymas: number;
+    } | null;
+    /** Distribución por nivel tipo NSE, ponderada por población. */
+    nse_dist: {
+      ab: number;
+      c_mas: number;
+      c: number;
+      c_menos: number;
+      d_mas: number;
+      de: number;
+    } | null;
   };
   por_geocerca?: {
     id: string;
@@ -39,6 +58,7 @@ interface RpcUniversos {
     adultos18: number;
     nse_proxy: number | null;
   }[];
+  por_ageb?: { cvegeo: string; poblacion: number; nse_proxy: number | null }[];
   agebs_geo?: Universos["agebsGeo"];
 }
 
@@ -76,6 +96,8 @@ export async function calcularUniversos(
         poblacion: r.total.poblacion,
         adultos18: r.total.adultos18,
         viviendas: r.total.viviendas,
+        pobfem: r.total.pobfem ?? null,
+        pobmas: r.total.pobmas ?? null,
       },
       direccionable: {
         dispositivos: Math.round(
@@ -88,8 +110,19 @@ export async function calcularUniversos(
         nseProxy: r.total.nse_proxy,
         pct18a24: r.total.pct_18a24,
         pct60ymas: r.total.pct_60ymas,
+        edades: r.total.edades
+          ? {
+              pct18a24: r.total.edades.pct_18a24,
+              pct25a59: r.total.edades.pct_25a59,
+              pct60a64: r.total.edades.pct_60a64,
+              pct65ymas: r.total.edades.pct_65ymas,
+              pct60ymas: r.total.edades.pct_60ymas,
+            }
+          : null,
+        nseDist: r.total.nse_dist ?? null,
       },
       porGeocerca: r.por_geocerca ?? [],
+      porAgeb: r.por_ageb ?? [],
       agebsGeo: r.agebs_geo ?? undefined,
     };
   } catch (e) {

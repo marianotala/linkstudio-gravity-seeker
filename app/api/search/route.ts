@@ -323,7 +323,11 @@ export async function POST(req: Request) {
         {
           p_mode: mode,
           p_params: paramsGuardados,
-          p_universos: universos ?? null,
+          // sin porAgeb ni agebsGeo: son detalle de sesión (hasta 300
+          // filas / geometrías), no se persisten en el historial
+          p_universos: universos
+            ? { ...universos, porAgeb: undefined, agebsGeo: undefined }
+            : null,
           p_results: pois.map((p) => ({
             name: p.nombre,
             category: etiquetaCategoria,

@@ -73,7 +73,10 @@ export async function POST(req: Request) {
     p_fuente: fuente,
     p_params: params,
     p_pois: pois,
-    p_universos: universos ?? null,
+    // sin detalle por AGEB ni geometrías en la biblioteca
+    p_universos: universos
+      ? { ...universos, porAgeb: undefined, agebsGeo: undefined }
+      : null,
   });
   if (error) {
     console.error("No se pudo guardar el censo:", error.message);
