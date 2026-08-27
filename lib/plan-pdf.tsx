@@ -28,6 +28,12 @@ import type { Poi, SearchMode, Universos } from "./types";
 import { NIVELES_NSE } from "./nse";
 import { rangosEdadEstandar } from "./edades";
 import { normalizarComparable } from "./geo";
+import {
+  CLAVES_TACTICAS,
+  TACTICAS,
+  tacticasParaModo,
+  type TacticaClave,
+} from "./tacticas";
 
 // ------------------------------------------------------------------
 // Datos que el plan necesita del análisis activo
@@ -58,6 +64,12 @@ export interface PlanDatos {
   exclusiones: string[];
   /** Censo de competencia (activa Geo-Fence Conquista). */
   esCompetencia?: boolean;
+  /**
+   * Tácticas seleccionadas por el vendedor en Seeker (claves). Van
+   * primero y destacadas; las demás en tarjeta estándar. [] = las 7
+   * estándar sin destacados; undefined/null = default por modo.
+   */
+  tacticas?: TacticaClave[] | null;
   /**
    * Capas de categoría (multi-búsqueda sobre la misma geografía).
    * Con 2+, el plan muestra el universo UNA vez (es del territorio) y
@@ -325,24 +337,61 @@ function BarraApilada({ titulo, segmentos, width }: { titulo: string; segmentos:
   );
 }
 
-/** Pill de táctica con borde de gradiente (lámina de tácticas del deck). */
-function PillTactica({ nombre, descriptor }: { nombre: string; descriptor: string }) {
+/** Alto de la pill de táctica (lo comparte estimarAltura). */
+const ALTO_PILL = 72;
+
+/**
+ * Pill de táctica (lámina de tácticas del deck). Las SELECCIONADAS por
+ * el vendedor llevan borde de gradiente intenso magenta→violeta→cian y
+ * la etiqueta "Recomendada para este territorio"; el resto, tarjeta
+ * estándar con borde sutil.
+ */
+function PillTactica({
+  clave,
+  nombre,
+  descriptor,
+  destacada,
+}: {
+  clave: string;
+  nombre: string;
+  descriptor: string;
+  destacada: boolean;
+}) {
   const W = (CONT - 16) / 2;
-  const H = 66;
+  const H = ALTO_PILL;
+  // id de gradiente ÚNICO por pill: los ids duplicados entre varios
+  // <Svg> del mismo documento hacen que react-pdf no pinte el borde
+  const gradId = `pill-${clave}`;
   return (
     <View style={{ width: W, height: H, marginBottom: 16 }}>
       <Svg width={W} height={H} style={{ position: "absolute", top: 0, left: 0 }}>
         <Defs>
-          <LinearGradient id="pill" x1="0" y1="0" x2="1" y2="0">
+          <LinearGradient id={gradId} x1="0" y1="0" x2="1" y2="0">
             <Stop offset="0" stopColor={MAGENTA} />
             <Stop offset="0.5" stopColor={VIOLETA} />
             <Stop offset="1" stopColor={CIAN} />
           </LinearGradient>
         </Defs>
-        <Rect x={0.8} y={0.8} width={W - 1.6} height={H - 1.6} rx={12} fill={PANEL} stroke="url(#pill)" strokeWidth={1.2} />
+        {destacada ? (
+          // react-pdf no pinta strokes con gradiente: el borde intenso
+          // se simula con un rect de gradiente y el panel encima (2px)
+          <>
+            <Rect x={0} y={0} width={W} height={H} rx={13} fill={`url(#${gradId})`} />
+            <Rect x={2} y={2} width={W - 4} height={H - 4} rx={11} fill={PANEL} />
+          </>
+        ) : (
+          <Rect x={0.6} y={0.6} width={W - 1.2} height={H - 1.2} rx={12} fill={PANEL} stroke={LINEA} strokeWidth={1} />
+        )}
       </Svg>
-      <View style={{ paddingTop: 13, paddingLeft: 18, paddingRight: 18 }}>
-        <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 13, color: BLANCO }}>
+      <View style={{ paddingTop: destacada ? 10 : 16, paddingLeft: 18, paddingRight: 18 }}>
+        {destacada && (
+          <Text
+            style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 6.5, letterSpacing: 1.4, color: MAGENTA, marginBottom: 4 }}
+          >
+            RECOMENDADA PARA ESTE TERRITORIO
+          </Text>
+        )}
+        <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 13, color: destacada ? BLANCO : TINTA }}>
           {nombre}
         </Text>
         <Text style={{ fontFamily: "Inter", fontSize: 9, color: GRIS, marginTop: 4 }}>
@@ -357,43 +406,17 @@ function PillTactica({ nombre, descriptor }: { nombre: string; descriptor: strin
 // Lógica de contenido
 // ------------------------------------------------------------------
 
-const TACTICAS = {
-  poi: { nombre: "Geo-Fence POI", descriptor: "Quién visita lugares clave" },
-  conquista: { nombre: "Geo-Fence Conquista", descriptor: "Quién visita a tu competencia" },
-  proximidad: { nombre: "Geo-Fence Proximidad", descriptor: "Quién está cerca ahora" },
-  trade: { nombre: "Geo-Trade Area", descriptor: "Dónde están tus próximos clientes" },
-  targeting: { nombre: "Geo-Targeting", descriptor: "Quién vive y busca en el territorio" },
-  pdooh: { nombre: "Geo-PDOOH", descriptor: "El exterior, ahora medible" },
-  audiencias: { nombre: "Geo-Audiencias", descriptor: "Marcas sin punto de venta" },
-};
-
-/** Tácticas según el modo del análisis (3-4 máximo, las más relevantes). */
-export function tacticasParaModo(
-  modo: SearchMode,
-  esCompetencia: boolean,
-  multiCapa = false
-) {
-  // varias categorías censadas → activación multi-categoría del
-  // territorio: Geo-Fence POI + Geo-Targeting encabezan el set
-  if (multiCapa) {
-    return modo === "cp"
-      ? [TACTICAS.poi, TACTICAS.targeting, TACTICAS.pdooh]
-      : [TACTICAS.poi, TACTICAS.targeting, TACTICAS.trade];
-  }
-  switch (modo) {
-    case "census":
-      return esCompetencia
-        ? [TACTICAS.conquista, TACTICAS.poi, TACTICAS.trade, TACTICAS.proximidad]
-        : [TACTICAS.poi, TACTICAS.trade, TACTICAS.proximidad];
-    case "cp":
-      return [TACTICAS.targeting, TACTICAS.pdooh, TACTICAS.poi];
-    case "territorial":
-      return [TACTICAS.audiencias, TACTICAS.poi, TACTICAS.targeting];
-    case "zone":
-      return [TACTICAS.targeting, TACTICAS.poi, TACTICAS.trade];
-    default:
-      return [TACTICAS.poi, TACTICAS.proximidad, TACTICAS.trade];
-  }
+/**
+ * Las 7 tácticas SIEMPRE aparecen en el PDF: las seleccionadas por el
+ * vendedor (o el default por modo) van primero y destacadas; el resto
+ * después en tarjeta estándar.
+ */
+function ordenarTacticas(seleccion: TacticaClave[]) {
+  const sel = new Set(seleccion);
+  return [
+    ...CLAVES_TACTICAS.filter((c) => sel.has(c)),
+    ...CLAVES_TACTICAS.filter((c) => !sel.has(c)),
+  ].map((clave) => ({ clave, ...TACTICAS[clave], destacada: sel.has(clave) }));
 }
 
 function segmentosNse(u: Universos | null): Segmento[] | null {
@@ -590,7 +613,6 @@ function estimarAltura(d: PlanDatos, titulo: string): number {
   const capas = d.capas && d.capas.length > 1 ? d.capas : null;
   const nHallazgos = hallazgos(d).length;
   const porGeocerca = (u?.porGeocerca ?? []).filter((g) => g.poblacion > 0).slice(0, 8);
-  const tacticas = tacticasParaModo(d.modo, d.esCompetencia ?? false, !!capas);
 
   const lineasTitulo = Math.max(1, Math.ceil(titulo.length / 42));
   let h = MARGEN; // padding superior
@@ -625,9 +647,11 @@ function estimarAltura(d: PlanDatos, titulo: string): number {
   const colIzq = porGeocerca.length > 1 ? 26 + porGeocerca.length * 17 : 0;
   const colDer = nHallazgos > 0 ? 26 + nHallazgos * 52 : 0;
   if (colIzq || colDer) h += Math.max(colIzq, colDer) + 26; // bloque 4b
-  h += 66 + Math.max(120, 30 + d.fuentes.length * 14) + 20; // bloque 5a metodología
-  h += 52 + Math.ceil(tacticas.length / 2) * 82 + 10; // bloque 5b tácticas
-  h += 200 + 66; // bloque 6 cierre + footer
+  // bloque 5 siguientes pasos: SIEMPRE las 7 tácticas + línea de cierre
+  h += 52 + Math.ceil(CLAVES_TACTICAS.length / 2) * (ALTO_PILL + 16) + 30;
+  h += 200; // bloque 6 cierre comercial + footer (en flujo)
+  // bloque 7 metodología discreta (anexo técnico, al final)
+  h += 46 + Math.max(84, 26 + d.fuentes.length * 13) + 2;
   return Math.ceil(h + 70); // margen de seguridad
 }
 
@@ -648,7 +672,11 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
   const nse = segmentosNse(u);
   const edades = segmentosEdades(u);
   const capasDoc = d.capas && d.capas.length > 1 ? d.capas : null;
-  const tacticas = tacticasParaModo(d.modo, d.esCompetencia ?? false, !!capasDoc);
+  // tácticas: la selección del vendedor manda; sin selección explícita
+  // se destacan las del mapeo por modo; [] = ninguna destacada
+  const tacticas = ordenarTacticas(
+    d.tacticas ?? tacticasParaModo(d.modo, d.esCompetencia ?? false, !!capasDoc)
+  );
   // una sección de resultados por capa; sin capas, una sola tabla
   const seccionesResultados = capasDoc
     ? capasDoc.map((c) => ({
@@ -1027,53 +1055,27 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
           <Divisor />
         </View>
 
-        {/* ---------- bloque 5 · metodología + tácticas ---------- */}
-        <Seccion etiqueta="Metodología" titulo="Cómo se construyó este análisis" />
-        <View style={{ flexDirection: "row", marginBottom: 22 }}>
-          <View style={{ flex: 1, paddingRight: 24 }}>
-            <Text style={labelCol}>FUENTES DE DATOS</Text>
-            {d.fuentes.map((f) => (
-              <Text key={f} style={{ fontFamily: "Inter", fontSize: 8.5, color: TINTA, marginBottom: 4, lineHeight: 1.4 }}>
-                · {f}
-              </Text>
-            ))}
-            <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, lineHeight: 1.5, marginTop: 8 }}>
-              Georreferenciación en lat/long WGS84 (EPSG:4326). Levantamiento
-              del {fechaLarga} con Seeker. Deduplicación por identificador de
-              lugar{d.exclusiones.length > 0 ? `; exclusiones: ${d.exclusiones.join(", ")}` : ""}.
-            </Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={labelCol}>UNIVERSOS DEMOGRÁFICOS</Text>
-            <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: TINTA, lineHeight: 1.5 }}>
-              {hayRural
-                ? "Población urbana por interpolación areal de AGEBs (Censo 2020 INEGI) + población rural por localidad puntual (ITER 2020, localidades <2,500 hab)"
-                : "Población por interpolación areal sobre AGEBs urbanas del Censo 2020 (INEGI)"}
-              , contra la unión de geometrías del análisis
-              {d.criterio ? ` (${d.criterio})` : ""}
-              {d.radioM ? `, radio de ${d.radioM >= 1000 ? `${d.radioM / 1000} km` : `${d.radioM} m`}` : ""}.
-              Universo alcanzable: adultos 18+ con smartphone alcanzables por
-              publicidad digital.
-            </Text>
-            <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, lineHeight: 1.5, marginTop: 8 }}>
-              El índice socioeconómico es un proxy censal (escolaridad,
-              vehículos e internet por vivienda); no es NSE AMAI
-              {hayRural ? " y considera solo la población urbana (el ITER no trae sus variables)" : ""}.
-              Los rangos de edad 25-64 se estiman con estructura nacional del
-              Censo 2020.
-            </Text>
-          </View>
-        </View>
-
+        {/* ---------- bloque 5 · siguientes pasos (las 7 tácticas) ----------
+            SIEMPRE las 7: las seleccionadas por el vendedor primero y
+            destacadas; las demás en tarjeta estándar */}
         <Seccion etiqueta="Siguientes pasos" titulo="Qué se puede activar sobre este territorio" />
         <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" }}>
           {tacticas.map((t) => (
-            <PillTactica key={t.nombre} nombre={t.nombre} descriptor={t.descriptor} />
+            <PillTactica
+              key={t.clave}
+              clave={t.clave}
+              nombre={t.nombre}
+              descriptor={t.descriptor}
+              destacada={t.destacada}
+            />
           ))}
         </View>
+        <Text style={{ fontFamily: "Inter", fontSize: 10, color: TINTA, marginTop: 2 }}>
+          El equipo de Gravity arma el plan de medios sobre este territorio.
+        </Text>
 
-        {/* ---------- bloque 6 · cierre ---------- */}
-        <View style={{ position: "absolute", bottom: MARGEN, left: MARGEN, width: CONT }}>
+        {/* ---------- bloque 6 · cierre comercial ---------- */}
+        <View style={{ width: CONT, marginTop: 34 }}>
           <View style={{ alignItems: "center", marginBottom: 26, position: "relative" }}>
             <Neon height={110} />
             <View style={{ flexDirection: "row", alignItems: "center", marginTop: 10 }}>
@@ -1098,6 +1100,53 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
             </View>
           </View>
           <FooterTresCol fecha={fechaLarga} />
+        </View>
+
+        {/* ---------- bloque 7 · metodología (anexo técnico, al final) ----------
+            el documento cierra en tono comercial; esto es el respaldo,
+            en tipografía discreta */}
+        <View style={{ marginTop: 26, marginBottom: 12 }}>
+          <Divisor />
+        </View>
+        <Text
+          style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 7.5, letterSpacing: 2.2, color: GRIS_OSCURO, marginBottom: 10 }}
+        >
+          METODOLOGÍA · RESPALDO TÉCNICO
+        </Text>
+        <View style={{ flexDirection: "row" }}>
+          <View style={{ flex: 1, paddingRight: 24 }}>
+            <Text style={[labelCol, { fontSize: 6.5, marginBottom: 6 }]}>FUENTES DE DATOS</Text>
+            {d.fuentes.map((f) => (
+              <Text key={f} style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS, marginBottom: 3, lineHeight: 1.4 }}>
+                · {f}
+              </Text>
+            ))}
+            <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
+              Georreferenciación en lat/long WGS84 (EPSG:4326). Levantamiento
+              del {fechaLarga} con Seeker. Deduplicación por identificador de
+              lugar{d.exclusiones.length > 0 ? `; exclusiones: ${d.exclusiones.join(", ")}` : ""}.
+            </Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[labelCol, { fontSize: 6.5, marginBottom: 6 }]}>UNIVERSOS DEMOGRÁFICOS</Text>
+            <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS, lineHeight: 1.5 }}>
+              {hayRural
+                ? "Población urbana por interpolación areal de AGEBs (Censo 2020 INEGI) + población rural por localidad puntual (ITER 2020, localidades <2,500 hab)"
+                : "Población por interpolación areal sobre AGEBs urbanas del Censo 2020 (INEGI)"}
+              , contra la unión de geometrías del análisis
+              {d.criterio ? ` (${d.criterio})` : ""}
+              {d.radioM ? `, radio de ${d.radioM >= 1000 ? `${d.radioM / 1000} km` : `${d.radioM} m`}` : ""}.
+              Universo alcanzable: adultos 18+ con smartphone alcanzables por
+              publicidad digital.
+            </Text>
+            <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
+              El índice socioeconómico es un proxy censal (escolaridad,
+              vehículos e internet por vivienda); no es NSE AMAI
+              {hayRural ? " y considera solo la población urbana (el ITER no trae sus variables)" : ""}.
+              Los rangos de edad 25-64 se estiman con estructura nacional del
+              Censo 2020.
+            </Text>
+          </View>
         </View>
       </Page>
     </Document>

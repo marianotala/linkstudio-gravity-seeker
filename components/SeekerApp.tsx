@@ -21,6 +21,12 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { DIAS_AMARILLO, frescuraCenso } from "@/lib/censos";
 import {
+  CLAVES_TACTICAS,
+  TACTICAS,
+  tacticasParaModo,
+  type TacticaClave,
+} from "@/lib/tacticas";
+import {
   extraerCps,
   parsearArchivo,
   parsearArchivoCps,
@@ -452,6 +458,10 @@ export default function SeekerApp({
   const [vertices, setVertices] = useState(12);
   /** Título del Export plan definido por el vendedor (vacío = default). */
   const [tituloPlan, setTituloPlan] = useState("");
+  /** Tácticas del Export plan elegidas por el vendedor. null = todavía
+   * no toca el selector → default por modo. Se conserva durante la
+   * sesión de análisis activa (re-exportar no la pierde). */
+  const [tacticasPlan, setTacticasPlan] = useState<TacticaClave[] | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -554,6 +564,9 @@ export default function SeekerApp({
     setCapas([]);
     agregarCapaRef.current = false;
     setAgregandoCapa(false);
+    // el default de tácticas depende del modo: al cambiarlo se vuelve
+    // al mapeo sugerido
+    setTacticasPlan(null);
   }, [mode]);
 
   function reportar(tipo: StatusTipo, texto: string) {
@@ -1496,6 +1509,7 @@ export default function SeekerApp({
     setNombreArchivoCps("");
     setCoberturaCp(null);
     setTituloPlan("");
+    setTacticasPlan(null);
     setCapas([]);
     agregarCapaRef.current = false;
     setAgregandoCapa(false);
@@ -2163,6 +2177,20 @@ export default function SeekerApp({
     setExcludeInput("");
   }
 
+  // ---- tácticas del Export plan: default por modo hasta que el
+  //      vendedor toque el selector (0 a 7 marcables); la selección se
+  //      conserva durante la sesión de análisis activa
+  const esCompetenciaPlan = mode === "census" && excludes.length > 0;
+  const tacticasSeleccionadas =
+    tacticasPlan ?? tacticasParaModo(mode, esCompetenciaPlan, capas.length > 1);
+  function alternarTactica(clave: TacticaClave) {
+    setTacticasPlan(
+      tacticasSeleccionadas.includes(clave)
+        ? tacticasSeleccionadas.filter((c) => c !== clave)
+        : [...tacticasSeleccionadas, clave]
+    );
+  }
+
   // ---- Export plan (PDF): documento comercial con branding Gravity a
   //      partir del análisis ACTIVO, más el Export data en el mismo
   //      clic. La generación es 100% client-side (@react-pdf/renderer,
@@ -2262,7 +2290,8 @@ export default function SeekerApp({
               : null,
         mapaDataUrl,
         exclusiones: excludes,
-        esCompetencia: mode === "census" && excludes.length > 0,
+        esCompetencia: esCompetenciaPlan,
+        tacticas: tacticasSeleccionadas,
       });
 
       const url = URL.createObjectURL(blob);
@@ -3478,6 +3507,32 @@ export default function SeekerApp({
               </div>
             </div>
             <div className="grid grid-cols-1 gap-2">
+              <div>
+                <p className="mb-1.5 font-mono text-[10px] leading-relaxed text-zinc-500">
+                  Tácticas recomendadas para este plan (selecciona las que
+                  destacarán en el PDF)
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {CLAVES_TACTICAS.map((clave) => {
+                    const activa = tacticasSeleccionadas.includes(clave);
+                    return (
+                      <button
+                        key={clave}
+                        onClick={() => alternarTactica(clave)}
+                        title={TACTICAS[clave].descriptor}
+                        className={`rounded-full border px-2.5 py-1 font-mono text-[10px] transition-colors ${
+                          activa
+                            ? "border-magenta bg-magenta/10 text-magenta"
+                            : "border-linea bg-panel2 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
+                        }`}
+                      >
+                        {activa ? "✓ " : ""}
+                        {TACTICAS[clave].nombre}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <input
                 value={tituloPlan}
                 onChange={(e) => setTituloPlan(e.target.value)}
