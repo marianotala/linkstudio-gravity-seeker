@@ -2027,3 +2027,119 @@ $$;
 
 revoke execute on function public.calcular_universos(jsonb, boolean) from public, anon;
 grant execute on function public.calcular_universos(jsonb, boolean) to authenticated;
+
+
+-- ============================================================
+-- MIGRACIÓN FASE 13 — universos a escala (lotes de geocercas)
+-- ============================================================
+-- Con cientos/miles de buffers dispersos a nivel nacional, la
+-- interpolación areal de calcular_universos sobre la UNIÓN completa
+-- excede el timeout (la unión abarca todo el país y el bbox && deja
+-- de filtrar). Solución: el cliente agrupa las geocercas POR
+-- PROXIMIDAD en lotes chicos, llama este RPC por lote (cada unión es
+-- local y el índice GIST sí filtra) y AGREGA las sumas crudas al
+-- final. Este RPC regresa SUMAS CRUDAS (no porcentajes) para que la
+-- agregación entre lotes sea exacta — las identidades de edades se
+-- conservan y los seis rangos siguen sumando 100% del universo 18+.
+-- La deduplicación de traslapes ocurre DENTRO de cada lote (ST_Union
+-- por lote); agrupando por proximidad los lotes no se traslapan.
+create or replace function public.calcular_universos_crudo(p_geocercas jsonb)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v jsonb;
+begin
+  if coalesce(jsonb_array_length(p_geocercas), 0) = 0
+     or jsonb_array_length(p_geocercas) > 500 then
+    return jsonb_build_object('ok', false, 'motivo', 'geocercas_invalidas');
+  end if;
+
+  with gc as (
+    select case
+      when g.value ? 'cp' then (select c.geom from public.cp_poligonos c where c.codigo_postal = g.value->>'cp')
+      when g.value ? 'viewport' then ST_MakeEnvelope(
+        (g.value->'viewport'->>'west')::float,
+        (g.value->'viewport'->>'south')::float,
+        (g.value->'viewport'->>'east')::float,
+        (g.value->'viewport'->>'north')::float, 4326)
+      else (ST_Buffer(
+        ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+        least(greatest((g.value->>'radio_m')::float, 10), 100000)
+      ))::geometry
+    end as geom
+    from jsonb_array_elements(p_geocercas) with ordinality as g
+  ),
+  un as (select ST_Union(geom) as geom from gc),
+  inter as (
+    select a.pobtot, a.pobfem, a.pobmas, a.p_18ymas, a.p_18a24,
+           a.p_60ymas, a.tvivhab, a.nse_proxy,
+           coalesce(a.pob65_mas, coalesce(a.p_60ymas, 0) * 0.673) as p65_fila,
+           ST_Area(ST_Intersection(a.geom, un.geom)::geography)
+             / nullif(ST_Area(a.geom::geography), 0) as frac
+    from public.agebs a, un
+    where un.geom is not null and a.geom && un.geom and ST_Intersects(a.geom, un.geom)
+  ),
+  agg as (
+    select
+      count(*) as n,
+      coalesce(sum(pobtot * frac), 0) as pob,
+      coalesce(sum(p_18ymas * frac), 0) as adultos,
+      coalesce(sum(tvivhab * frac), 0) as viv,
+      sum(pobfem * frac) as pobfem,
+      sum(pobmas * frac) as pobmas,
+      coalesce(sum(p_18a24 * frac), 0) as e18a24,
+      coalesce(sum(greatest(coalesce(p_18ymas,0) - coalesce(p_18a24,0) - coalesce(p_60ymas,0), 0) * frac), 0) as e25a59,
+      coalesce(sum(greatest(coalesce(p_60ymas,0) - p65_fila, 0) * frac), 0) as e60a64,
+      coalesce(sum(p65_fila * frac), 0) as e65,
+      coalesce(sum(p_60ymas * frac), 0) as e60,
+      coalesce(sum(nse_proxy * coalesce(pobtot,0) * frac), 0) as s_nse,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy is not null), 0) as w_nse,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 75), 0) as w_ab,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 65 and nse_proxy < 75), 0) as w_cmas,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 55 and nse_proxy < 65), 0) as w_c,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 45 and nse_proxy < 55), 0) as w_cmenos,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 35 and nse_proxy < 45), 0) as w_dmas,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy < 35), 0) as w_de
+    from inter where frac > 0
+  ),
+  rur as (
+    select
+      count(*) as n_loc,
+      coalesce(sum(l.pobtot), 0) as pob,
+      coalesce(sum(l.p_18ymas), 0) as adultos,
+      coalesce(sum(l.tvivhab), 0) as viv,
+      sum(l.pobfem) as pobfem,
+      sum(l.pobmas) as pobmas,
+      coalesce(sum(l.p_18a24), 0) as e18a24,
+      coalesce(sum(greatest(coalesce(l.p_18ymas,0) - coalesce(l.p_18a24,0) - coalesce(l.p_60ymas,0), 0)), 0) as e25a59,
+      coalesce(sum(l.p_60ymas), 0) as e60
+    from public.localidades_rurales l, un
+    where un.geom is not null and l.geom && un.geom and ST_Within(l.geom, un.geom)
+  )
+  select jsonb_build_object(
+    'ok', true,
+    'agebs', agg.n,
+    'rurales', rur.n_loc,
+    'pob_u', agg.pob, 'adultos_u', agg.adultos, 'viv_u', agg.viv,
+    'pobfem_u', agg.pobfem, 'pobmas_u', agg.pobmas,
+    'e18a24_u', agg.e18a24, 'e25a59_u', agg.e25a59,
+    'e60a64_u', agg.e60a64, 'e65_u', agg.e65, 'e60_u', agg.e60,
+    's_nse', agg.s_nse,
+    'w_nse', agg.w_nse, 'w_ab', agg.w_ab, 'w_cmas', agg.w_cmas,
+    'w_c', agg.w_c, 'w_cmenos', agg.w_cmenos, 'w_dmas', agg.w_dmas,
+    'w_de', agg.w_de,
+    'pob_r', rur.pob, 'adultos_r', rur.adultos, 'viv_r', rur.viv,
+    'pobfem_r', rur.pobfem, 'pobmas_r', rur.pobmas,
+    'e18a24_r', rur.e18a24, 'e25a59_r', rur.e25a59, 'e60_r', rur.e60
+  )
+  into v from agg, rur;
+  return v;
+end;
+$$;
+
+revoke execute on function public.calcular_universos_crudo(jsonb) from public, anon;
+grant execute on function public.calcular_universos_crudo(jsonb) to authenticated;

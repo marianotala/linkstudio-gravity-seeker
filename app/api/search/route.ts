@@ -177,6 +177,11 @@ export async function POST(req: Request) {
     .map((t) => t.trim())
     .filter(Boolean)
     .slice(0, 10);
+  // Para las QUERIES a Google las comillas se quitan (el modo exacto
+  // es un post-filtro nuestro, no sintaxis de Google).
+  const consultasNombre = terminos
+    .map((t) => t.replace(/^"+|"+$/g, "").trim())
+    .filter(Boolean);
   let centers = parsed.data.centers;
   // Las celdas de censo no se guardan como búsquedas individuales.
   const persistir = parsed.data.persist ?? mode !== "census";
@@ -272,7 +277,7 @@ export async function POST(req: Request) {
       // "Solo por nombre" con VARIOS términos: Google no soporta OR en
       // una query, así que corre una pasada por término sobre los
       // mismos centros (con categoría basta una: el OR es post-filtro).
-      const queries = categoria ? [categoria.textQuery] : terminos;
+      const queries = categoria ? [categoria.textQuery] : consultasNombre;
       const porZona = await enLotes(
         queries.flatMap((q) => centers.map((c) => ({ q, c }))),
         LOTE_CENTROS,
@@ -284,7 +289,7 @@ export async function POST(req: Request) {
       // Censo y "solo por nombre" en orígenes: searchText con sesgo
       // circular, paginado hasta 60 por centro (una pasada por término
       // cuando el filtro trae varios).
-      const queries = categoria ? [categoria.textQuery] : terminos;
+      const queries = categoria ? [categoria.textQuery] : consultasNombre;
       const porCentro = await enLotes(
         queries.flatMap((q) => centers.map((c) => ({ q, c }))),
         LOTE_CENTROS,
@@ -314,21 +319,37 @@ export async function POST(req: Request) {
       return false;
     });
 
-    // 3b) Filtro estricto de nombre: OR entre términos, y DENTRO de
-    //    cada término todas sus palabras deben aparecer en el nombre,
-    //    comparando sin acentos ni puntuación ("7 eleven" atrapa
-    //    "7-Eleven"). Cada POI queda etiquetado con el PRIMER término
-    //    que lo captura (columna término/marca).
+    // 3b) Filtro estricto de nombre: OR entre términos. Cada término
+    //    tiene su propio modo:
+    //    - sin comillas: todas sus palabras deben aparecer en el
+    //      nombre, sin acentos ni puntuación ("7 eleven" atrapa
+    //      "7-Eleven") — caen variantes, a veces conviene.
+    //    - CON comillas ("liverpool"): EXACTO INTELIGENTE — el nombre
+    //      debe EMPEZAR con el término (con frontera de palabra):
+    //      pasa "Liverpool Insurgentes"; NO pasa "Entrada Proveedores
+    //      Liverpool" ni "Liverpoolito".
+    //    Cada POI queda etiquetado con el PRIMER término que lo
+    //    captura (columna término/marca); los descartados suman al
+    //    contador de descartados por nombre.
     const terminoPorId = new Map<string, string>();
     if (terminos.length > 0) {
-      const tokensPorTermino = terminos.map((t) => ({
-        termino: t,
-        tokens: normalizarComparable(t).split(" ").filter(Boolean),
-      }));
+      const matchers = terminos.map((t) => {
+        const exacto = /^".*"$/.test(t);
+        const norm = normalizarComparable(exacto ? t.slice(1, -1) : t);
+        return {
+          termino: t,
+          exacto,
+          norm,
+          tokens: norm.split(" ").filter(Boolean),
+        };
+      });
       lugares = lugares.filter((p) => {
         const nombre = normalizarComparable(p.nombre);
-        const captura = tokensPorTermino.find(({ tokens }) =>
-          tokens.every((t) => nombre.includes(t))
+        const captura = matchers.find((m) =>
+          m.exacto
+            ? m.norm.length > 0 &&
+              (nombre === m.norm || nombre.startsWith(m.norm + " "))
+            : m.tokens.length > 0 && m.tokens.every((t) => nombre.includes(t))
         );
         if (!captura) {
           descartadosPorNombre++;

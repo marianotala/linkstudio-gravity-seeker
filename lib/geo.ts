@@ -237,3 +237,113 @@ export function circlePolygon(
   ring.push(ring[0]);
   return ring;
 }
+
+// ------------------------------------------------------------------
+// Escalamiento del modo por orígenes (listas de hasta 10,000 PDVs)
+// ------------------------------------------------------------------
+
+// cos(23°): factor fijo para convertir grados de longitud a metros al
+// armar retículas de hash espacial en México. Solo afecta el tamaño de
+// celda del hash (las distancias reales siempre se miden con
+// haversine), así que la aproximación es inocua.
+const COS_MX = Math.cos((23 * Math.PI) / 180);
+
+function hashEspacial(p: LatLng, celdaM: number): [number, number] {
+  return [
+    Math.floor((p.lat * 111320) / celdaM),
+    Math.floor((p.lng * 111320 * COS_MX) / celdaM),
+  ];
+}
+
+/**
+ * Consolida centros de búsqueda cuyos círculos se traslapan >80%
+ * (centros a menos de 0.35·radio): una consulta a Google en vez de
+ * varias. Conserva el primer centro de cada grupo.
+ */
+export function consolidarCentros<T extends LatLng>(
+  centros: T[],
+  radioM: number
+): T[] {
+  const umbralM = 0.35 * radioM;
+  if (umbralM <= 0) return centros;
+  const celdaM = Math.max(umbralM, 50);
+  const porCelda = new Map<string, T[]>();
+  const salida: T[] = [];
+  for (const c of centros) {
+    const [fy, fx] = hashEspacial(c, celdaM);
+    let duplicado = false;
+    busca: for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const vecinos = porCelda.get(`${fy + dy}:${fx + dx}`);
+        if (!vecinos) continue;
+        for (const v of vecinos) {
+          if (haversine(c, v) < umbralM) {
+            duplicado = true;
+            break busca;
+          }
+        }
+      }
+    }
+    if (duplicado) continue;
+    salida.push(c);
+    const llave = `${fy}:${fx}`;
+    const lista = porCelda.get(llave);
+    if (lista) lista.push(c);
+    else porCelda.set(llave, [c]);
+  }
+  return salida;
+}
+
+/**
+ * Buscador de origen más cercano con hash espacial: para reasignar
+ * miles de POIs contra miles de orígenes sin O(n·m) completo. Explora
+ * anillos crecientes de celdas hasta encontrar candidatos (con
+ * respaldo de barrido completo si el punto quedara muy lejos).
+ */
+export function crearBuscadorCercano(
+  origenes: LatLng[],
+  celdaM: number
+): (p: LatLng) => { idx: number; dist: number } {
+  const celda = Math.max(celdaM, 100);
+  const porCelda = new Map<string, number[]>();
+  origenes.forEach((o, i) => {
+    const [fy, fx] = hashEspacial(o, celda);
+    const llave = `${fy}:${fx}`;
+    const lista = porCelda.get(llave);
+    if (lista) lista.push(i);
+    else porCelda.set(llave, [i]);
+  });
+  return (p: LatLng) => {
+    const [fy, fx] = hashEspacial(p, celda);
+    let mejorIdx = -1;
+    let mejorDist = Infinity;
+    for (let anillo = 1; anillo <= 5; anillo++) {
+      for (let dy = -anillo; dy <= anillo; dy++) {
+        for (let dx = -anillo; dx <= anillo; dx++) {
+          const candidatos = porCelda.get(`${fy + dy}:${fx + dx}`);
+          if (!candidatos) continue;
+          for (const i of candidatos) {
+            const d = haversine(p, origenes[i]);
+            if (d < mejorDist) {
+              mejorDist = d;
+              mejorIdx = i;
+            }
+          }
+        }
+      }
+      // un anillo completo con candidato garantiza que nada más
+      // cercano vive fuera (el anillo cubre > mejorDist)
+      if (mejorIdx >= 0 && mejorDist <= anillo * celda) break;
+    }
+    if (mejorIdx < 0) {
+      origenes.forEach((o, i) => {
+        const d = haversine(p, o);
+        if (d < mejorDist) {
+          mejorDist = d;
+          mejorIdx = i;
+        }
+      });
+    }
+    return { idx: mejorIdx, dist: mejorDist };
+  };
+}

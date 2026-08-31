@@ -4,16 +4,18 @@
 // orígenes en cian con su radio, zona en violeta, POIs en magenta.
 // Este componente SOLO se importa con dynamic(..., { ssr: false }).
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   MapContainer,
   TileLayer,
   Circle,
   CircleMarker,
   GeoJSON,
+  Marker,
   Popup,
   Rectangle,
   useMap,
+  useMapEvents,
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -41,6 +43,143 @@ function colorPoi(fuente: string): { color: string; fillColor: string } {
 
 // Centro inicial: CDMX
 const CENTRO_INICIAL: [number, number] = [19.4326, -99.1332];
+
+// Con más orígenes que esto, el mapa CLUSTERIZA (agrupa markers al
+// alejar el zoom) — 10 mil markers individuales congelan el navegador.
+const UMBRAL_CLUSTER = 300;
+
+/**
+ * Capa de orígenes: pocos → círculo de radio + marker con popup (como
+ * siempre); muchos → clustering por retícula reactivo al zoom, con el
+ * conteo en cada grupo (clic = acercar). Sin círculos de radio en modo
+ * cluster: a esa escala no se leen.
+ */
+function CapaOrigenes({
+  origenes,
+  radio,
+}: {
+  origenes: Origin[];
+  radio: number;
+}) {
+  const map = useMap();
+  const [zoom, setZoom] = useState(map.getZoom());
+  useMapEvents({ zoomend: () => setZoom(map.getZoom()) });
+
+  const clusters = useMemo(() => {
+    if (origenes.length <= UMBRAL_CLUSTER) return null;
+    // celda ≈ 90 px de pantalla al zoom actual
+    const celda = 360 / (Math.pow(2, zoom) * 2.85);
+    const bins = new Map<
+      string,
+      { sumLat: number; sumLng: number; n: number; uno: Origin }
+    >();
+    for (const o of origenes) {
+      const llave = `${Math.floor(o.lat / celda)}:${Math.floor(o.lng / celda)}`;
+      const b = bins.get(llave);
+      if (b) {
+        b.sumLat += o.lat;
+        b.sumLng += o.lng;
+        b.n++;
+      } else {
+        bins.set(llave, { sumLat: o.lat, sumLng: o.lng, n: 1, uno: o });
+      }
+    }
+    return Array.from(bins.values()).map((b) => ({
+      lat: b.sumLat / b.n,
+      lng: b.sumLng / b.n,
+      n: b.n,
+      uno: b.uno,
+    }));
+  }, [origenes, zoom]);
+
+  if (!clusters) {
+    return (
+      <>
+        {origenes.map((o, i) => (
+          <Fragment key={`o-${i}`}>
+            <Circle
+              center={[o.lat, o.lng]}
+              radius={radio}
+              pathOptions={{
+                color: CIAN,
+                weight: 1,
+                opacity: 0.55,
+                fillColor: CIAN,
+                fillOpacity: 0.06,
+              }}
+            />
+            <CircleMarker
+              center={[o.lat, o.lng]}
+              radius={6}
+              pathOptions={{
+                color: CIAN,
+                weight: 2,
+                fillColor: "#0a0a0c",
+                fillOpacity: 1,
+              }}
+            >
+              <Popup>
+                <div className="font-mono text-xs">
+                  <strong>{o.nombre ?? `Origen ${i + 1}`}</strong>
+                  {o.direccion && <div>{o.direccion}</div>}
+                  <div>
+                    {o.lat.toFixed(6)}, {o.lng.toFixed(6)}
+                  </div>
+                </div>
+              </Popup>
+            </CircleMarker>
+          </Fragment>
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <>
+      {clusters.map((c, i) =>
+        c.n === 1 ? (
+          <CircleMarker
+            key={`c-${i}`}
+            center={[c.lat, c.lng]}
+            radius={5}
+            pathOptions={{
+              color: CIAN,
+              weight: 2,
+              fillColor: "#0a0a0c",
+              fillOpacity: 1,
+            }}
+          >
+            <Popup>
+              <div className="font-mono text-xs">
+                <strong>{c.uno.nombre ?? "Origen"}</strong>
+                {c.uno.direccion && <div>{c.uno.direccion}</div>}
+                <div>
+                  {c.uno.lat.toFixed(6)}, {c.uno.lng.toFixed(6)}
+                </div>
+              </div>
+            </Popup>
+          </CircleMarker>
+        ) : (
+          <Marker
+            key={`c-${i}`}
+            position={[c.lat, c.lng]}
+            icon={L.divIcon({
+              className: "",
+              html: `<div class="cluster-gravity" style="width:${Math.min(56, 30 + Math.round(Math.log10(c.n) * 10))}px;height:${Math.min(56, 30 + Math.round(Math.log10(c.n) * 10))}px">${c.n.toLocaleString("es-MX")}</div>`,
+              iconSize: [0, 0],
+            })}
+            eventHandlers={{
+              click: () =>
+                map.flyTo([c.lat, c.lng], Math.min(zoom + 2, 16), {
+                  duration: 0.5,
+                }),
+            }}
+          />
+        )
+      )}
+    </>
+  );
+}
 
 // El proveedor de tiles vive en UN solo lugar (lib/basemap.ts) para
 // que TODAS las vistas de mapa usen el mismo basemap oscuro. Si los
@@ -231,42 +370,7 @@ export default function MapView(props: MapViewProps) {
         }}
       />
 
-      {mode === "origins" &&
-        origenes.map((o, i) => (
-          <Fragment key={`o-${i}`}>
-            <Circle
-              center={[o.lat, o.lng]}
-              radius={radio}
-              pathOptions={{
-                color: CIAN,
-                weight: 1,
-                opacity: 0.55,
-                fillColor: CIAN,
-                fillOpacity: 0.06,
-              }}
-            />
-            <CircleMarker
-              center={[o.lat, o.lng]}
-              radius={6}
-              pathOptions={{
-                color: CIAN,
-                weight: 2,
-                fillColor: "#0a0a0c",
-                fillOpacity: 1,
-              }}
-            >
-              <Popup>
-                <div className="font-mono text-xs">
-                  <strong>{o.nombre ?? `Origen ${i + 1}`}</strong>
-                  {o.direccion && <div>{o.direccion}</div>}
-                  <div>
-                    {o.lat.toFixed(6)}, {o.lng.toFixed(6)}
-                  </div>
-                </div>
-              </Popup>
-            </CircleMarker>
-          </Fragment>
-        ))}
+      {mode === "origins" && <CapaOrigenes origenes={origenes} radio={radio} />}
 
       {/* capa demográfica: choropleth violeta por AGEB (opacidad ∝ NSE proxy) */}
       {(agebs ?? []).map((a) => (

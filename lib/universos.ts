@@ -5,9 +5,9 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GeocercaUniverso, Universos } from "./types";
+import { ETIQUETA_FUENTE_UNIVERSOS } from "./universos-etiquetas";
 
-export const ETIQUETA_FUENTE_UNIVERSOS =
-  "Censo 2020 INEGI · AGEB urbana · interpolación areal · índice socioeconómico aproximado (proxy censal)";
+export { ETIQUETA_FUENTE_UNIVERSOS };
 
 // Dos fallas DISTINTAS con mensajes distintos: que la zona no tenga
 // AGEBs cargados (acción: cargar la entidad en /admin) no es lo mismo

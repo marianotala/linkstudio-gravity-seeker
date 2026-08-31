@@ -33,6 +33,9 @@ const BodySchema = z.object({
     .min(1, "Manda al menos una geocerca")
     .max(2000, "Máximo 2000 geocercas"),
   incluirAgebs: z.boolean().default(false),
+  /** Modo LOTE: regresa las sumas crudas del RPC calcular_universos_crudo
+   * (máx 500 geocercas por lote); el cliente agrega lotes al final. */
+  crudo: z.boolean().default(false),
 });
 
 export async function POST(req: Request) {
@@ -60,6 +63,26 @@ export async function POST(req: Request) {
       { error: parsed.error.errors[0]?.message ?? "Input inválido" },
       { status: 400 }
     );
+  }
+
+  if (parsed.data.crudo) {
+    if (parsed.data.geocercas.length > 500) {
+      return NextResponse.json(
+        { error: "Máximo 500 geocercas por lote crudo" },
+        { status: 400 }
+      );
+    }
+    const { data, error } = await supabase.rpc("calcular_universos_crudo", {
+      p_geocercas: parsed.data.geocercas,
+    });
+    if (error) {
+      console.error("calcular_universos_crudo falló:", error.message);
+      return NextResponse.json(
+        { error: `El lote de universos falló: ${error.message}` },
+        { status: 500 }
+      );
+    }
+    return NextResponse.json({ crudo: data });
   }
 
   const universos = await calcularUniversos(supabase, parsed.data.geocercas, {

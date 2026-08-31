@@ -10,14 +10,23 @@ import { useSearchParams } from "next/navigation";
 import AppHeader, { type StatusTipo } from "./AppHeader";
 import ResultsTable from "./ResultsTable";
 import UniversosPanel from "./UniversosPanel";
+import OverlayProgreso, { type ProcesoLargo } from "./OverlayProgreso";
 import { CATEGORIAS, getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import {
+  consolidarCentros,
+  crearBuscadorCercano,
   esMismoEstablecimiento,
   esNombreBasura,
   generarCuadricula,
   haversine,
   normalizarComparable,
 } from "@/lib/geo";
+import {
+  agregarUniversosCrudos,
+  agruparGeocercasPorProximidad,
+  UMBRAL_UNIVERSOS_LOTES,
+  type UniversosCrudo,
+} from "@/lib/universos-lotes";
 import { createClient } from "@/lib/supabase/client";
 import { DIAS_AMARILLO, frescuraCenso } from "@/lib/censos";
 import {
@@ -149,6 +158,55 @@ const PALETA_CAPAS = [
   "#fbbf24", // ámbar
   "#ff8c42", // naranja
 ];
+
+// Escalamiento del modo por orígenes (listas de hasta 10,000 PDVs):
+// procesamiento y búsqueda POR LOTES con confirmación de costo.
+const LOTE_GEOCODE = 500;
+const LOTE_CENTROS_BUSQUEDA = 150;
+/** Con más orígenes que esto, la búsqueda pide confirmación de costo
+ * y corre por lotes (y los universos van por lotes espaciales). */
+const UMBRAL_ORIGENES_GRANDES = 50;
+/** Con más orígenes que esto, la búsqueda no se guarda en historial
+ * (los parámetros serían megas de coordenadas). */
+const MAX_ORIGENES_HISTORIAL = 500;
+
+/** ¿El término del filtro es de modo exacto ("comillas")? */
+function esTerminoExacto(t: string): boolean {
+  return /^".*"$/.test(t);
+}
+
+/** Divide un texto en términos de filtro (comas), sin duplicados.
+ * Los términos con "comillas" (modo exacto) conservan sus comillas y
+ * no chocan con su versión sin comillas (son modos distintos). */
+function dividirTerminos(texto: string, existentes: string[] = []): string[] {
+  const clave = (t: string) =>
+    (esTerminoExacto(t) ? '"' : "") + normalizarComparable(t);
+  const vistos = new Set(existentes.map(clave));
+  const salida: string[] = [];
+  for (const t of texto.split(",").map((v) => v.trim()).filter(Boolean)) {
+    const k = clave(t);
+    if (k === '"' || k === "" || vistos.has(k)) continue;
+    vistos.add(k);
+    salida.push(t);
+  }
+  return salida;
+}
+
+/** Deduplica orígenes por coordenada repetida (6 decimales ≈ 11 cm). */
+function dedupeOrigenes(lista: Origin[]): {
+  unicos: Origin[];
+  duplicados: number;
+} {
+  const vistos = new Set<string>();
+  const unicos: Origin[] = [];
+  for (const o of lista) {
+    const llave = `${o.lat.toFixed(6)}:${o.lng.toFixed(6)}`;
+    if (vistos.has(llave)) continue;
+    vistos.add(llave);
+    unicos.push(o);
+  }
+  return { unicos, duplicados: lista.length - unicos.length };
+}
 
 /** Celda de cobertura del modo por CP, ligada al CP que la generó. */
 interface CeldaCp {
@@ -345,6 +403,34 @@ export default function SeekerApp({
   const [excludes, setExcludes] = useState<string[]>([]);
   const [excludeInput, setExcludeInput] = useState("");
 
+  // ---- overlay de progreso sobre el mapa (procesos largos)
+  const [proceso, setProceso] = useState<ProcesoLargo | null>(null);
+
+  // ---- escalamiento del modo por orígenes
+  const detenerOrigenesRef = useRef(false);
+  /** Reanudación de geocodificación interrumpida (misma entrada). */
+  const geocodePendienteRef = useRef<{
+    firma: string;
+    cola: { direccion: string; nombre?: string }[];
+    listos: Origin[];
+    fallidas: number;
+  } | null>(null);
+  /** Reanudación de la búsqueda de POIs por lotes. */
+  const busquedaGrandeRef = useRef<{
+    firma: string;
+    indice: number;
+    acumulados: Map<string, Poi>;
+    excluidos: number;
+    descartados: number;
+    detExc: Set<string>;
+    detDesc: Set<string>;
+  } | null>(null);
+  /** Confirmación de costo para búsquedas con muchos orígenes. */
+  const [planOrigenes, setPlanOrigenes] = useState<{
+    centros: Origin[];
+    consultas: number;
+  } | null>(null);
+
   // ---- estado de resultados
   const [pois, setPois] = useState<Poi[]>([]);
   const [contadores, setContadores] = useState({
@@ -539,19 +625,6 @@ export default function SeekerApp({
     return categoria === SOLO_NOMBRE
       ? filtroNombreTexto || "Búsqueda"
       : (CATEGORIAS.find((c) => c.key === categoria)?.label ?? categoria);
-  }
-
-  /** Divide un texto en términos de filtro (comas), sin duplicados. */
-  function dividirTerminos(texto: string, existentes: string[] = []): string[] {
-    const vistos = new Set(existentes.map(normalizarComparable));
-    const salida: string[] = [];
-    for (const t of texto.split(",").map((v) => v.trim()).filter(Boolean)) {
-      const clave = normalizarComparable(t);
-      if (!clave || vistos.has(clave)) continue;
-      vistos.add(clave);
-      salida.push(t);
-    }
-    return salida;
   }
 
   // límite práctico de términos: los mismos 6 de las capas
@@ -965,6 +1038,19 @@ export default function SeekerApp({
   }
 
   // ---- paso 2: procesar orígenes (direcciones / coordenadas / archivo)
+  //      Listas grandes (hasta 10,000 PDVs): dedupe por coordenada,
+  //      geocodificación POR LOTES con progreso y reanudación.
+  function fijarOrigenes(lista: Origin[], sufijo = "") {
+    const { unicos, duplicados } = dedupeOrigenes(lista);
+    setOrigenes(unicos);
+    setPlanOrigenes(null);
+    busquedaGrandeRef.current = null;
+    reportar(
+      "ok",
+      `${unicos.length.toLocaleString("es-MX")} orígenes listos${duplicados > 0 ? ` · ${duplicados.toLocaleString("es-MX")} coordenadas repetidas descartadas` : ""}${sufijo}`
+    );
+  }
+
   async function procesarOrigenes() {
     setFoco(null);
     try {
@@ -974,8 +1060,7 @@ export default function SeekerApp({
           reportar("error", "No encontré coordenadas válidas (formato: lat, lng, nombre)");
           return;
         }
-        setOrigenes(parsed);
-        reportar("ok", `${parsed.length} orígenes listos`);
+        fijarOrigenes(parsed);
         return;
       }
 
@@ -994,8 +1079,7 @@ export default function SeekerApp({
           return;
         }
         if (archivo.origenes.length > 0) {
-          setOrigenes(archivo.origenes);
-          reportar("ok", `${archivo.origenes.length} orígenes listos (desde archivo)`);
+          fijarOrigenes(archivo.origenes, " (desde archivo)");
           return;
         }
         direcciones = archivo.direcciones;
@@ -1005,42 +1089,112 @@ export default function SeekerApp({
         }
       }
 
-      setOcupado(true);
-      reportar("busy", `Geocodificando ${direcciones.length} direcciones…`);
-      const { resultados } = await postJson<GeocodeResponse>("/api/geocode", {
-        direcciones: direcciones.map((d) => d.direccion),
-      });
+      // geocodificación por lotes con reanudación: si la entrada es la
+      // misma que la interrumpida, continúa donde se quedó
+      const firma = `${direcciones.length}:${direcciones[0]?.direccion ?? ""}`;
+      const pendiente =
+        geocodePendienteRef.current?.firma === firma
+          ? geocodePendienteRef.current
+          : null;
+      const cola = pendiente ? pendiente.cola : direcciones;
+      const listos: Origin[] = pendiente ? [...pendiente.listos] : [];
+      let fallidas = pendiente ? pendiente.fallidas : 0;
+      const totalGlobal = listos.length + fallidas + cola.length;
 
-      const listos: Origin[] = [];
-      let fallidas = 0;
-      resultados.forEach((r, i) => {
-        if (r.ok && r.lat !== undefined && r.lng !== undefined) {
-          listos.push({
-            lat: r.lat,
-            lng: r.lng,
-            nombre: direcciones[i].nombre,
-            direccion: r.formatted ?? direcciones[i].direccion,
+      setOcupado(true);
+      detenerOrigenesRef.current = false;
+      let procesadas = 0;
+      try {
+        for (let i = 0; i < cola.length; i += LOTE_GEOCODE) {
+          if (detenerOrigenesRef.current) break;
+          const lote = cola.slice(i, i + LOTE_GEOCODE);
+          const hechas = listos.length + fallidas;
+          setProceso({
+            etapa: "Procesando orígenes",
+            detalle: `${hechas.toLocaleString("es-MX")} de ${totalGlobal.toLocaleString("es-MX")}`,
+            actual: hechas,
+            total: totalGlobal,
+            onDetener: () => {
+              detenerOrigenesRef.current = true;
+            },
           });
-        } else {
-          fallidas++;
+          reportar(
+            "busy",
+            `Procesando orígenes: ${hechas.toLocaleString("es-MX")} de ${totalGlobal.toLocaleString("es-MX")}…`
+          );
+          const { resultados } = await postJson<GeocodeResponse>("/api/geocode", {
+            direcciones: lote.map((d) => d.direccion),
+          });
+          resultados.forEach((r, j) => {
+            if (r.ok && r.lat !== undefined && r.lng !== undefined) {
+              listos.push({
+                lat: r.lat,
+                lng: r.lng,
+                nombre: lote[j].nombre,
+                direccion: r.formatted ?? lote[j].direccion,
+              });
+            } else {
+              fallidas++;
+            }
+          });
+          procesadas = i + lote.length;
         }
-      });
+      } catch (e) {
+        // guarda el avance para reanudar y muestra el error en el overlay
+        geocodePendienteRef.current = {
+          firma,
+          cola: cola.slice(procesadas),
+          listos,
+          fallidas,
+        };
+        setProceso({
+          etapa: "Procesando orígenes",
+          detalle: "",
+          actual: 0,
+          total: 1,
+          error: `${e instanceof Error ? e.message : "Error al geocodificar"} — el avance quedó guardado (${listos.length.toLocaleString("es-MX")} listos).`,
+          onReintentar: () => {
+            setProceso(null);
+            procesarOrigenes();
+          },
+          onCerrar: () => setProceso(null),
+        });
+        return;
+      }
+      setProceso(null);
+
+      const restantes = cola.length - procesadas;
+      if (restantes > 0) {
+        geocodePendienteRef.current = {
+          firma,
+          cola: cola.slice(procesadas),
+          listos,
+          fallidas,
+        };
+      } else {
+        geocodePendienteRef.current = null;
+      }
 
       if (listos.length === 0) {
         reportar("error", "Ninguna dirección se pudo geocodificar");
         return;
       }
-      setOrigenes(listos);
-      reportar(
-        "ok",
-        fallidas > 0
-          ? `${listos.length} orígenes listos · ${fallidas} direcciones fallaron`
-          : `${listos.length} orígenes listos`
-      );
+      const notas = [
+        ...(fallidas > 0
+          ? [`${fallidas.toLocaleString("es-MX")} direcciones fallaron`]
+          : []),
+        ...(restantes > 0
+          ? [
+              `interrumpido: quedan ${restantes.toLocaleString("es-MX")} — presiona Procesar para continuar`,
+            ]
+          : []),
+      ];
+      fijarOrigenes(listos, notas.length ? ` · ${notas.join(" · ")}` : "");
     } catch (e) {
       reportar("error", e instanceof Error ? e.message : "Error al procesar orígenes");
     } finally {
       setOcupado(false);
+      setProceso((p) => (p?.error ? p : null));
     }
   }
 
@@ -1425,6 +1579,15 @@ export default function SeekerApp({
             total: totalPasos,
             pois: acumulados.size,
           });
+          setProceso({
+            etapa: "Buscando POIs",
+            detalle: `${pasada.etiqueta}: celda ${i + 1} de ${celdasCp.length} · ${acumulados.size.toLocaleString("es-MX")} POIs`,
+            actual: pi * celdasCp.length + i + 1,
+            total: totalPasos,
+            onDetener: () => {
+              detenerCensoRef.current = true;
+            },
+          });
           reportar(
             "busy",
             `${pasada.etiqueta}: celda ${i + 1} de ${celdasCp.length} · ${acumulados.size} POIs acumulados`
@@ -1435,9 +1598,19 @@ export default function SeekerApp({
         }
       }
       if (errorFatal) {
-        reportar("error", errorFatal);
+        const mensajeFatal = errorFatal;
+        setProceso({
+          etapa: "Buscando POIs",
+          detalle: "",
+          actual: 0,
+          total: 1,
+          error: mensajeFatal,
+          onCerrar: () => setProceso(null),
+        });
+        reportar("error", mensajeFatal);
         return;
       }
+      setProceso(null);
 
       // 2) filtro espacial final: solo lo que cae DENTRO del polígono
       //    real, etiquetado con su CP
@@ -1577,12 +1750,18 @@ export default function SeekerApp({
     } finally {
       setOcupado(false);
       setProgresoCenso(null);
+      setProceso((p) => (p?.error ? p : null));
     }
   }
 
   // ---- nueva búsqueda: limpia todo y regresa al estado inicial
   function nuevaBusqueda() {
     detenerCensoRef.current = true;
+    detenerOrigenesRef.current = true;
+    geocodePendienteRef.current = null;
+    busquedaGrandeRef.current = null;
+    setPlanOrigenes(null);
+    setProceso(null);
     setTextDirecciones("");
     setTextCoords("");
     setArchivo(null);
@@ -1848,6 +2027,15 @@ export default function SeekerApp({
         }
       }
       setProgresoCenso({ actual: i + 1, total: celdas.length, pois: acumulados.size });
+      setProceso({
+        etapa: "Censando la marca",
+        detalle: `celda ${i + 1} de ${celdas.length} · ${acumulados.size.toLocaleString("es-MX")} POIs`,
+        actual: i + 1,
+        total: celdas.length,
+        onDetener: () => {
+          detenerCensoRef.current = true;
+        },
+      });
       setPois(Array.from(acumulados.values()));
       reportar(
         "busy",
@@ -1922,6 +2110,7 @@ export default function SeekerApp({
       );
     }
     setOcupado(false);
+    setProceso(null);
   }
 
   // ---- censo territorial (DENUE/INEGI): 1) calcular consultas
@@ -2065,6 +2254,15 @@ export default function SeekerApp({
       }
       const acumTotal = googleAcum.size + denueAcum.size;
       setProgresoCenso({ actual: i + 1, total: celdas.length, pois: acumTotal });
+      setProceso({
+        etapa: "Censo territorial",
+        detalle: `consulta ${i + 1} de ${celdas.length} · ${acumTotal.toLocaleString("es-MX")} establecimientos`,
+        actual: i + 1,
+        total: celdas.length,
+        onDetener: () => {
+          detenerCensoRef.current = true;
+        },
+      });
       setPois(
         mezclarFuentes(
           Array.from(googleAcum.values()),
@@ -2139,6 +2337,276 @@ export default function SeekerApp({
       );
     }
     setOcupado(false);
+    setProceso(null);
+  }
+
+  // ---- universos POR LOTES (listas grandes de geocercas): agrupa por
+  //      proximidad, pide sumas CRUDAS por lote (cada unión es local y
+  //      no excede el timeout) y agrega al final — las edades siguen
+  //      sumando 100% porque se suman crudos, no porcentajes. Un lote
+  //      fallido se reintenta 3 veces sin tirar el cálculo completo.
+  async function calcularUniversosPorLotes(
+    geocercas: GeocercaUniverso[],
+    criterio: string
+  ): Promise<Universos> {
+    const lotes = agruparGeocercasPorProximidad(geocercas);
+    const crudos: UniversosCrudo[] = [];
+    const lotesFallidos: number[] = [];
+    for (let i = 0; i < lotes.length; i++) {
+      setProceso({
+        etapa: "Calculando universos",
+        detalle: `lote ${i + 1} de ${lotes.length}`,
+        actual: i,
+        total: lotes.length,
+      });
+      reportar("busy", `Calculando universos: lote ${i + 1} de ${lotes.length}…`);
+      let logrado = false;
+      let ultimoError = "";
+      for (let intento = 0; intento < 3 && !logrado; intento++) {
+        try {
+          const { crudo } = await postJson<{ crudo: UniversosCrudo }>(
+            "/api/universos",
+            { geocercas: lotes[i], crudo: true }
+          );
+          if (crudo?.ok) crudos.push(crudo);
+          logrado = true;
+        } catch (e) {
+          ultimoError = e instanceof Error ? e.message : "error de consulta";
+          await new Promise((r) => setTimeout(r, 800 * (intento + 1)));
+        }
+      }
+      if (!logrado) {
+        lotesFallidos.push(i + 1);
+        console.error(
+          `Universos: el lote ${i + 1} de ${lotes.length} falló tras 3 intentos: ${ultimoError}`
+        );
+      }
+    }
+    setProceso(null);
+    if (crudos.length === 0) {
+      return {
+        disponible: false,
+        mensaje: `Los ${lotes.length} lotes de universos fallaron — reintenta; si persiste, avisa al admin.`,
+      };
+    }
+    const nota =
+      lotesFallidos.length > 0
+        ? ` · ${lotesFallidos.length} de ${lotes.length} lotes fallaron (${lotesFallidos.slice(0, 5).join(", ")}${lotesFallidos.length > 5 ? "…" : ""}) y quedaron fuera del total`
+        : "";
+    if (lotesFallidos.length > 0) {
+      reportar(
+        "error",
+        `Universos parciales: fallaron los lotes ${lotesFallidos.slice(0, 8).join(", ")} de ${lotes.length} — el total no los incluye.`
+      );
+    }
+    return agregarUniversosCrudos(crudos, `${criterio}${nota}`);
+  }
+
+  // ---- opción "solo universos" (modo orígenes): demografía de las
+  //      zonas del cliente SIN búsqueda de POIs — puro PostGIS, cero
+  //      llamadas a Google.
+  async function soloUniversosOrigenes() {
+    if (origenes.length === 0) {
+      reportar("error", "Primero procesa tus orígenes (paso 02)");
+      return;
+    }
+    setOcupado(true);
+    setFoco(null);
+    try {
+      const geocercas: GeocercaUniverso[] = origenes.map((o, i) => ({
+        id: o.nombre ?? String(i),
+        lat: o.lat,
+        lng: o.lng,
+        radio_m: radio,
+      }));
+      const criterio = `población a ${radio} m de ${origenes.length.toLocaleString("es-MX")} orígenes`;
+      let u: Universos;
+      if (geocercas.length <= UMBRAL_UNIVERSOS_LOTES) {
+        const { universos: sencillo } = await postJson<{ universos: Universos }>(
+          "/api/universos",
+          { geocercas }
+        );
+        u = sencillo?.disponible ? { ...sencillo, criterio } : sencillo;
+      } else {
+        u = await calcularUniversosPorLotes(geocercas, criterio);
+      }
+      setUniversos(u);
+      setAgebsGeo(null);
+      setCapaDemografica(false);
+      geocercasRef.current = geocercas.length <= 2000 ? geocercas : null;
+      setPlanOrigenes(null);
+      reportar(
+        u?.disponible ? "ok" : "error",
+        u?.disponible
+          ? `Universos listos para ${origenes.length.toLocaleString("es-MX")} orígenes · 0 llamadas a Google`
+          : (u?.mensaje ?? "Universos no disponibles")
+      );
+    } catch (e) {
+      reportar("error", e instanceof Error ? e.message : "Error al calcular universos");
+    } finally {
+      setOcupado(false);
+      setProceso((p) => (p?.error ? p : null));
+    }
+  }
+
+  // ---- búsqueda de POIs por lotes (orígenes grandes, ya confirmada):
+  //      centros CONSOLIDADOS en requests de ≤150, con progreso,
+  //      detener y reanudación; al final cada POI se reasigna a su
+  //      origen más cercano de la lista COMPLETA.
+  async function ejecutarBusquedaOrigenes(centros: Origin[]) {
+    setOcupado(true);
+    setFoco(null);
+    detenerOrigenesRef.current = false;
+    const firma = `${centros.length}:${radio}:${categoria}:${filtroNombreTexto}:${excludes.join("|")}`;
+    const previo =
+      busquedaGrandeRef.current?.firma === firma
+        ? busquedaGrandeRef.current
+        : null;
+    const acumulados = previo?.acumulados ?? new Map<string, Poi>();
+    let excluidosTotal = previo?.excluidos ?? 0;
+    let descartadosTotal = previo?.descartados ?? 0;
+    const detExc = previo?.detExc ?? new Set<string>();
+    const detDesc = previo?.detDesc ?? new Set<string>();
+    const lotes: Origin[][] = [];
+    for (let i = 0; i < centros.length; i += LOTE_CENTROS_BUSQUEDA) {
+      lotes.push(centros.slice(i, i + LOTE_CENTROS_BUSQUEDA));
+    }
+    let li = previo?.indice ?? 0;
+
+    try {
+      for (; li < lotes.length; li++) {
+        if (detenerOrigenesRef.current) break;
+        setProceso({
+          etapa: "Buscando POIs",
+          detalle: `lote ${li + 1} de ${lotes.length} · ${acumulados.size.toLocaleString("es-MX")} POIs`,
+          actual: li,
+          total: lotes.length,
+          onDetener: () => {
+            detenerOrigenesRef.current = true;
+          },
+        });
+        reportar(
+          "busy",
+          `Buscando POIs: lote ${li + 1} de ${lotes.length} · ${acumulados.size.toLocaleString("es-MX")} acumulados`
+        );
+        const data = await postJson<SearchResponse>("/api/search", {
+          mode: "origins",
+          centers: lotes[li],
+          radius: radio,
+          category: categoria,
+          nameFilter: filtroNombreTexto,
+          nameFilters,
+          excludes,
+          persist: false,
+        } satisfies SearchRequest);
+        excluidosTotal += data.excluidos;
+        descartadosTotal += data.descartadosPorNombre;
+        (data.detalleExcluidos ?? []).forEach((n) => {
+          if (detExc.size < 300) detExc.add(n);
+        });
+        (data.detalleDescartados ?? []).forEach((n) => {
+          if (detDesc.size < 300) detDesc.add(n);
+        });
+        for (const p of data.pois) {
+          if (!acumulados.has(p.placeId)) acumulados.set(p.placeId, p);
+        }
+        busquedaGrandeRef.current = {
+          firma,
+          indice: li + 1,
+          acumulados,
+          excluidos: excluidosTotal,
+          descartados: descartadosTotal,
+          detExc,
+          detDesc,
+        };
+      }
+    } catch (e) {
+      setProceso({
+        etapa: "Buscando POIs",
+        detalle: "",
+        actual: 0,
+        total: 1,
+        error: `${e instanceof Error ? e.message : "Error al buscar"} — el avance quedó guardado (lote ${li + 1} de ${lotes.length}).`,
+        onReintentar: () => {
+          setProceso(null);
+          ejecutarBusquedaOrigenes(centros);
+        },
+        onCerrar: () => setProceso(null),
+      });
+      setOcupado(false);
+      return;
+    }
+
+    const interrumpida = li < lotes.length;
+    // reasignación: cada POI a su origen más cercano de la lista
+    // COMPLETA (la búsqueda corrió sobre centros consolidados)
+    const buscador = crearBuscadorCercano(origenes, Math.max(radio * 1.5, 500));
+    const lista = Array.from(acumulados.values())
+      .map((p) => {
+        const { idx, dist } = buscador(p);
+        return { ...p, origenIdx: Math.max(idx, 0), distancia: Math.round(dist) };
+      })
+      .filter((p) => p.distancia <= radio + 50)
+      .sort((a, b) => a.distancia - b.distancia);
+
+    setPois(lista);
+    if (separarEnCapas && nameFilters.length >= 2) {
+      registrarCapasPorTermino(nameFilters, lista);
+    } else {
+      setCapas([]);
+    }
+    setContadores({
+      excluidos: excluidosTotal,
+      descartadosPorNombre: descartadosTotal,
+    });
+    setDetalles({
+      excluidos: Array.from(detExc),
+      descartados: Array.from(detDesc),
+    });
+    setVerLista(null);
+    setTablaColapsada(false);
+    setProceso(null);
+
+    if (interrumpida) {
+      reportar(
+        "ok",
+        `Búsqueda interrumpida en el lote ${li + 1} de ${lotes.length} (${lista.length.toLocaleString("es-MX")} POIs hasta ahora) — presiona Continuar para reanudar.`
+      );
+      setOcupado(false);
+      return;
+    }
+    busquedaGrandeRef.current = null;
+    setPlanOrigenes(null);
+
+    // universos por lotes sobre TODOS los orígenes (no los consolidados)
+    const geocercas: GeocercaUniverso[] = origenes.map((o, i) => ({
+      id: o.nombre ?? String(i),
+      lat: o.lat,
+      lng: o.lng,
+      radio_m: radio,
+    }));
+    const u = await calcularUniversosPorLotes(
+      geocercas,
+      `población a ${radio} m de ${origenes.length.toLocaleString("es-MX")} orígenes`
+    );
+    setUniversos(u);
+    setAgebsGeo(null);
+    setCapaDemografica(false);
+    geocercasRef.current = geocercas.length <= 2000 ? geocercas : null;
+
+    const extras: string[] = [];
+    if (excluidosTotal > 0) extras.push(`${excluidosTotal} excluidos`);
+    if (descartadosTotal > 0)
+      extras.push(`${descartadosTotal} descartados por nombre`);
+    if (origenes.length > MAX_ORIGENES_HISTORIAL)
+      extras.push("no se guardó en historial (lista muy grande)");
+    reportar(
+      lista.length > 0 ? "ok" : "error",
+      lista.length > 0
+        ? `${lista.length.toLocaleString("es-MX")} POIs alrededor de ${origenes.length.toLocaleString("es-MX")} orígenes${extras.length ? " · " + extras.join(" · ") : ""}`
+        : `Sin resultados${extras.length ? " · " + extras.join(" · ") : ""}`
+    );
+    setOcupado(false);
   }
 
   // ---- paso 4: buscar POIs
@@ -2160,6 +2628,26 @@ export default function SeekerApp({
     }
     if (categoria === SOLO_NOMBRE && nameFilters.length === 0) {
       reportar("error", 'Para buscar "solo por nombre" agrega al menos un término al filtro');
+      return;
+    }
+
+    // Guardarraíl de costo (orígenes grandes): consolidar traslapes,
+    // estimar consultas y CONFIRMAR antes de gastar; luego correr por
+    // lotes con progreso y reanudación.
+    if (mode === "origins" && centrosActivos.length > UMBRAL_ORIGENES_GRANDES) {
+      if (planOrigenes) {
+        await ejecutarBusquedaOrigenes(planOrigenes.centros);
+        return;
+      }
+      const centros = consolidarCentros(centrosActivos, radio);
+      const consultasPorCentro =
+        categoria === SOLO_NOMBRE ? Math.max(1, nameFilters.length) : 1;
+      const consultas = centros.length * consultasPorCentro;
+      setPlanOrigenes({ centros, consultas });
+      reportar(
+        "ok",
+        `Esta búsqueda usará ~${consultas.toLocaleString("es-MX")} consultas a Google (${centrosActivos.length.toLocaleString("es-MX")} orígenes${centros.length < centrosActivos.length ? ` consolidados en ${centros.length.toLocaleString("es-MX")} zonas por traslape` : ""}). Confirma abajo — o corre "solo universos" sin costo.`
+      );
       return;
     }
 
@@ -2311,6 +2799,12 @@ export default function SeekerApp({
     }
     setOcupado(true);
     reportar("busy", "Generando Export plan (PDF)…");
+    setProceso({
+      etapa: "Generando Export plan",
+      detalle: "capturando el mapa · etapa 1 de 2",
+      actual: 0,
+      total: 2,
+    });
     try {
       const [{ generarPlanPdf, nombreArchivoPlan }, { capturarMapaPlan }] =
         await Promise.all([import("@/lib/plan-pdf"), import("@/lib/plan-mapa")]);
@@ -2370,6 +2864,12 @@ export default function SeekerApp({
         capas.length > 1 ? capas.map((c) => c.nombre).join(" · ") : termino;
       const fecha = new Date();
       const tituloFinal = tituloPlan.trim() || `${terminoPlan} — ${alcance}`;
+      setProceso({
+        etapa: "Generando Export plan",
+        detalle: "armando el PDF · etapa 2 de 2",
+        actual: 1,
+        total: 2,
+      });
       const blob = await generarPlanPdf({
         modo: mode,
         titulo: tituloPlan.trim() || null,
@@ -2416,12 +2916,26 @@ export default function SeekerApp({
       reportar("ok", "Export plan (PDF) + Export data (CSV) descargados");
     } catch (e) {
       console.error(e);
-      reportar(
-        "error",
-        e instanceof Error ? `No se pudo generar el plan: ${e.message}` : "No se pudo generar el plan"
-      );
+      const mensaje =
+        e instanceof Error
+          ? `No se pudo generar el plan: ${e.message}`
+          : "No se pudo generar el plan";
+      setProceso({
+        etapa: "Generando Export plan",
+        detalle: "",
+        actual: 0,
+        total: 1,
+        error: mensaje,
+        onReintentar: () => {
+          setProceso(null);
+          exportarPlan();
+        },
+        onCerrar: () => setProceso(null),
+      });
+      reportar("error", mensaje);
     } finally {
       setOcupado(false);
+      setProceso((p) => (p?.error ? p : null));
     }
   }
 
@@ -3492,25 +4006,46 @@ export default function SeekerApp({
             />
             {nameFilters.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
-                {nameFilters.map((t) => (
-                  <button
-                    key={t}
-                    onClick={() =>
-                      setNameFilters(nameFilters.filter((x) => x !== t))
-                    }
-                    className="group flex items-center gap-1 rounded-full border border-cian/50 bg-cian/10 px-2.5 py-0.5 font-mono text-[11px] text-cian"
-                    title="Quitar término"
-                  >
-                    {t}
-                    <span className="text-cian/60 group-hover:text-cian">×</span>
-                  </button>
-                ))}
+                {nameFilters.map((t) => {
+                  const exacto = esTerminoExacto(t);
+                  return (
+                    <button
+                      key={t}
+                      onClick={() =>
+                        setNameFilters(nameFilters.filter((x) => x !== t))
+                      }
+                      className={`group flex items-center gap-1 rounded-full border px-2.5 py-0.5 font-mono text-[11px] ${
+                        exacto
+                          ? "border-violeta/60 bg-violeta/10 text-violeta"
+                          : "border-cian/50 bg-cian/10 text-cian"
+                      }`}
+                      title={
+                        exacto
+                          ? "Nombre exacto: debe EMPEZAR con el término · quitar"
+                          : "Contiene todas las palabras · quitar"
+                      }
+                    >
+                      {t}
+                      <span
+                        className={
+                          exacto
+                            ? "text-violeta/60 group-hover:text-violeta"
+                            : "text-cian/60 group-hover:text-cian"
+                        }
+                      >
+                        ×
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             )}
             <p className="mt-1 font-mono text-[10px] text-zinc-600">
               Filtro estricto por término: sin acentos ni mayúsculas, todas
               sus palabras deben aparecer en el nombre. Con varios términos,
-              un POI pasa si cumple CUALQUIERA (máx {MAX_CAPAS}).
+              un POI pasa si cumple CUALQUIERA (máx {MAX_CAPAS}). Usa{" "}
+              <span className="text-zinc-400">&quot;comillas&quot;</span> para
+              nombre exacto: el nombre debe EMPEZAR con el término.
             </p>
             {nameFilters.length >= 2 && (
               <label className="mt-2 flex cursor-pointer items-center gap-2 font-mono text-[11px] text-zinc-400">
@@ -3600,9 +4135,49 @@ export default function SeekerApp({
               disabled={ocupado}
               className="mt-4 w-full rounded-md bg-magenta px-3 py-2.5 font-display text-sm font-extrabold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
             >
-              {ocupado ? "Buscando…" : "Buscar POIs"}
+              {ocupado
+                ? "Buscando…"
+                : mode === "origins" && planOrigenes
+                  ? `Continuar: buscar POIs (~${planOrigenes.consultas.toLocaleString("es-MX")} consultas)`
+                  : "Buscar POIs"}
             </button>
             )}
+
+            {/* guardarraíl de costo (orígenes grandes): confirmar o
+                correr solo universos sin gastar una llamada a Google */}
+            {mode === "origins" && planOrigenes && !ocupado && (
+              <div className="mt-2 grid grid-cols-1 gap-1.5">
+                <button
+                  onClick={soloUniversosOrigenes}
+                  className="rounded-md border border-violeta bg-violeta/10 px-3 py-2 text-left font-mono text-[11px] text-violeta transition-colors hover:bg-violeta/20"
+                  title="Demografía de las zonas de tus PDVs, sin búsqueda de POIs — puro censo, cero llamadas a Google"
+                >
+                  Solo universos, sin búsqueda de POIs · 0 consultas
+                </button>
+                <button
+                  onClick={() => {
+                    setPlanOrigenes(null);
+                    busquedaGrandeRef.current = null;
+                    reportar("ok", "Búsqueda cancelada");
+                  }}
+                  className="rounded-md border border-linea bg-panel2 px-3 py-2 text-left font-mono text-[11px] text-zinc-500 transition-colors hover:text-zinc-300"
+                >
+                  Cancelar
+                </button>
+              </div>
+            )}
+            {mode === "origins" &&
+              centrosActivos.length > UMBRAL_ORIGENES_GRANDES &&
+              !planOrigenes && (
+                <button
+                  onClick={soloUniversosOrigenes}
+                  disabled={ocupado}
+                  className="mt-2 w-full rounded-md border border-violeta bg-violeta/10 px-3 py-2 text-left font-mono text-[11px] text-violeta transition-colors hover:bg-violeta/20 disabled:opacity-40"
+                  title="Demografía de las zonas de tus PDVs, sin búsqueda de POIs — puro censo, cero llamadas a Google"
+                >
+                  Solo universos, sin búsqueda de POIs · 0 consultas
+                </button>
+              )}
 
             {(pois.length > 0 ||
               contadores.excluidos > 0 ||
@@ -3865,6 +4440,9 @@ export default function SeekerApp({
               poblacionCp={poblacionPorCp}
               colorPorCapa={colorPorCapa}
             />
+            {/* overlay de progreso para procesos largos (mapa atenuado;
+                la tabla de resultados queda encima, z-1000) */}
+            <OverlayProgreso proceso={proceso} />
             {/* leyenda de capas sobre el mapa (clic = mostrar/ocultar) */}
             {capas.length > 1 && (
               <div className="absolute bottom-3 left-3 z-[1000] flex flex-col gap-1 rounded-md border border-linea bg-fondo/90 px-2.5 py-2">
