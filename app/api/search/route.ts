@@ -291,45 +291,53 @@ export async function POST(req: Request) {
 
   try {
     // 1) Traer resultados crudos de Google.
+    // CATEGORÍA + TÉRMINOS = AMBAS VÍAS: la búsqueda por tipo curado se
+    // UNE con una text query por término (muchos POIs de una marca no
+    // están etiquetados con el tipo — p. ej. Tim Hortons no siempre es
+    // "cafetería"). El dedupe por place_id y el filtro estricto de
+    // nombre corren después: la categoría SUMA cobertura, no recorta.
+    // Google no soporta OR en una query, así que cada término es una
+    // pasada sobre los mismos centros.
+    const consultasTexto = Array.from(
+      new Set([
+        ...(categoria ? [categoria.textQuery] : libre ? [libre] : []),
+        ...consultasNombre,
+      ])
+    );
     let crudos: PlaceResult[];
-    if (mode === "origins" && categoria) {
-      // Categoría alrededor de cada origen: searchNearby, máx 20 por
+    if (mode === "origins" && categoria && categoria.types.length > 0) {
+      // Tipo curado alrededor de cada origen: searchNearby, máx 20 por
       // origen, ordenados por distancia.
       const porCentro = await enLotes(centers, LOTE_CENTROS, (c) =>
         searchNearby(c, radius, categoria.types)
       );
       crudos = porCentro.flat();
+      if (consultasNombre.length > 0) {
+        const porTexto = await enLotes(
+          consultasNombre.flatMap((q) => centers.map((c) => ({ q, c }))),
+          LOTE_CENTROS,
+          ({ q, c }) => searchText(q, { circle: { center: c, radius } })
+        );
+        crudos = crudos.concat(porTexto.flat());
+      }
     } else if (mode === "zone" || mode === "cp") {
       // Modo zona: sin radio — restricción dura a los límites reales de
       // cada zona (viewport de Geocoding), paginado hasta 60 por zona.
       // Modo CP: mismo mecanismo sobre el bbox de cada código postal;
       // el recorte al polígono real viene después.
-      // "Solo por nombre" con VARIOS términos: Google no soporta OR en
-      // una query, así que corre una pasada por término sobre los
-      // mismos centros (con categoría basta una: el OR es post-filtro).
-      const queries = categoria
-        ? [categoria.textQuery]
-        : libre
-          ? [libre]
-          : consultasNombre;
       const porZona = await enLotes(
-        queries.flatMap((q) => centers.map((c) => ({ q, c }))),
+        consultasTexto.flatMap((q) => centers.map((c) => ({ q, c }))),
         LOTE_CENTROS,
         ({ q, c }) =>
           searchText(q, { rectangle: c.viewport ?? viewportDeRespaldo(c) })
       );
       crudos = porZona.flat();
     } else {
-      // Censo y "solo por nombre" en orígenes: searchText con sesgo
-      // circular, paginado hasta 60 por centro (una pasada por término
-      // cuando el filtro trae varios).
-      const queries = categoria
-        ? [categoria.textQuery]
-        : libre
-          ? [libre]
-          : consultasNombre;
+      // Censo, "solo por nombre" en orígenes y categorías SIN tipo de
+      // Google (taquerías, notarías…): searchText con sesgo circular,
+      // paginado hasta 60 por centro.
       const porCentro = await enLotes(
-        queries.flatMap((q) => centers.map((c) => ({ q, c }))),
+        consultasTexto.flatMap((q) => centers.map((c) => ({ q, c }))),
         LOTE_CENTROS,
         ({ q, c }) => searchText(q, { circle: { center: c, radius } })
       );

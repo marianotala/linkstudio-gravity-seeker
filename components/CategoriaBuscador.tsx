@@ -6,15 +6,18 @@
 // de autos). Elegir una sugerencia usa su MAPEO CURADO exacto (tipos
 // de Google + condición DENUE). Si el texto no tiene match y se
 // presiona Enter, corre como BÚSQUEDA LIBRE (el texto va como query a
-// Google y como palabra clave a DENUE). El chip bajo el campo dice
-// SIEMPRE con qué precisión corre el censo: azul = categoría
-// verificada, gris = búsqueda libre.
+// Google y como palabra clave a DENUE).
+//
+// La categoría es OPCIONAL y REMOVIBLE: el chip trae su "×" (igual que
+// los chips de marcas) y el campo arranca vacío — sin categoría, la
+// búsqueda corre solo con los términos del filtro por nombre (marca
+// pura, text query directa). El chip dice SIEMPRE el modo activo:
+// azul = categoría verificada, gris = búsqueda libre.
 
 import { useEffect, useRef, useState } from "react";
 import {
   CATEGORIA_LIBRE,
   getCategoria,
-  SOLO_NOMBRE,
   sugerirCategorias,
 } from "@/lib/categories";
 
@@ -22,15 +25,16 @@ export default function CategoriaBuscador({
   categoria,
   libre,
   onChange,
-  incluirSoloNombre = false,
+  opcional = false,
 }: {
-  /** Key curada, SOLO_NOMBRE o CATEGORIA_LIBRE. */
+  /** Key curada, CATEGORIA_LIBRE o "" (sin categoría). */
   categoria: string;
   /** Texto de la búsqueda libre (cuando categoria === CATEGORIA_LIBRE). */
   libre: string;
   onChange: (key: string, libreTexto?: string) => void;
-  /** Agrega la opción "Solo por nombre" (búsquedas de marca). */
-  incluirSoloNombre?: boolean;
+  /** true = puede quedar sin categoría (hay filtro por nombre abajo);
+   * false = se requiere categoría o búsqueda libre (censo territorial). */
+  opcional?: boolean;
 }) {
   const [texto, setTexto] = useState("");
   const [abierto, setAbierto] = useState(false);
@@ -47,6 +51,7 @@ export default function CategoriaBuscador({
 
   const sugerencias = sugerirCategorias(texto);
   const textoLimpio = texto.trim();
+  const cat = getCategoria(categoria);
 
   const elegirCurada = (key: string) => {
     onChange(key);
@@ -59,8 +64,7 @@ export default function CategoriaBuscador({
     setTexto("");
     setAbierto(false);
   };
-
-  const cat = getCategoria(categoria);
+  const quitar = () => onChange("", "");
 
   return (
     <div ref={contRef} className="relative">
@@ -79,11 +83,15 @@ export default function CategoriaBuscador({
             else elegirLibre();
           }
         }}
-        placeholder='Categoría · escribe para sugerencias, Enter = búsqueda libre'
+        placeholder={
+          opcional
+            ? "Categoría (opcional) · escribe para sugerencias"
+            : "Categoría · escribe para sugerencias, Enter = búsqueda libre"
+        }
         className="w-full rounded-md border border-linea bg-panel2 px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-cian focus:outline-none"
       />
 
-      {abierto && (sugerencias.length > 0 || textoLimpio || incluirSoloNombre) && (
+      {abierto && (sugerencias.length > 0 || textoLimpio) && (
         <div className="absolute left-0 right-0 z-30 mt-1 max-h-72 overflow-y-auto rounded-md border border-linea bg-panel2 py-1 shadow-xl shadow-black/50">
           {sugerencias.map((c, i) => (
             <button
@@ -119,45 +127,38 @@ export default function CategoriaBuscador({
               )}
             </button>
           )}
-          {incluirSoloNombre && (
-            <button
-              type="button"
-              onClick={() => elegirCurada(SOLO_NOMBRE)}
-              className={`block w-full border-t border-linea/60 px-3 py-1.5 text-left font-mono text-xs transition-colors ${
-                categoria === SOLO_NOMBRE
-                  ? "bg-cian/15 text-cian"
-                  : "text-zinc-400 hover:bg-fondo hover:text-zinc-200"
-              }`}
-            >
-              Solo por nombre (censa únicamente los términos del filtro)
-            </button>
-          )}
         </div>
       )}
 
-      {/* chip del modo activo: el vendedor SIEMPRE sabe con qué
-          precisión corre su censo */}
+      {/* chip del modo activo, con su × para quitarse */}
       <div className="mt-1.5">
         {categoria === CATEGORIA_LIBRE ? (
-          <span
-            className="inline-flex items-center gap-1.5 rounded-full border border-zinc-600 bg-zinc-700/20 px-2.5 py-0.5 font-mono text-[10px] text-zinc-400"
-            title="Sin mapeo curado: el texto va como query a Google Places y como palabra clave de actividad a DENUE"
+          <button
+            type="button"
+            onClick={quitar}
+            className="group inline-flex items-center gap-1.5 rounded-full border border-zinc-600 bg-zinc-700/20 px-2.5 py-0.5 font-mono text-[10px] text-zinc-400"
+            title="Búsqueda libre (sin mapeo curado) · quitar"
           >
             <span className="h-1.5 w-1.5 rounded-full bg-zinc-500" />
             búsqueda libre · “{libre}”
-          </span>
-        ) : categoria === SOLO_NOMBRE ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-cian/50 bg-cian/10 px-2.5 py-0.5 font-mono text-[10px] text-cian">
-            <span className="h-1.5 w-1.5 rounded-full bg-cian" />
-            solo por nombre
-          </span>
-        ) : (
-          <span
-            className="inline-flex items-center gap-1.5 rounded-full border border-[#3b82f6]/60 bg-[#3b82f6]/10 px-2.5 py-0.5 font-mono text-[10px] text-[#60a5fa]"
-            title="Mapeo curado exacto: tipos de Google Places + actividad SCIAN de DENUE"
+            <span className="text-zinc-600 group-hover:text-zinc-300">×</span>
+          </button>
+        ) : cat ? (
+          <button
+            type="button"
+            onClick={quitar}
+            className="group inline-flex items-center gap-1.5 rounded-full border border-[#3b82f6]/60 bg-[#3b82f6]/10 px-2.5 py-0.5 font-mono text-[10px] text-[#60a5fa]"
+            title="Mapeo curado exacto (Google Places + SCIAN de DENUE) · quitar"
           >
             <span className="h-1.5 w-1.5 rounded-full bg-[#3b82f6]" />
-            categoría verificada · {cat?.label ?? categoria}
+            categoría verificada · {cat.label}
+            <span className="text-[#60a5fa]/60 group-hover:text-[#60a5fa]">×</span>
+          </button>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-linea px-2.5 py-0.5 font-mono text-[10px] text-zinc-600">
+            {opcional
+              ? "sin categoría — se busca con los términos del filtro (marca pura)"
+              : "sin categoría — elige una sugerida o escribe y presiona Enter"}
           </span>
         )}
       </div>

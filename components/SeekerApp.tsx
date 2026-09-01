@@ -432,7 +432,9 @@ export default function SeekerApp({
   /** Centro de la ciudad del censo de marca. */
   const [zona, setZona] = useState<Origin | null>(null);
   const [radio, setRadio] = useState(1000);
-  const [categoria, setCategoria] = useState(CATEGORIAS[0].key);
+  /** Categoría OPCIONAL: "" = sin categoría (se busca solo con los
+   * términos del filtro por nombre, como el censo de marca). */
+  const [categoria, setCategoria] = useState("");
   /** Texto de la búsqueda LIBRE (cuando categoria === CATEGORIA_LIBRE). */
   const [categoriaLibre, setCategoriaLibre] = useState("");
   /** Filtro de nombre MÚLTIPLE (chips): OR entre términos, filtro
@@ -510,7 +512,7 @@ export default function SeekerApp({
   const detenerCensoRef = useRef(false);
 
   // ---- estado del censo territorial (DENUE/INEGI)
-  const [terCategoria, setTerCategoria] = useState("abarrotes");
+  const [terCategoria, setTerCategoria] = useState("");
   const [terCategoriaLibre, setTerCategoriaLibre] = useState("");
   const [terLugarQuery, setTerLugarQuery] = useState("");
   const [terAlcanceTipo, setTerAlcanceTipo] = useState<"radio" | "ciudad">("radio");
@@ -662,6 +664,18 @@ export default function SeekerApp({
 
   /** Términos del filtro unidos, para etiquetas y compatibilidad. */
   const filtroNombreTexto = nameFilters.join(", ");
+  /** Sin categoría elegida: la búsqueda corre SOLO con los términos
+   * del filtro (text query directa por término, como censo de marca).
+   * SOLO_NOMBRE es el equivalente heredado del historial. */
+  const sinCategoria = !categoria || categoria === SOLO_NOMBRE;
+  /** Lo que se manda al API (el server usa SOLO_NOMBRE para "sin categoría"). */
+  const categoriaParaApi = sinCategoria ? SOLO_NOMBRE : categoria;
+  /** Consultas a Google por centro: la categoría curada/libre es una y
+   * cada término de nombre agrega otra (ambas vías se unen). */
+  const consultasPorCentro = Math.max(
+    1,
+    (sinCategoria ? 0 : 1) + nameFilters.length
+  );
   /** "Separar en capas" aplica hasta MAX_CAPAS términos; con más, los
    * resultados van juntos en una sola capa (cada POI conserva su
    * término en la columna término/marca). */
@@ -670,7 +684,7 @@ export default function SeekerApp({
 
   /** Nombre visible de la búsqueda actual (para la capa). */
   function nombreCapaActual(): string {
-    if (categoria === SOLO_NOMBRE) return filtroNombreTexto || "Búsqueda";
+    if (sinCategoria) return filtroNombreTexto || "Búsqueda";
     if (categoria === CATEGORIA_LIBRE) return categoriaLibre || "Búsqueda libre";
     return CATEGORIAS.find((c) => c.key === categoria)?.label ?? categoria;
   }
@@ -759,6 +773,9 @@ export default function SeekerApp({
     // el default de tácticas depende del modo: al cambiarlo se vuelve
     // al mapeo sugerido
     setTacticasPlan(null);
+    // la categoría NO persiste sola entre modos: arranca vacía
+    setCategoria("");
+    setCategoriaLibre("");
   }, [mode]);
 
   function reportar(tipo: StatusTipo, texto: string) {
@@ -802,7 +819,7 @@ export default function SeekerApp({
       const p = busqueda.params as SearchRequest;
       setMode(p.mode);
       setRadio(p.radius);
-      setCategoria(p.category);
+      setCategoria(p.category === SOLO_NOMBRE ? "" : p.category);
       setCategoriaLibre(p.freeQuery ?? "");
       setNameFilters(
         p.nameFilters?.length
@@ -1002,12 +1019,11 @@ export default function SeekerApp({
       return;
     }
     // el censo guardado es de UNA marca: solo se sugiere con un término
-    const objetivo =
-      categoria === SOLO_NOMBRE
-        ? nameFilters.length === 1
-          ? nameFilters[0]
-          : ""
-        : (getCategoria(categoria)?.label ?? "");
+    const objetivo = sinCategoria
+      ? nameFilters.length === 1
+        ? nameFilters[0]
+        : ""
+      : (getCategoria(categoria)?.label ?? "");
     if (!objetivo) {
       setCensoSugerido(null);
       return;
@@ -1028,7 +1044,7 @@ export default function SeekerApp({
       setAvisoDescartado(false);
     }, 600);
     return () => clearTimeout(timer);
-  }, [mode, origenes.length, categoria, nameFilters]);
+  }, [mode, origenes.length, categoria, sinCategoria, nameFilters]);
 
   // ---- usar un censo guardado en lugar de buscar en vivo (cero llamadas)
   async function usarCensoGuardado() {
@@ -1481,8 +1497,8 @@ export default function SeekerApp({
       reportar("error", "Primero carga tus códigos postales y sus polígonos (paso 02)");
       return;
     }
-    if (categoria === SOLO_NOMBRE && nameFilters.length === 0) {
-      reportar("error", 'Para buscar "solo por nombre" agrega al menos un término al filtro');
+    if (sinCategoria && nameFilters.length === 0) {
+      reportar("error", "Elige una categoría o agrega al menos un término de marca al filtro");
       return;
     }
     if (categoria === CATEGORIA_LIBRE && !categoriaLibre.trim()) {
@@ -1520,8 +1536,8 @@ export default function SeekerApp({
         celdas.length <= MAX_CELDAS_CP ? "ok" : "error",
         celdas.length <= MAX_CELDAS_CP
           ? `Esta búsqueda usará ~${celdas.length} celdas de Google${
-              categoria === SOLO_NOMBRE && nameFilters.length > 1
-                ? ` × ${nameFilters.length} términos = ${celdas.length * nameFilters.length} llamadas`
+              consultasPorCentro > 1
+                ? ` × ${consultasPorCentro} consultas por celda = ${celdas.length * consultasPorCentro} llamadas`
                 : ""
             } (tope ${MAX_CELDAS_CP} celdas). Confirma para ejecutar.`
           : `La cobertura necesita ~${celdas.length} celdas y el tope es ${MAX_CELDAS_CP} por censo: elige una opción abajo.`
@@ -1620,7 +1636,7 @@ export default function SeekerApp({
       // demás casos, una sola pasada: el servidor aplica el OR (y hace
       // sus propias subconsultas por término cuando es solo-nombre).
       const pasadas =
-        categoria === SOLO_NOMBRE && separarEnCapasActivo
+        sinCategoria && separarEnCapasActivo
           ? nameFilters.map((t) => ({ etiqueta: `buscando ${t}`, filtros: [t] }))
           : [{ etiqueta: "CP", filtros: nameFilters }];
       const totalPasos = celdasCp.length * pasadas.length;
@@ -1634,7 +1650,7 @@ export default function SeekerApp({
               mode: "census",
               centers: [{ lat: celdasCp[i].lat, lng: celdasCp[i].lng }],
               radius: celdasCp[i].radio_m,
-              category: categoria,
+              category: categoriaParaApi,
               freeQuery: categoria === CATEGORIA_LIBRE ? categoriaLibre.trim() : undefined,
               nameFilter: pasada.filtros.join(", "),
               nameFilters: pasada.filtros,
@@ -1795,7 +1811,7 @@ export default function SeekerApp({
             params: {
               mode: "cp",
               cps: cpsCodigos,
-              category: categoria,
+              category: categoriaParaApi,
               freeQuery: categoria === CATEGORIA_LIBRE ? categoriaLibre.trim() : undefined,
               nameFilter: filtroNombreTexto,
               nameFilters,
@@ -1864,8 +1880,9 @@ export default function SeekerApp({
     setZonas([]);
     setZona(null);
     setRadio(1000);
-    setCategoria(CATEGORIAS[0].key);
+    setCategoria("");
     setCategoriaLibre("");
+    setTerCategoria("");
     setTerCategoriaLibre("");
     setNameFilters([]);
     setNameFilterInput("");
@@ -2213,6 +2230,13 @@ export default function SeekerApp({
     const lugar = terLugarQuery.trim();
     if (!lugar) {
       reportar("error", "Escribe el lugar: un punto/dirección o una ciudad");
+      return;
+    }
+    if (
+      !getCategoria(terCategoria) &&
+      !(terCategoria === CATEGORIA_LIBRE && terCategoriaLibre.trim())
+    ) {
+      reportar("error", "Elige una categoría sugerida o escribe una búsqueda libre");
       return;
     }
     setOcupado(true);
@@ -2578,8 +2602,8 @@ export default function SeekerApp({
     // resultados por centro (y multiplica por término), así que los
     // lotes se encogen para no rozar el timeout del endpoint (60 s)
     const tamanoLote =
-      categoria === SOLO_NOMBRE
-        ? Math.max(30, Math.floor(120 / Math.max(1, nameFilters.length)))
+      consultasPorCentro > 1
+        ? Math.max(25, Math.floor(120 / consultasPorCentro))
         : LOTE_CENTROS_BUSQUEDA;
     const lotes: Origin[][] = [];
     for (let i = 0; i < centros.length; i += tamanoLote) {
@@ -2607,7 +2631,7 @@ export default function SeekerApp({
           mode: "origins",
           centers: lotes[li],
           radius: radio,
-          category: categoria,
+          category: categoriaParaApi,
           freeQuery: categoria === CATEGORIA_LIBRE ? categoriaLibre.trim() : undefined,
           nameFilter: filtroNombreTexto,
           nameFilters,
@@ -2741,8 +2765,8 @@ export default function SeekerApp({
       );
       return;
     }
-    if (categoria === SOLO_NOMBRE && nameFilters.length === 0) {
-      reportar("error", 'Para buscar "solo por nombre" agrega al menos un término al filtro');
+    if (sinCategoria && nameFilters.length === 0) {
+      reportar("error", "Elige una categoría o agrega al menos un término de marca al filtro");
       return;
     }
     if (categoria === CATEGORIA_LIBRE && !categoriaLibre.trim()) {
@@ -2759,8 +2783,6 @@ export default function SeekerApp({
         return;
       }
       const centros = consolidarCentros(centrosActivos, radio);
-      const consultasPorCentro =
-        categoria === SOLO_NOMBRE ? Math.max(1, nameFilters.length) : 1;
       const consultas = centros.length * consultasPorCentro;
       if (consultas > MAX_CONSULTAS_BUSQUEDA) {
         reportar(
@@ -2790,7 +2812,7 @@ export default function SeekerApp({
         mode,
         centers: centrosActivos,
         radius: radio,
-        category: categoria,
+        category: categoriaParaApi,
         freeQuery: categoria === CATEGORIA_LIBRE ? categoriaLibre.trim() : undefined,
         nameFilter: filtroNombreTexto,
         nameFilters,
@@ -2950,7 +2972,7 @@ export default function SeekerApp({
           ? marca.trim() || "Censo de marca"
           : mode === "territorial"
             ? etiquetaDeCategoria(terCategoria, terCategoriaLibre)
-            : categoria === SOLO_NOMBRE
+            : sinCategoria
               ? filtroNombreTexto || "Búsqueda"
               : etiquetaDeCategoria(categoria, categoriaLibre);
       const alcance =
@@ -3072,12 +3094,11 @@ export default function SeekerApp({
   const pasoCls = "border-b border-linea px-5 py-4";
 
   // ---- datos derivados para la barra de resumen y los KPIs
-  const etiquetaCategoria =
-    categoria === SOLO_NOMBRE
-      ? filtroNombreTexto
-        ? `Nombre: "${filtroNombreTexto}"`
-        : "Solo por nombre"
-      : etiquetaDeCategoria(categoria, categoriaLibre);
+  const etiquetaCategoria = sinCategoria
+    ? filtroNombreTexto
+      ? `Nombre: "${filtroNombreTexto}"`
+      : "Sin categoría"
+    : etiquetaDeCategoria(categoria, categoriaLibre);
   const chipMapa =
     mode === "census"
       ? marca.trim()
@@ -4111,7 +4132,7 @@ export default function SeekerApp({
                 setCategoria(key);
                 setCategoriaLibre(libreTexto ?? "");
               }}
-              incluirSoloNombre
+              opcional
             />
 
             <input
