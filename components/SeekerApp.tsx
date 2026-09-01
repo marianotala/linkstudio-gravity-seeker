@@ -13,9 +13,11 @@ import UniversosPanel from "./UniversosPanel";
 import OverlayProgreso, { type ProcesoLargo } from "./OverlayProgreso";
 import { CATEGORIAS, getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import {
+  ciudadDeDireccion,
   consolidarCentros,
   crearBuscadorCercano,
   esMismoEstablecimiento,
+  etiquetaOrigen,
   esNombreBasura,
   generarCuadricula,
   haversine,
@@ -36,12 +38,14 @@ import {
   type TacticaClave,
 } from "@/lib/tacticas";
 import {
+  descargarPlantillaOrigenes,
   extraerCps,
   parsearArchivo,
   parsearArchivoCps,
   parsearCoordenadas,
   parsearDirecciones,
   type ArchivoParseado,
+  type CorreccionesCarga,
 } from "@/lib/parse";
 import {
   exportarCsv,
@@ -211,6 +215,29 @@ function dedupeOrigenes(lista: Origin[]): {
     unicos.push(o);
   }
   return { unicos, duplicados: lista.length - unicos.length };
+}
+
+/** Nombres duplicados ("Sucursal Centro" dos veces): se conservan pero
+ * se desambiguan con la ciudad de su dirección, o con un contador. */
+function desambiguarNombres(lista: Origin[]): Origin[] {
+  const conteo = new Map<string, number>();
+  for (const o of lista) {
+    if (o.nombre) conteo.set(o.nombre, (conteo.get(o.nombre) ?? 0) + 1);
+  }
+  const usados = new Set<string>();
+  const corridos = new Map<string, number>();
+  return lista.map((o) => {
+    if (!o.nombre || (conteo.get(o.nombre) ?? 0) <= 1) return o;
+    const ciudad = o.direccion ? ciudadDeDireccion(o.direccion) : "";
+    let etiqueta = ciudad ? `${o.nombre} · ${ciudad}` : o.nombre;
+    if (!ciudad || usados.has(etiqueta)) {
+      const n = (corridos.get(o.nombre) ?? 0) + 1;
+      corridos.set(o.nombre, n);
+      etiqueta = `${ciudad ? etiqueta : o.nombre} · ${n}`;
+    }
+    usados.add(etiqueta);
+    return { ...o, nombre: etiqueta };
+  });
 }
 
 /** Celda de cobertura del modo por CP, ligada al CP que la generó. */
@@ -1045,14 +1072,36 @@ export default function SeekerApp({
   // ---- paso 2: procesar orígenes (direcciones / coordenadas / archivo)
   //      Listas grandes (hasta 10,000 PDVs): dedupe por coordenada,
   //      geocodificación POR LOTES con progreso y reanudación.
-  function fijarOrigenes(lista: Origin[], sufijo = "") {
+  function fijarOrigenes(
+    lista: Origin[],
+    sufijo = "",
+    correcciones?: CorreccionesCarga
+  ) {
     const { unicos, duplicados } = dedupeOrigenes(lista);
-    setOrigenes(unicos);
+    const conNombre = desambiguarNombres(unicos);
+    setOrigenes(conNombre);
     setPlanOrigenes(null);
     busquedaGrandeRef.current = null;
+    const notas: string[] = [];
+    const corregidos =
+      (correcciones?.lngCorregidas ?? 0) + (correcciones?.coordsSeparadas ?? 0);
+    if ((correcciones?.lngCorregidas ?? 0) > 0)
+      notas.push(
+        `${correcciones!.lngCorregidas} longitudes venían positivas; se corrigieron a oeste`
+      );
+    if ((correcciones?.coordsSeparadas ?? 0) > 0)
+      notas.push(`${correcciones!.coordsSeparadas} celdas "lat, lng" separadas`);
+    if (duplicados > 0)
+      notas.push(
+        `${duplicados.toLocaleString("es-MX")} coordenadas repetidas descartadas`
+      );
+    if ((correcciones?.descartadas ?? 0) > 0)
+      notas.push(
+        `${correcciones!.descartadas} filas sin nombre, coordenadas ni dirección descartadas`
+      );
     reportar(
       "ok",
-      `${unicos.length.toLocaleString("es-MX")} orígenes listos${duplicados > 0 ? ` · ${duplicados.toLocaleString("es-MX")} coordenadas repetidas descartadas` : ""}${sufijo}`
+      `${conNombre.length.toLocaleString("es-MX")} orígenes listos${corregidos > 0 ? ` · ${corregidos} corregidos` : ""}${notas.length ? ` · ${notas.join(" · ")}` : ""}${sufijo}`
     );
   }
 
@@ -1060,20 +1109,23 @@ export default function SeekerApp({
     setFoco(null);
     try {
       if (tab === "coordenadas") {
-        const parsed = parsearCoordenadas(textCoords);
+        const { origenes: parsed, lngCorregidas } = parsearCoordenadas(textCoords);
         if (parsed.length === 0) {
           reportar("error", "No encontré coordenadas válidas (formato: lat, lng, nombre)");
           return;
         }
-        fijarOrigenes(parsed);
+        fijarOrigenes(parsed, "", {
+          lngCorregidas,
+          coordsSeparadas: 0,
+          descartadas: 0,
+        });
         return;
       }
 
       let direcciones: { direccion: string; nombre?: string }[] = [];
+      let correccionesArchivo: CorreccionesCarga | undefined;
       if (tab === "direcciones") {
-        direcciones = parsearDirecciones(textDirecciones).map((d) => ({
-          direccion: d,
-        }));
+        direcciones = parsearDirecciones(textDirecciones);
         if (direcciones.length === 0) {
           reportar("error", "Escribe al menos una dirección (una por línea)");
           return;
@@ -1083,12 +1135,15 @@ export default function SeekerApp({
           reportar("error", "Primero sube un archivo Excel o CSV");
           return;
         }
-        if (archivo.origenes.length > 0) {
-          fijarOrigenes(archivo.origenes, " (desde archivo)");
+        correccionesArchivo = archivo.correcciones;
+        // el archivo puede traer AMBAS: filas con coordenadas (listas)
+        // y filas solo con dirección (a geocodificar)
+        if (archivo.origenes.length > 0 && archivo.direcciones.length === 0) {
+          fijarOrigenes(archivo.origenes, " (desde archivo)", correccionesArchivo);
           return;
         }
         direcciones = archivo.direcciones;
-        if (direcciones.length === 0) {
+        if (archivo.origenes.length === 0 && direcciones.length === 0) {
           reportar("error", archivo.deteccion);
           return;
         }
@@ -1180,7 +1235,9 @@ export default function SeekerApp({
         geocodePendienteRef.current = null;
       }
 
-      if (listos.length === 0) {
+      // filas del archivo que YA traían coordenadas + las geocodificadas
+      const previos = tab === "archivo" ? (archivo?.origenes ?? []) : [];
+      if (previos.length + listos.length === 0) {
         reportar("error", "Ninguna dirección se pudo geocodificar");
         return;
       }
@@ -1194,7 +1251,11 @@ export default function SeekerApp({
             ]
           : []),
       ];
-      fijarOrigenes(listos, notas.length ? ` · ${notas.join(" · ")}` : "");
+      fijarOrigenes(
+        [...previos, ...listos],
+        notas.length ? ` · ${notas.join(" · ")}` : "",
+        correccionesArchivo
+      );
     } catch (e) {
       reportar("error", e instanceof Error ? e.message : "Error al procesar orígenes");
     } finally {
@@ -2901,9 +2962,7 @@ export default function SeekerApp({
           capas.length > 1
             ? capas.map((c) => ({ nombre: c.nombre, color: c.color, pois: c.pois }))
             : undefined,
-        nombresOrigen: centrosActivos.map(
-          (c, i) => c.nombre ?? `Origen ${i + 1}`
-        ),
+        nombresOrigen: centrosActivos.map((c, i) => etiquetaOrigen(c, i)),
         universos,
         criterio: universos?.criterio ?? null,
         fuentes,
@@ -3323,7 +3382,7 @@ export default function SeekerApp({
                   onChange={(e) => setTextDirecciones(e.target.value)}
                   rows={5}
                   placeholder={
-                    "Una dirección por línea:\nAv. Reforma 222, CDMX\nAv. Chapultepec 480, Guadalajara"
+                    "Una dirección por línea, con nombre opcional al frente:\nSucursal Reforma | Av. Reforma 222, CDMX\nAv. Chapultepec 480, Guadalajara"
                   }
                   className={`${inputCls} resize-y`}
                 />
@@ -3363,7 +3422,15 @@ export default function SeekerApp({
                   )}
                   <p className="mt-2 font-mono text-[10px] leading-relaxed text-zinc-600">
                     Detecto columnas automáticamente: lat/lng, direccion,
-                    nombre y variantes.
+                    nombre y variantes. El nombre de cada tienda aparece como
+                    origen en resultados, mapa y exports.{" "}
+                    <button
+                      onClick={descargarPlantillaOrigenes}
+                      className="text-cian underline decoration-cian/40 underline-offset-2 transition-colors hover:decoration-cian"
+                      title="Plantilla .xlsx con columnas nombre | latitud | longitud | direccion + hoja de instrucciones"
+                    >
+                      Descargar plantilla Excel
+                    </button>
                   </p>
                 </div>
               )}

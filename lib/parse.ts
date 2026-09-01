@@ -9,6 +9,15 @@ import type { Origin } from "./types";
 /** Filas crudas de un archivo, como objetos header→valor. */
 type Fila = Record<string, unknown>;
 
+export interface CorreccionesCarga {
+  /** Longitudes positivas corregidas a oeste (México). */
+  lngCorregidas: number;
+  /** Celdas "lat, lng" en una sola columna, separadas automáticamente. */
+  coordsSeparadas: number;
+  /** Filas sin nombre, sin coordenadas y sin dirección, descartadas. */
+  descartadas: number;
+}
+
 export interface ArchivoParseado {
   /** Orígenes que ya traían lat/lng. */
   origenes: Origin[];
@@ -16,6 +25,8 @@ export interface ArchivoParseado {
   direcciones: { direccion: string; nombre?: string }[];
   /** Columnas que se detectaron, para mostrarlas al usuario. */
   deteccion: string;
+  /** Correcciones y descartes aplicados al cargar. */
+  correcciones: CorreccionesCarga;
 }
 
 const KEYS_LAT = ["lat", "latitud", "latitude", "y"];
@@ -40,15 +51,45 @@ function detectarColumna(headers: string[], candidatos: string[]): string | unde
 function aNumero(v: unknown): number | undefined {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string") {
-    const n = Number(v.replace(",", ".").trim());
+    const s = v.replace(",", ".").trim();
+    if (!s) return undefined; // Number("") sería 0: una celda vacía NO es coordenada
+    const n = Number(s);
     if (Number.isFinite(n)) return n;
   }
   return undefined;
 }
 
+/** Celda "19.30, -99.19" (par de coordenadas en UNA columna) → [lat, lng]. */
+function separarParCoordenadas(v: unknown): [number, number] | null {
+  if (typeof v !== "string") return null;
+  const m = v.trim().match(/^(-?\d{1,3}(?:\.\d+)?)[,;\s]+(-?\d{1,3}(?:\.\d+)?)$/);
+  if (!m) return null;
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return [a, b];
+}
+
+/** ¿La coordenada cae en México con la longitud VOLTEADA a este?
+ * (México es oeste: -99.19; una longitud positiva ahí cae en Asia.) */
+function esLongitudVolteadaMx(lat: number, lng: number): boolean {
+  return lat >= 14 && lat <= 33.5 && lng >= 86 && lng <= 118;
+}
+
+const SIN_CORRECCIONES: CorreccionesCarga = {
+  lngCorregidas: 0,
+  coordsSeparadas: 0,
+  descartadas: 0,
+};
+
 function filasAResultado(filas: Fila[]): ArchivoParseado {
   if (filas.length === 0) {
-    return { origenes: [], direcciones: [], deteccion: "Archivo vacío" };
+    return {
+      origenes: [],
+      direcciones: [],
+      deteccion: "Archivo vacío",
+      correcciones: SIN_CORRECCIONES,
+    };
   }
   const headers = Object.keys(filas[0]);
   const colLat = detectarColumna(headers, KEYS_LAT);
@@ -58,40 +99,74 @@ function filasAResultado(filas: Fila[]): ArchivoParseado {
 
   const origenes: Origin[] = [];
   const direcciones: { direccion: string; nombre?: string }[] = [];
+  const correcciones: CorreccionesCarga = { ...SIN_CORRECCIONES };
 
-  if (colLat && colLng) {
+  const nombreDe = (fila: Fila) =>
+    colNombre ? String(fila[colNombre] ?? "").trim() || undefined : undefined;
+  const direccionDe = (fila: Fila) =>
+    colDir ? String(fila[colDir] ?? "").trim() || undefined : undefined;
+
+  if (colLat) {
     for (const fila of filas) {
-      const lat = aNumero(fila[colLat]);
-      const lng = aNumero(fila[colLng]);
-      if (lat === undefined || lng === undefined) continue;
-      if (Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
-      origenes.push({
-        lat,
-        lng,
-        nombre: colNombre ? String(fila[colNombre] ?? "").trim() || undefined : undefined,
-        direccion: colDir ? String(fila[colDir] ?? "").trim() || undefined : undefined,
-      });
+      let lat = aNumero(fila[colLat]);
+      let lng = colLng ? aNumero(fila[colLng]) : undefined;
+      // par "19.30, -99.19" en una sola celda → separarlo
+      if (lat === undefined || lng === undefined) {
+        const par = separarParCoordenadas(fila[colLat]);
+        if (par) {
+          [lat, lng] = par;
+          correcciones.coordsSeparadas++;
+        }
+      }
+      const dir = direccionDe(fila);
+      const nombre = nombreDe(fila);
+      if (
+        lat === undefined ||
+        lng === undefined ||
+        Math.abs(lat) > 90 ||
+        Math.abs(lng) > 180 ||
+        (lat === 0 && lng === 0)
+      ) {
+        // sin coordenadas útiles: la dirección salva la fila (la
+        // plantilla trae filas con coordenadas Y filas con dirección)
+        if (dir) {
+          direcciones.push({ direccion: dir, nombre });
+        } else if (nombre || dir || lat !== undefined || lng !== undefined) {
+          correcciones.descartadas++;
+        }
+        continue;
+      }
+      // longitud positiva en México → corregir a oeste y avisar
+      if (esLongitudVolteadaMx(lat, lng)) {
+        lng = -lng;
+        correcciones.lngCorregidas++;
+      }
+      origenes.push({ lat, lng, nombre, direccion: dir });
     }
-    return {
-      origenes,
-      direcciones,
-      deteccion: `Coordenadas: "${colLat}" / "${colLng}"${colNombre ? ` · nombre: "${colNombre}"` : ""}`,
-    };
+    if (origenes.length > 0 || direcciones.length > 0) {
+      return {
+        origenes,
+        direcciones,
+        deteccion: `Coordenadas: "${colLat}"${colLng ? ` / "${colLng}"` : ""}${colNombre ? ` · nombre: "${colNombre}"` : ""}${colDir ? ` · dirección: "${colDir}"` : ""}`,
+        correcciones,
+      };
+    }
   }
 
   if (colDir) {
     for (const fila of filas) {
       const dir = String(fila[colDir] ?? "").trim();
-      if (!dir) continue;
-      direcciones.push({
-        direccion: dir,
-        nombre: colNombre ? String(fila[colNombre] ?? "").trim() || undefined : undefined,
-      });
+      if (!dir) {
+        if (nombreDe(fila)) correcciones.descartadas++;
+        continue;
+      }
+      direcciones.push({ direccion: dir, nombre: nombreDe(fila) });
     }
     return {
       origenes,
       direcciones,
       deteccion: `Direcciones: "${colDir}"${colNombre ? ` · nombre: "${colNombre}"` : ""}`,
+      correcciones,
     };
   }
 
@@ -99,7 +174,8 @@ function filasAResultado(filas: Fila[]): ArchivoParseado {
     origenes: [],
     direcciones: [],
     deteccion:
-      "No encontré columnas de lat/lng ni de dirección. Usa headers como lat, lng, direccion, nombre.",
+      "No encontré columnas de lat/lng ni de dirección. Usa headers como nombre, latitud, longitud, direccion — o descarga la plantilla.",
+    correcciones: SIN_CORRECCIONES,
   };
 }
 
@@ -122,29 +198,89 @@ export async function parsearArchivo(file: File): Promise<ArchivoParseado> {
   return filasAResultado(filas);
 }
 
-/** Parsea el textarea de coordenadas: "lat, lng" o "lat, lng, nombre" por línea. */
-export function parsearCoordenadas(texto: string): Origin[] {
+/** Parsea el textarea de coordenadas: "lat, lng" o "lat, lng, nombre"
+ * por línea. Corrige longitudes positivas en México (a oeste). */
+export function parsearCoordenadas(texto: string): {
+  origenes: Origin[];
+  lngCorregidas: number;
+} {
   const origenes: Origin[] = [];
+  let lngCorregidas = 0;
   for (const linea of texto.split("\n")) {
     const limpia = linea.trim();
     if (!limpia) continue;
     const partes = limpia.split(/[,;\t]/).map((p) => p.trim());
     if (partes.length < 2) continue;
     const lat = aNumero(partes[0]);
-    const lng = aNumero(partes[1]);
+    let lng = aNumero(partes[1]);
     if (lat === undefined || lng === undefined) continue;
     if (Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
+    if (esLongitudVolteadaMx(lat, lng)) {
+      lng = -lng;
+      lngCorregidas++;
+    }
     origenes.push({ lat, lng, nombre: partes.slice(2).join(", ") || undefined });
   }
-  return origenes;
+  return { origenes, lngCorregidas };
 }
 
-/** Parsea el textarea de direcciones: una por línea. */
-export function parsearDirecciones(texto: string): string[] {
+/** Parsea el textarea de direcciones: una por línea, con nombre
+ * opcional al frente ("Nombre | dirección"). */
+export function parsearDirecciones(
+  texto: string
+): { direccion: string; nombre?: string }[] {
   return texto
     .split("\n")
     .map((l) => l.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((l) => {
+      const barra = l.indexOf("|");
+      if (barra > 0 && barra < l.length - 1) {
+        return {
+          nombre: l.slice(0, barra).trim() || undefined,
+          direccion: l.slice(barra + 1).trim(),
+        };
+      }
+      return { direccion: l };
+    })
+    .filter((d) => d.direccion);
+}
+
+/**
+ * Genera y descarga la plantilla Excel para la carga de orígenes:
+ * hoja "Orígenes" (nombre | latitud | longitud | direccion, con filas
+ * de ejemplo) + hoja "Instrucciones" con las reglas en corto.
+ */
+export function descargarPlantillaOrigenes() {
+  const wb = XLSX.utils.book_new();
+
+  const datos = XLSX.utils.aoa_to_sheet([
+    ["nombre", "latitud", "longitud", "direccion"],
+    ["OXXO Perisur", 19.30345, -99.19023, ""],
+    ["Sucursal Centro", "", "", "Av. Juárez 100, Centro, Ciudad de México"],
+    ["Farmacia San Pablo Nápoles", 19.39871, -99.17093, ""],
+  ]);
+  datos["!cols"] = [{ wch: 28 }, { wch: 12 }, { wch: 12 }, { wch: 44 }];
+  XLSX.utils.book_append_sheet(wb, datos, "Orígenes");
+
+  const instrucciones = XLSX.utils.aoa_to_sheet([
+    ["PLANTILLA DE ORÍGENES — SEEKER (Gravity)"],
+    [""],
+    ["· Coordenadas en formato DECIMAL (19.30345), no grados-minutos."],
+    ["· LONGITUD NEGATIVA: México es oeste (-99.19023). Una longitud positiva cae en Asia"],
+    ["  (si se te va, Seeker la corrige y te avisa)."],
+    ["· Si tienes coordenadas, la dirección es opcional — las coordenadas son más"],
+    ["  precisas y no consumen geocodificación."],
+    ["· Si solo tienes direcciones: lo más completas posible (calle, número, colonia, ciudad)."],
+    ["· Primera fila = encabezados. Sin filas de título arriba, sin celdas combinadas,"],
+    ["  y los datos en la primera hoja."],
+    [""],
+    ["El nombre de cada tienda aparece como origen en resultados, mapa y exports."],
+  ]);
+  instrucciones["!cols"] = [{ wch: 95 }];
+  XLSX.utils.book_append_sheet(wb, instrucciones, "Instrucciones");
+
+  XLSX.writeFile(wb, "Seeker_plantilla_origenes.xlsx");
 }
 
 // ------------------------------------------------------------------

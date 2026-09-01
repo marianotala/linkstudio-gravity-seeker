@@ -18,6 +18,7 @@ import {
   useMapEvents,
 } from "react-leaflet";
 import L from "leaflet";
+import { etiquetaOrigen } from "@/lib/geo";
 import "leaflet/dist/leaflet.css";
 import type {
   AgebGeo,
@@ -71,9 +72,9 @@ function CapaOrigenes({
     const celda = 360 / (Math.pow(2, zoom) * 2.85);
     const bins = new Map<
       string,
-      { sumLat: number; sumLng: number; n: number; uno: Origin }
+      { sumLat: number; sumLng: number; n: number; uno: Origin; idx: number }
     >();
-    for (const o of origenes) {
+    origenes.forEach((o, idx) => {
       const llave = `${Math.floor(o.lat / celda)}:${Math.floor(o.lng / celda)}`;
       const b = bins.get(llave);
       if (b) {
@@ -81,14 +82,15 @@ function CapaOrigenes({
         b.sumLng += o.lng;
         b.n++;
       } else {
-        bins.set(llave, { sumLat: o.lat, sumLng: o.lng, n: 1, uno: o });
+        bins.set(llave, { sumLat: o.lat, sumLng: o.lng, n: 1, uno: o, idx });
       }
-    }
+    });
     return Array.from(bins.values()).map((b) => ({
       lat: b.sumLat / b.n,
       lng: b.sumLng / b.n,
       n: b.n,
       uno: b.uno,
+      idx: b.idx,
     }));
   }, [origenes, zoom]);
 
@@ -120,7 +122,7 @@ function CapaOrigenes({
             >
               <Popup>
                 <div className="font-mono text-xs">
-                  <strong>{o.nombre ?? `Origen ${i + 1}`}</strong>
+                  <strong>{etiquetaOrigen(o, i)}</strong>
                   {o.direccion && <div>{o.direccion}</div>}
                   <div>
                     {o.lat.toFixed(6)}, {o.lng.toFixed(6)}
@@ -151,7 +153,7 @@ function CapaOrigenes({
           >
             <Popup>
               <div className="font-mono text-xs">
-                <strong>{c.uno.nombre ?? "Origen"}</strong>
+                <strong>{etiquetaOrigen(c.uno, c.idx)}</strong>
                 {c.uno.direccion && <div>{c.uno.direccion}</div>}
                 <div>
                   {c.uno.lat.toFixed(6)}, {c.uno.lng.toFixed(6)}

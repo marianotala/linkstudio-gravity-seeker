@@ -6,7 +6,7 @@ import {
   searchText,
   type PlaceResult,
 } from "@/lib/google";
-import { esNombreBasura, haversine, normalizarComparable } from "@/lib/geo";
+import { esNombreBasura, etiquetaOrigen, haversine, normalizarComparable } from "@/lib/geo";
 import { getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import { createClient } from "@/lib/supabase/server";
 import { calcularUniversos } from "@/lib/universos";
@@ -533,7 +533,7 @@ export async function POST(req: Request) {
             lng: p.lng,
             address: p.direccion,
             origin_name:
-              centers[p.origenIdx]?.nombre ?? `Origen ${p.origenIdx + 1}`,
+              etiquetaOrigen(centers[p.origenIdx], p.origenIdx),
             distance_m: p.distancia,
             place_id: p.placeId,
           })),

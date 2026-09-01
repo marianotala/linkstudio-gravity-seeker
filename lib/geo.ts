@@ -80,6 +80,23 @@ export function ciudadDeDireccion(direccion: string): string {
   return partes[partes.length - 1] ?? "";
 }
 
+/**
+ * Etiqueta visible de un origen: nombre del PDV si viene (del Excel o
+ * del textarea), si no la dirección corta, y como último recurso el
+ * índice anónimo de siempre.
+ */
+export function etiquetaOrigen(
+  o: { nombre?: string; direccion?: string } | undefined,
+  idx: number
+): string {
+  if (o?.nombre) return o.nombre;
+  if (o?.direccion) {
+    const corta = o.direccion.split(",").slice(0, 2).join(",").trim();
+    if (corta) return corta;
+  }
+  return `Origen ${idx + 1}`;
+}
+
 /** Sufijos legales que no aportan identidad de marca. */
 const SUFIJOS_LEGALES =
   /\b(sapi|sab|sa de cv|s de rl de cv|s de rl|sa|de cv|cv|sc|ac|s en c)\b/g;

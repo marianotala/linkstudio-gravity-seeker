@@ -1,7 +1,7 @@
 // Los 4 exports de Seeker, generados 100% en el cliente.
 // Nombres de archivo seeker_* listos para cargar en DSPs.
 
-import { ciudadDeDireccion, circlePolygon } from "./geo";
+import { ciudadDeDireccion, circlePolygon, etiquetaOrigen } from "./geo";
 import type { Origin, Poi, Universos } from "./types";
 
 /** Filas de resumen de universos para anexar al final del CSV. */
@@ -69,7 +69,8 @@ export function exportarCsv(
       "lng",
       "fuente",
       "estrato",
-      "origen",
+      "origen_nombre",
+      "origen_id",
       "origen_lat",
       "origen_lng",
       "distancia_m",
@@ -88,7 +89,8 @@ export function exportarCsv(
         p.lng,
         p.fuente,
         csvCampo(p.estrato ?? ""),
-        csvCampo(origen?.nombre ?? (origen ? `Origen ${p.origenIdx + 1}` : "")),
+        csvCampo(origen ? etiquetaOrigen(origen, p.origenIdx) : ""),
+        origen ? p.origenIdx + 1 : "",
         origen?.lat ?? "",
         origen?.lng ?? "",
         p.distancia,
@@ -177,7 +179,7 @@ export function exportarGeoJsonRadiosOrigen(
     features: origenes.map((o, i) => ({
       type: "Feature",
       properties: {
-        nombre: o.nombre ?? `Origen ${i + 1}`,
+        nombre: etiquetaOrigen(o, i),
         direccion: o.direccion ?? "",
         ...(o.viewport ? {} : { radio_m: radioM }),
         universo_residencial: porGeocerca?.[i]?.poblacion ?? null,
