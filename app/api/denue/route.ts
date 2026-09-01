@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { denueBuscar, DenueError, DENUE_RADIO_MAX_M } from "@/lib/denue";
-import { getCategoria } from "@/lib/categories";
+import { CATEGORIA_LIBRE, getCategoria } from "@/lib/categories";
 import { haversine } from "@/lib/geo";
 import { createClient } from "@/lib/supabase/server";
 
@@ -13,6 +13,8 @@ export const dynamic = "force-dynamic";
 
 const BodySchema = z.object({
   category: z.string().min(1, "Falta la categoría"),
+  /** Búsqueda LIBRE: palabra clave de actividad para DENUE. */
+  freeQuery: z.string().trim().max(80).optional(),
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
   radius: z
@@ -53,7 +55,12 @@ export async function POST(req: Request) {
 
   const { category, lat, lng, radius } = parsed.data;
   const categoria = getCategoria(category);
-  if (!categoria) {
+  // búsqueda libre: el texto va directo como palabra clave de
+  // actividad/nombre a DENUE (sin mapeo curado)
+  const condicion =
+    categoria?.denue ??
+    (category === CATEGORIA_LIBRE ? (parsed.data.freeQuery ?? "").trim() : "");
+  if (!condicion) {
     return NextResponse.json({ error: "Categoría desconocida" }, { status: 400 });
   }
 
@@ -82,7 +89,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const crudos = await denueBuscar(categoria.denue, lat, lng, radius);
+    const crudos = await denueBuscar(condicion, lat, lng, radius);
     // DENUE a veces regresa establecimientos apenas fuera del radio:
     // recorte duro a radio + 50 m, igual que Google.
     const centro = { lat, lng };

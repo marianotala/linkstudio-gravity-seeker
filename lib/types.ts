@@ -240,6 +240,9 @@ export interface SearchRequest {
   /** Filtro de nombre MÚLTIPLE: OR entre términos, filtro estricto
    * dentro de cada término. Si viene, manda sobre nameFilter. */
   nameFilters?: string[];
+  /** Búsqueda LIBRE (category === CATEGORIA_LIBRE): el texto exacto
+   * que corre como query en Google y palabra clave en DENUE. */
+  freeQuery?: string;
   excludes: string[];
   /**
    * Si guardar la búsqueda en el historial. Default: true, excepto en

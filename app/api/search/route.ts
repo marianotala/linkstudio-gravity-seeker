@@ -7,7 +7,7 @@ import {
   type PlaceResult,
 } from "@/lib/google";
 import { esNombreBasura, etiquetaOrigen, haversine, normalizarComparable } from "@/lib/geo";
-import { getCategoria, SOLO_NOMBRE } from "@/lib/categories";
+import { CATEGORIA_LIBRE, getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import { createClient } from "@/lib/supabase/server";
 import { calcularUniversos } from "@/lib/universos";
 import type {
@@ -88,8 +88,11 @@ const BodySchema = z
     nameFilter: z.string().trim().default(""),
     /** Filtro de nombre MÚLTIPLE (OR entre términos). Si viene, manda
      * sobre nameFilter. */
-    nameFilters: z.array(z.string().trim().min(1)).max(10).optional(),
-    excludes: z.array(z.string().trim().min(1)).max(50).default([]),
+    nameFilters: z.array(z.string().trim().min(1)).max(100).optional(),
+    excludes: z.array(z.string().trim().min(1)).max(500).default([]),
+    /** Búsqueda LIBRE (category === CATEGORIA_LIBRE): el texto va como
+     * query a Google Places, sin mapeo curado. */
+    freeQuery: z.string().trim().max(80).optional(),
     persist: z.boolean().optional(),
     /** Solo modo cp: códigos postales de 5 dígitos. */
     cps: z
@@ -97,10 +100,23 @@ const BodySchema = z
       .max(25, "Máximo 25 códigos postales por búsqueda")
       .optional(),
   })
-  .refine((b) => b.category === SOLO_NOMBRE || getCategoria(b.category), {
-    message: "Categoría desconocida",
-    path: ["category"],
-  })
+  .refine(
+    (b) =>
+      b.category === SOLO_NOMBRE ||
+      b.category === CATEGORIA_LIBRE ||
+      getCategoria(b.category),
+    {
+      message: "Categoría desconocida",
+      path: ["category"],
+    }
+  )
+  .refine(
+    (b) => b.category !== CATEGORIA_LIBRE || (b.freeQuery ?? "").length > 0,
+    {
+      message: "La búsqueda libre necesita el texto a buscar",
+      path: ["freeQuery"],
+    }
+  )
   .refine(
     (b) =>
       b.category !== SOLO_NOMBRE ||
@@ -182,12 +198,15 @@ export async function POST(req: Request) {
   )
     .map((t) => t.trim())
     .filter(Boolean)
-    .slice(0, 10);
+    .slice(0, 100);
   // Para las QUERIES a Google las comillas se quitan (el modo exacto
   // es un post-filtro nuestro, no sintaxis de Google).
   const consultasNombre = terminos
     .map((t) => t.replace(/^"+|"+$/g, "").trim())
     .filter(Boolean);
+  // búsqueda LIBRE: el texto es la query (sin mapeo curado)
+  const libre =
+    category === CATEGORIA_LIBRE ? (parsed.data.freeQuery ?? "").trim() : "";
   let centers = parsed.data.centers;
   // Las celdas de censo no se guardan como búsquedas individuales.
   const persistir = parsed.data.persist ?? mode !== "census";
@@ -288,7 +307,11 @@ export async function POST(req: Request) {
       // "Solo por nombre" con VARIOS términos: Google no soporta OR en
       // una query, así que corre una pasada por término sobre los
       // mismos centros (con categoría basta una: el OR es post-filtro).
-      const queries = categoria ? [categoria.textQuery] : consultasNombre;
+      const queries = categoria
+        ? [categoria.textQuery]
+        : libre
+          ? [libre]
+          : consultasNombre;
       const porZona = await enLotes(
         queries.flatMap((q) => centers.map((c) => ({ q, c }))),
         LOTE_CENTROS,
@@ -300,7 +323,11 @@ export async function POST(req: Request) {
       // Censo y "solo por nombre" en orígenes: searchText con sesgo
       // circular, paginado hasta 60 por centro (una pasada por término
       // cuando el filtro trae varios).
-      const queries = categoria ? [categoria.textQuery] : consultasNombre;
+      const queries = categoria
+        ? [categoria.textQuery]
+        : libre
+          ? [libre]
+          : consultasNombre;
       const porCentro = await enLotes(
         queries.flatMap((q) => centers.map((c) => ({ q, c }))),
         LOTE_CENTROS,
@@ -513,9 +540,11 @@ export async function POST(req: Request) {
         // cargador los divide de vuelta en chips)
         nameFilter: terminos.join(", "),
         excludes,
+        ...(libre ? { freeQuery: libre } : {}),
         ...(mode === "cp" ? { cps: cpsPedidos } : {}),
       };
-      const etiquetaCategoria = categoria?.label ?? "Solo por nombre";
+      const etiquetaCategoria =
+        categoria?.label ?? (libre ? `Libre: "${libre}"` : "Solo por nombre");
       const { data: idGuardado, error: errorGuardado } = await supabase.rpc(
         "guardar_busqueda",
         {

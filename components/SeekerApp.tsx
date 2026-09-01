@@ -11,8 +11,8 @@ import AppHeader, { type StatusTipo } from "./AppHeader";
 import ResultsTable from "./ResultsTable";
 import UniversosPanel from "./UniversosPanel";
 import OverlayProgreso, { type ProcesoLargo } from "./OverlayProgreso";
-import CategoriaSelect from "./CategoriaSelect";
-import { CATEGORIAS, getCategoria, SOLO_NOMBRE } from "@/lib/categories";
+import CategoriaBuscador from "./CategoriaBuscador";
+import { CATEGORIA_LIBRE, CATEGORIAS, getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import {
   ciudadDeDireccion,
   consolidarCentros,
@@ -179,6 +179,13 @@ const UMBRAL_ORIGENES_GRANDES = 50;
 /** Con más orígenes que esto, la búsqueda no se guarda en historial
  * (los parámetros serían megas de coordenadas). */
 const MAX_ORIGENES_HISTORIAL = 500;
+
+/** Etiqueta de la categoría activa (curada, libre o solo nombre). */
+function etiquetaDeCategoria(key: string, libre: string): string {
+  if (key === CATEGORIA_LIBRE)
+    return libre ? `Libre: "${libre}"` : "Búsqueda libre";
+  return getCategoria(key)?.label ?? key;
+}
 
 /** ¿El término del filtro es de modo exacto ("comillas")? */
 function esTerminoExacto(t: string): boolean {
@@ -426,6 +433,8 @@ export default function SeekerApp({
   const [zona, setZona] = useState<Origin | null>(null);
   const [radio, setRadio] = useState(1000);
   const [categoria, setCategoria] = useState(CATEGORIAS[0].key);
+  /** Texto de la búsqueda LIBRE (cuando categoria === CATEGORIA_LIBRE). */
+  const [categoriaLibre, setCategoriaLibre] = useState("");
   /** Filtro de nombre MÚLTIPLE (chips): OR entre términos, filtro
    * estricto dentro de cada término. */
   const [nameFilters, setNameFilters] = useState<string[]>([]);
@@ -502,6 +511,7 @@ export default function SeekerApp({
 
   // ---- estado del censo territorial (DENUE/INEGI)
   const [terCategoria, setTerCategoria] = useState("abarrotes");
+  const [terCategoriaLibre, setTerCategoriaLibre] = useState("");
   const [terLugarQuery, setTerLugarQuery] = useState("");
   const [terAlcanceTipo, setTerAlcanceTipo] = useState<"radio" | "ciudad">("radio");
   const [terRadio, setTerRadio] = useState(3000);
@@ -652,16 +662,25 @@ export default function SeekerApp({
 
   /** Términos del filtro unidos, para etiquetas y compatibilidad. */
   const filtroNombreTexto = nameFilters.join(", ");
+  /** "Separar en capas" aplica hasta MAX_CAPAS términos; con más, los
+   * resultados van juntos en una sola capa (cada POI conserva su
+   * término en la columna término/marca). */
+  const separarEnCapasActivo =
+    separarEnCapas && nameFilters.length >= 2 && nameFilters.length <= MAX_CAPAS;
 
   /** Nombre visible de la búsqueda actual (para la capa). */
   function nombreCapaActual(): string {
-    return categoria === SOLO_NOMBRE
-      ? filtroNombreTexto || "Búsqueda"
-      : (CATEGORIAS.find((c) => c.key === categoria)?.label ?? categoria);
+    if (categoria === SOLO_NOMBRE) return filtroNombreTexto || "Búsqueda";
+    if (categoria === CATEGORIA_LIBRE) return categoriaLibre || "Búsqueda libre";
+    return CATEGORIAS.find((c) => c.key === categoria)?.label ?? categoria;
   }
 
-  // límite práctico de términos: los mismos 6 de las capas
-  const MAX_TERMINOS = MAX_CAPAS;
+  // tope técnico ALTO de términos de filtro (configurable por env);
+  // "separar en capas" sigue aplicando solo hasta MAX_CAPAS términos
+  const MAX_TERMINOS =
+    Number(process.env.NEXT_PUBLIC_MAX_TERMINOS_FILTRO) > 0
+      ? Number(process.env.NEXT_PUBLIC_MAX_TERMINOS_FILTRO)
+      : 100;
   function agregarFiltroNombre() {
     const nuevos = dividirTerminos(nameFilterInput, nameFilters);
     if (nuevos.length > 0) {
@@ -784,6 +803,7 @@ export default function SeekerApp({
       setMode(p.mode);
       setRadio(p.radius);
       setCategoria(p.category);
+      setCategoriaLibre(p.freeQuery ?? "");
       setNameFilters(
         p.nameFilters?.length
           ? p.nameFilters
@@ -1465,6 +1485,10 @@ export default function SeekerApp({
       reportar("error", 'Para buscar "solo por nombre" agrega al menos un término al filtro');
       return;
     }
+    if (categoria === CATEGORIA_LIBRE && !categoriaLibre.trim()) {
+      reportar("error", "Escribe el texto de la búsqueda libre (o elige una categoría sugerida)");
+      return;
+    }
     setOcupado(true);
     setFoco(null);
     setCoberturaCp(null);
@@ -1596,7 +1620,7 @@ export default function SeekerApp({
       // demás casos, una sola pasada: el servidor aplica el OR (y hace
       // sus propias subconsultas por término cuando es solo-nombre).
       const pasadas =
-        categoria === SOLO_NOMBRE && separarEnCapas && nameFilters.length >= 2
+        categoria === SOLO_NOMBRE && separarEnCapasActivo
           ? nameFilters.map((t) => ({ etiqueta: `buscando ${t}`, filtros: [t] }))
           : [{ etiqueta: "CP", filtros: nameFilters }];
       const totalPasos = celdasCp.length * pasadas.length;
@@ -1611,6 +1635,7 @@ export default function SeekerApp({
               centers: [{ lat: celdasCp[i].lat, lng: celdasCp[i].lng }],
               radius: celdasCp[i].radio_m,
               category: categoria,
+              freeQuery: categoria === CATEGORIA_LIBRE ? categoriaLibre.trim() : undefined,
               nameFilter: pasada.filtros.join(", "),
               nameFilters: pasada.filtros,
               excludes,
@@ -1717,7 +1742,7 @@ export default function SeekerApp({
       // al AGREGAR capa el universo del territorio no cambia: se reusa
       const reutilizarUniversos =
         agregarCapaRef.current && (universos?.disponible ?? false);
-      if (separarEnCapas && nameFilters.length >= 2) {
+      if (separarEnCapasActivo) {
         // filtro múltiple: una capa por término (marca) con su color
         registrarCapasPorTermino(nameFilters, lista);
       } else {
@@ -1771,6 +1796,7 @@ export default function SeekerApp({
               mode: "cp",
               cps: cpsCodigos,
               category: categoria,
+              freeQuery: categoria === CATEGORIA_LIBRE ? categoriaLibre.trim() : undefined,
               nameFilter: filtroNombreTexto,
               nameFilters,
               excludes,
@@ -1839,6 +1865,8 @@ export default function SeekerApp({
     setZona(null);
     setRadio(1000);
     setCategoria(CATEGORIAS[0].key);
+    setCategoriaLibre("");
+    setTerCategoriaLibre("");
     setNameFilters([]);
     setNameFilterInput("");
     setSepararEnCapas(true);
@@ -2235,7 +2263,10 @@ export default function SeekerApp({
   async function ejecutarTerritorial() {
     if (!celdas || celdas.length === 0 || !terCentro) return;
     const cat = getCategoria(terCategoria);
-    if (!cat) return;
+    if (!cat && !(terCategoria === CATEGORIA_LIBRE && terCategoriaLibre.trim())) {
+      reportar("error", "Elige una categoría sugerida o escribe una búsqueda libre");
+      return;
+    }
     setOcupado(true);
     setFoco(null);
     detenerCensoRef.current = false;
@@ -2266,6 +2297,10 @@ export default function SeekerApp({
             "/api/denue",
             {
               category: terCategoria,
+              freeQuery:
+                terCategoria === CATEGORIA_LIBRE
+                  ? terCategoriaLibre.trim()
+                  : undefined,
               lat: celdas[i].lat,
               lng: celdas[i].lng,
               radius: radioCeldaTer,
@@ -2290,6 +2325,10 @@ export default function SeekerApp({
             centers: [celdas[i]],
             radius: radioCeldaTer,
             category: terCategoria,
+            freeQuery:
+              terCategoria === CATEGORIA_LIBRE
+                ? terCategoriaLibre.trim()
+                : undefined,
             nameFilter: "",
             excludes: [],
             persist: false,
@@ -2363,7 +2402,8 @@ export default function SeekerApp({
       const r = await guardarCensoEnBiblioteca({
         tipo: "territorial",
         universos: universosCenso,
-        marcaOCategoria: cat.label,
+        marcaOCategoria:
+          cat?.label ?? etiquetaDeCategoria(terCategoria, terCategoriaLibre),
         alcanceDescripcion:
           terAlcanceTipo === "ciudad"
             ? `${lugarCorto} · ciudad completa`
@@ -2568,6 +2608,7 @@ export default function SeekerApp({
           centers: lotes[li],
           radius: radio,
           category: categoria,
+          freeQuery: categoria === CATEGORIA_LIBRE ? categoriaLibre.trim() : undefined,
           nameFilter: filtroNombreTexto,
           nameFilters,
           excludes,
@@ -2624,7 +2665,7 @@ export default function SeekerApp({
       .sort((a, b) => a.distancia - b.distancia);
 
     setPois(lista);
-    if (separarEnCapas && nameFilters.length >= 2) {
+    if (separarEnCapasActivo) {
       registrarCapasPorTermino(nameFilters, lista);
     } else {
       setCapas([]);
@@ -2704,6 +2745,10 @@ export default function SeekerApp({
       reportar("error", 'Para buscar "solo por nombre" agrega al menos un término al filtro');
       return;
     }
+    if (categoria === CATEGORIA_LIBRE && !categoriaLibre.trim()) {
+      reportar("error", "Escribe el texto de la búsqueda libre (o elige una categoría sugerida)");
+      return;
+    }
 
     // Guardarraíl de costo (orígenes grandes): consolidar traslapes,
     // estimar consultas y CONFIRMAR antes de gastar; luego correr por
@@ -2746,6 +2791,7 @@ export default function SeekerApp({
         centers: centrosActivos,
         radius: radio,
         category: categoria,
+        freeQuery: categoria === CATEGORIA_LIBRE ? categoriaLibre.trim() : undefined,
         nameFilter: filtroNombreTexto,
         nameFilters,
         excludes,
@@ -2753,7 +2799,7 @@ export default function SeekerApp({
       const data = await postJson<SearchResponse>("/api/search", body);
       setPois(data.pois);
       // filtro múltiple + "separar en capas": una capa por término
-      const multiCapas = separarEnCapas && nameFilters.length >= 2;
+      const multiCapas = separarEnCapasActivo;
       // en modo zona la búsqueda se acumula como capa (misma geografía);
       // al AGREGAR capa, el universo del territorio no cambia: se reusa
       const reutilizarUniversos =
@@ -2903,10 +2949,10 @@ export default function SeekerApp({
         mode === "census"
           ? marca.trim() || "Censo de marca"
           : mode === "territorial"
-            ? (getCategoria(terCategoria)?.label ?? terCategoria)
+            ? etiquetaDeCategoria(terCategoria, terCategoriaLibre)
             : categoria === SOLO_NOMBRE
               ? filtroNombreTexto || "Búsqueda"
-              : (CATEGORIAS.find((c) => c.key === categoria)?.label ?? categoria);
+              : etiquetaDeCategoria(categoria, categoriaLibre);
       const alcance =
         mode === "census"
           ? (zona?.nombre?.split(",")[0] ?? ciudadQuery.trim() ?? "")
@@ -3031,14 +3077,14 @@ export default function SeekerApp({
       ? filtroNombreTexto
         ? `Nombre: "${filtroNombreTexto}"`
         : "Solo por nombre"
-      : (CATEGORIAS.find((c) => c.key === categoria)?.label ?? categoria);
+      : etiquetaDeCategoria(categoria, categoriaLibre);
   const chipMapa =
     mode === "census"
       ? marca.trim()
         ? `Censo: ${marca.trim()}`
         : "Censo de marca"
       : mode === "territorial"
-        ? `INEGI: ${getCategoria(terCategoria)?.label ?? terCategoria}`
+        ? `INEGI: ${etiquetaDeCategoria(terCategoria, terCategoriaLibre)}`
         : etiquetaCategoria;
   const distanciaPromedio =
     pois.length > 0
@@ -3130,7 +3176,7 @@ export default function SeekerApp({
           <>
             <Segmento
               etiqueta="Categoría"
-              valor={getCategoria(terCategoria)?.label ?? terCategoria}
+              valor={etiquetaDeCategoria(terCategoria, terCategoriaLibre)}
             />
             <Segmento
               etiqueta="Lugar"
@@ -3761,7 +3807,14 @@ export default function SeekerApp({
           ) : (
             <section className={pasoCls}>
               <label className={labelCls}>02 · Censo territorial (INEGI)</label>
-              <CategoriaSelect value={terCategoria} onChange={setTerCategoria} />
+              <CategoriaBuscador
+                categoria={terCategoria}
+                libre={terCategoriaLibre}
+                onChange={(key, libreTexto) => {
+                  setTerCategoria(key);
+                  setTerCategoriaLibre(libreTexto ?? "");
+                }}
+              />
               <input
                 value={terLugarQuery}
                 onChange={(e) => setTerLugarQuery(e.target.value)}
@@ -4051,9 +4104,13 @@ export default function SeekerApp({
             </label>
             {mode !== "census" && (
             <>
-            <CategoriaSelect
-              value={categoria}
-              onChange={setCategoria}
+            <CategoriaBuscador
+              categoria={categoria}
+              libre={categoriaLibre}
+              onChange={(key, libreTexto) => {
+                setCategoria(key);
+                setCategoriaLibre(libreTexto ?? "");
+              }}
               incluirSoloNombre
             />
 
@@ -4075,7 +4132,7 @@ export default function SeekerApp({
               className={`${inputCls} mt-3`}
             />
             {nameFilters.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
+              <div className="mt-2 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
                 {nameFilters.map((t) => {
                   const exacto = esTerminoExacto(t);
                   return (
@@ -4113,9 +4170,11 @@ export default function SeekerApp({
             <p className="mt-1 font-mono text-[10px] text-zinc-600">
               Filtro estricto por término: sin acentos ni mayúsculas, todas
               sus palabras deben aparecer en el nombre. Con varios términos,
-              un POI pasa si cumple CUALQUIERA (máx {MAX_CAPAS}). Usa{" "}
+              un POI pasa si cumple CUALQUIERA. Usa{" "}
               <span className="text-zinc-400">&quot;comillas&quot;</span> para
-              nombre exacto: el nombre debe EMPEZAR con el término.
+              nombre exacto (el nombre debe EMPEZAR con el término). Los
+              términos de inclusión multiplican consultas — el estimador de
+              costo lo refleja; las exclusiones son gratis.
             </p>
             {nameFilters.length >= 2 && (
               <label className="mt-2 flex cursor-pointer items-center gap-2 font-mono text-[11px] text-zinc-400">
@@ -4124,9 +4183,15 @@ export default function SeekerApp({
                   checked={separarEnCapas}
                   onChange={(e) => setSepararEnCapas(e.target.checked)}
                   className="accent-cian"
+                  disabled={nameFilters.length > MAX_CAPAS}
                 />
                 Separar en capas: cada término con su color y conteo en el
                 mapa (ideal para comparar marcas)
+                {nameFilters.length > MAX_CAPAS && (
+                  <span className="text-zinc-600">
+                    · aplica hasta {MAX_CAPAS} términos; con más van juntos
+                  </span>
+                )}
               </label>
             )}
             </>
@@ -4146,7 +4211,7 @@ export default function SeekerApp({
                 className={inputCls}
               />
               {excludes.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
+                <div className="mt-2 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
                   {excludes.map((ex) => (
                     <button
                       key={ex}
@@ -4159,6 +4224,14 @@ export default function SeekerApp({
                     </button>
                   ))}
                 </div>
+              )}
+              {(nameFilters.length > 3 || excludes.length > 3) && (
+                <p className="mt-1.5 font-mono text-[10px] text-zinc-600">
+                  {nameFilters.length.toLocaleString("es-MX")}{" "}
+                  {nameFilters.length === 1 ? "término" : "términos"} ·{" "}
+                  {excludes.length.toLocaleString("es-MX")}{" "}
+                  {excludes.length === 1 ? "exclusión" : "exclusiones"}
+                </p>
               )}
             </div>
 
