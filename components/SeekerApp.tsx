@@ -11,6 +11,7 @@ import AppHeader, { type StatusTipo } from "./AppHeader";
 import ResultsTable from "./ResultsTable";
 import UniversosPanel from "./UniversosPanel";
 import OverlayProgreso, { type ProcesoLargo } from "./OverlayProgreso";
+import CategoriaSelect from "./CategoriaSelect";
 import { CATEGORIAS, getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import {
   ciudadDeDireccion,
@@ -3760,17 +3761,7 @@ export default function SeekerApp({
           ) : (
             <section className={pasoCls}>
               <label className={labelCls}>02 · Censo territorial (INEGI)</label>
-              <select
-                value={terCategoria}
-                onChange={(e) => setTerCategoria(e.target.value)}
-                className={inputCls}
-              >
-                {CATEGORIAS.map((c) => (
-                  <option key={c.key} value={c.key}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
+              <CategoriaSelect value={terCategoria} onChange={setTerCategoria} />
               <input
                 value={terLugarQuery}
                 onChange={(e) => setTerLugarQuery(e.target.value)}
@@ -4060,18 +4051,11 @@ export default function SeekerApp({
             </label>
             {mode !== "census" && (
             <>
-            <select
+            <CategoriaSelect
               value={categoria}
-              onChange={(e) => setCategoria(e.target.value)}
-              className={inputCls}
-            >
-              {CATEGORIAS.map((c) => (
-                <option key={c.key} value={c.key}>
-                  {c.label}
-                </option>
-              ))}
-              <option value={SOLO_NOMBRE}>Solo por nombre</option>
-            </select>
+              onChange={setCategoria}
+              incluirSoloNombre
+            />
 
             <input
               value={nameFilterInput}
