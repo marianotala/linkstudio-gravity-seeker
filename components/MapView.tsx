@@ -251,6 +251,114 @@ interface MapViewProps {
   colorPorCapa?: Record<string, string>;
 }
 
+/**
+ * Capa de POIs: pocos → marker individual con popup (como siempre);
+ * con miles (búsquedas sobre listas grandes de orígenes) → clustering
+ * por retícula reactivo al zoom, para no congelar el navegador.
+ */
+function CapaPois({
+  pois,
+  colorPorCapa,
+}: {
+  pois: Poi[];
+  colorPorCapa?: Record<string, string>;
+}) {
+  const map = useMap();
+  const [zoom, setZoom] = useState(map.getZoom());
+  useMapEvents({ zoomend: () => setZoom(map.getZoom()) });
+
+  const clusters = useMemo(() => {
+    if (pois.length <= 800) return null;
+    const celda = 360 / (Math.pow(2, zoom) * 2.85);
+    const bins = new Map<
+      string,
+      { sumLat: number; sumLng: number; n: number; uno: Poi }
+    >();
+    for (const p of pois) {
+      const llave = `${Math.floor(p.lat / celda)}:${Math.floor(p.lng / celda)}`;
+      const b = bins.get(llave);
+      if (b) {
+        b.sumLat += p.lat;
+        b.sumLng += p.lng;
+        b.n++;
+      } else {
+        bins.set(llave, { sumLat: p.lat, sumLng: p.lng, n: 1, uno: p });
+      }
+    }
+    return Array.from(bins.values()).map((b) => ({
+      lat: b.sumLat / b.n,
+      lng: b.sumLng / b.n,
+      n: b.n,
+      uno: b.uno,
+    }));
+  }, [pois, zoom]);
+
+  const marker = (p: Poi) => {
+    // con capas activas el color identifica a la CAPA; sin capas,
+    // a la fuente (google/denue/ambas) como siempre
+    const colorCapa = p.capa ? colorPorCapa?.[p.capa] : undefined;
+    const c = colorCapa
+      ? { color: colorCapa, fillColor: colorCapa }
+      : colorPoi(p.fuente);
+    return (
+      <CircleMarker
+        key={`${p.capa ?? ""}:${p.placeId}`}
+        center={[p.lat, p.lng]}
+        radius={5}
+        pathOptions={{
+          color: c.color,
+          weight: p.fuente === "ambas" ? 2 : 1.5,
+          fillColor: c.fillColor,
+          fillOpacity: 0.75,
+        }}
+      >
+        <Popup>
+          <div className="font-mono text-xs max-w-[220px]">
+            <strong>{p.nombre}</strong>
+            <div>{p.direccion}</div>
+            <div>
+              {p.lat.toFixed(6)}, {p.lng.toFixed(6)} · {p.distancia} m
+            </div>
+            <div>
+              fuente: {p.fuente.toUpperCase()}
+              {p.estrato ? ` · ${p.estrato}` : ""}
+            </div>
+            {p.capa && <div>capa: {p.capa}</div>}
+            {p.actividad && <div>{p.actividad}</div>}
+          </div>
+        </Popup>
+      </CircleMarker>
+    );
+  };
+
+  if (!clusters) return <>{pois.map(marker)}</>;
+  return (
+    <>
+      {clusters.map((c, i) =>
+        c.n === 1 ? (
+          marker(c.uno)
+        ) : (
+          <Marker
+            key={`pc-${i}`}
+            position={[c.lat, c.lng]}
+            icon={L.divIcon({
+              className: "",
+              html: `<div class="cluster-gravity cluster-pois" style="width:${Math.min(56, 30 + Math.round(Math.log10(c.n) * 10))}px;height:${Math.min(56, 30 + Math.round(Math.log10(c.n) * 10))}px">${c.n.toLocaleString("es-MX")}</div>`,
+              iconSize: [0, 0],
+            })}
+            eventHandlers={{
+              click: () =>
+                map.flyTo([c.lat, c.lng], Math.min(zoom + 2, 16), {
+                  duration: 0.5,
+                }),
+            }}
+          />
+        )
+      )}
+    </>
+  );
+}
+
 /** Ajusta la vista cuando cambian orígenes/zona/POIs, y vuela al foco. */
 function Encuadre({
   mode,
@@ -541,43 +649,7 @@ export default function MapView(props: MapViewProps) {
         </Fragment>
       )}
 
-      {pois.map((p) => {
-        // con capas activas el color identifica a la CAPA; sin capas,
-        // a la fuente (google/denue/ambas) como siempre
-        const colorCapa = p.capa ? props.colorPorCapa?.[p.capa] : undefined;
-        const c = colorCapa
-          ? { color: colorCapa, fillColor: colorCapa }
-          : colorPoi(p.fuente);
-        return (
-          <CircleMarker
-            key={`${p.capa ?? ""}:${p.placeId}`}
-            center={[p.lat, p.lng]}
-            radius={5}
-            pathOptions={{
-              color: c.color,
-              weight: p.fuente === "ambas" ? 2 : 1.5,
-              fillColor: c.fillColor,
-              fillOpacity: 0.75,
-            }}
-          >
-            <Popup>
-              <div className="font-mono text-xs max-w-[220px]">
-                <strong>{p.nombre}</strong>
-                <div>{p.direccion}</div>
-                <div>
-                  {p.lat.toFixed(6)}, {p.lng.toFixed(6)} · {p.distancia} m
-                </div>
-                <div>
-                  fuente: {p.fuente.toUpperCase()}
-                  {p.estrato ? ` · ${p.estrato}` : ""}
-                </div>
-                {p.capa && <div>capa: {p.capa}</div>}
-                {p.actividad && <div>{p.actividad}</div>}
-              </div>
-            </Popup>
-          </CircleMarker>
-        );
-      })}
+      <CapaPois pois={pois} colorPorCapa={props.colorPorCapa} />
 
       <Encuadre {...props} />
     </MapContainer>

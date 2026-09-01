@@ -35,6 +35,11 @@ export default function ResultsTable({
 
   if (pois.length === 0) return null;
 
+  // con miles de resultados (búsquedas sobre listas grandes) la tabla
+  // se acota: el detalle completo vive en el CSV
+  const MAX_FILAS = 500;
+  const filas = pois.length > MAX_FILAS ? pois.slice(0, MAX_FILAS) : pois;
+
   return (
     <div className="absolute bottom-0 left-0 right-0 z-[1000] border-t border-linea bg-panel/95 backdrop-blur">
       <button
@@ -70,7 +75,7 @@ export default function ResultsTable({
               </tr>
             </thead>
             <tbody>
-              {pois.map((p, i) => {
+              {filas.map((p, i) => {
                 const origen = origenes[p.origenIdx];
                 const activo = seleccionado?.placeId === p.placeId;
                 return (
@@ -140,6 +145,13 @@ export default function ResultsTable({
               })}
             </tbody>
           </table>
+          {pois.length > filas.length && (
+            <p className="border-t border-linea/60 px-4 py-1.5 font-mono text-[10px] text-zinc-600">
+              Mostrando {filas.length.toLocaleString("es-MX")} de{" "}
+              {pois.length.toLocaleString("es-MX")} — el detalle completo va en
+              el CSV de POIs.
+            </p>
+          )}
         </div>
       )}
     </div>

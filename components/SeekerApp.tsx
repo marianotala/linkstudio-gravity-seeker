@@ -163,6 +163,11 @@ const PALETA_CAPAS = [
 // procesamiento y búsqueda POR LOTES con confirmación de costo.
 const LOTE_GEOCODE = 500;
 const LOTE_CENTROS_BUSQUEDA = 150;
+/** Tope de consultas a Google por búsqueda (costo). Configurable. */
+const MAX_CONSULTAS_BUSQUEDA =
+  Number(process.env.NEXT_PUBLIC_MAX_CONSULTAS_BUSQUEDA) > 0
+    ? Number(process.env.NEXT_PUBLIC_MAX_CONSULTAS_BUSQUEDA)
+    : 5000;
 /** Con más orígenes que esto, la búsqueda pide confirmación de costo
  * y corre por lotes (y los universos van por lotes espaciales). */
 const UMBRAL_ORIGENES_GRANDES = 50;
@@ -2467,9 +2472,16 @@ export default function SeekerApp({
     let descartadosTotal = previo?.descartados ?? 0;
     const detExc = previo?.detExc ?? new Set<string>();
     const detDesc = previo?.detDesc ?? new Set<string>();
+    // tamaño de lote adaptativo: "solo por nombre" pagina hasta 60
+    // resultados por centro (y multiplica por término), así que los
+    // lotes se encogen para no rozar el timeout del endpoint (60 s)
+    const tamanoLote =
+      categoria === SOLO_NOMBRE
+        ? Math.max(30, Math.floor(120 / Math.max(1, nameFilters.length)))
+        : LOTE_CENTROS_BUSQUEDA;
     const lotes: Origin[][] = [];
-    for (let i = 0; i < centros.length; i += LOTE_CENTROS_BUSQUEDA) {
-      lotes.push(centros.slice(i, i + LOTE_CENTROS_BUSQUEDA));
+    for (let i = 0; i < centros.length; i += tamanoLote) {
+      lotes.push(centros.slice(i, i + tamanoLote));
     }
     let li = previo?.indice ?? 0;
 
@@ -2643,10 +2655,17 @@ export default function SeekerApp({
       const consultasPorCentro =
         categoria === SOLO_NOMBRE ? Math.max(1, nameFilters.length) : 1;
       const consultas = centros.length * consultasPorCentro;
+      if (consultas > MAX_CONSULTAS_BUSQUEDA) {
+        reportar(
+          "error",
+          `Esta búsqueda necesita ~${consultas.toLocaleString("es-MX")} consultas y el máximo es ${MAX_CONSULTAS_BUSQUEDA.toLocaleString("es-MX")} por búsqueda (NEXT_PUBLIC_MAX_CONSULTAS_BUSQUEDA). Sube el radio para consolidar más, divide la lista, o corre "solo universos" sin costo.`
+        );
+        return;
+      }
       setPlanOrigenes({ centros, consultas });
       reportar(
         "ok",
-        `Esta búsqueda usará ~${consultas.toLocaleString("es-MX")} consultas a Google (${centrosActivos.length.toLocaleString("es-MX")} orígenes${centros.length < centrosActivos.length ? ` consolidados en ${centros.length.toLocaleString("es-MX")} zonas por traslape` : ""}). Confirma abajo — o corre "solo universos" sin costo.`
+        `Esta búsqueda usará ~${consultas.toLocaleString("es-MX")} consultas a Google (${centrosActivos.length.toLocaleString("es-MX")} orígenes${centros.length < centrosActivos.length ? ` consolidados en ${centros.length.toLocaleString("es-MX")} zonas por traslape` : ""} · tope ${MAX_CONSULTAS_BUSQUEDA.toLocaleString("es-MX")}). Confirma abajo — o corre "solo universos" sin costo.`
       );
       return;
     }

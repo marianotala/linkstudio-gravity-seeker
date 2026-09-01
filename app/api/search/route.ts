@@ -70,9 +70,15 @@ function dentroDeViewport(
 const BodySchema = z
   .object({
     mode: z.enum(["origins", "zone", "census", "cp"]),
+    // 200 es el tamaño máximo de UN LOTE por request (técnico, no de
+    // negocio): con más orígenes, la app divide la búsqueda en lotes
+    // automáticamente. Ver este mensaje = frontend desactualizado.
     centers: z
       .array(CenterSchema)
-      .max(200, "Máximo 200 orígenes por búsqueda")
+      .max(
+        200,
+        "Máximo 200 centros por lote de búsqueda — con más orígenes la app divide en lotes automáticamente. Si ves este mensaje, recarga la página (versión desactualizada)."
+      )
       .default([]),
     radius: z
       .number()
@@ -230,13 +236,19 @@ export async function POST(req: Request) {
     }));
   }
 
-  // Protección de cuota: 1 búsqueda normal o 1 celda de censo por llamada.
-  // La RPC es security definer, atómica, y regresa permitido=true para admin.
+  // Protección de cuota: 1 búsqueda normal o 1 celda/lote por llamada.
+  // Los requests persist:false son PARTES de un proceso mayor (celdas
+  // de censo, lotes de la búsqueda por orígenes grandes): cuentan
+  // contra el límite de celdas (más holgado), no contra el de
+  // búsquedas — si no, una lista de 6 mil orígenes agotaría el día en
+  // un solo run. La RPC es security definer, atómica, y regresa
+  // permitido=true para admin.
+  const esLote = mode === "census" || parsed.data.persist === false;
   try {
     const { data: cuota, error: errorCuota } = await supabase.rpc(
       "consumir_cuota",
       {
-        p_tipo: mode === "census" ? "celda" : "busqueda",
+        p_tipo: esLote ? "celda" : "busqueda",
         p_max_busquedas: LIMITE_BUSQUEDAS,
         p_max_celdas: LIMITE_CELDAS,
       }
@@ -247,10 +259,9 @@ export async function POST(req: Request) {
       const c = cuota as { searches_count?: number; cells_count?: number };
       return NextResponse.json(
         {
-          error:
-            mode === "census"
-              ? `Alcanzaste tu límite diario de censo (${LIMITE_CELDAS} celdas por día; llevas ${c.cells_count ?? LIMITE_CELDAS}). Se reinicia mañana; los admin no tienen límite.`
-              : `Alcanzaste tu límite diario (${LIMITE_BUSQUEDAS} búsquedas por día; llevas ${c.searches_count ?? LIMITE_BUSQUEDAS}). Se reinicia mañana; los admin no tienen límite.`,
+          error: esLote
+            ? `Alcanzaste tu límite diario de celdas/lotes (${LIMITE_CELDAS} por día; llevas ${c.cells_count ?? LIMITE_CELDAS}). Se reinicia mañana; los admin no tienen límite.`
+            : `Alcanzaste tu límite diario (${LIMITE_BUSQUEDAS} búsquedas por día; llevas ${c.searches_count ?? LIMITE_BUSQUEDAS}). Se reinicia mañana; los admin no tienen límite.`,
         },
         { status: 429 }
       );

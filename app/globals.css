@@ -150,3 +150,10 @@ body {
   font-weight: 600;
   box-shadow: 0 0 14px rgba(47, 185, 232, 0.35);
 }
+
+/* clusters de POIs: magenta (los de orígenes son cian) */
+.cluster-pois {
+  background: rgba(244, 54, 138, 0.16);
+  border-color: #f4368a;
+  box-shadow: 0 0 14px rgba(244, 54, 138, 0.35);
+}
