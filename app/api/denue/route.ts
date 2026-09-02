@@ -24,7 +24,8 @@ const BodySchema = z.object({
 });
 
 const LIMITE_BUSQUEDAS = parseInt(process.env.DAILY_SEARCH_LIMIT ?? "", 10) || 50;
-const LIMITE_CELDAS = parseInt(process.env.DAILY_CELL_LIMIT ?? "", 10) || 300;
+// Respaldo si app_config no tiene tope (consumir_cuota lee la base).
+const LIMITE_CELDAS = parseInt(process.env.DAILY_CELL_LIMIT ?? "", 10) || 2500;
 
 export async function POST(req: Request) {
   const supabase = createClient();
@@ -77,9 +78,12 @@ export async function POST(req: Request) {
     if (errorCuota) {
       console.error("No se pudo verificar la cuota:", errorCuota.message);
     } else if (cuota && (cuota as { permitido?: boolean }).permitido === false) {
+      const tope =
+        (cuota as { tope_celdas?: number }).tope_celdas ?? LIMITE_CELDAS;
       return NextResponse.json(
         {
-          error: `Alcanzaste tu límite diario de celdas de censo (${LIMITE_CELDAS} por día). Se reinicia mañana; los admin no tienen límite.`,
+          codigo: "limite_diario",
+          error: `Alcanzaste tu límite diario de celdas de censo (${tope} por día). El avance queda guardado y el tope se reinicia mañana; un admin puede subirlo en Admin.`,
         },
         { status: 429 }
       );

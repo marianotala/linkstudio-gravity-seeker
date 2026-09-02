@@ -26,13 +26,7 @@ import {
 } from "@/lib/ooh";
 import { descargarPlantillaOrigenes, parsearArchivo } from "@/lib/parse";
 import { createClient } from "@/lib/supabase/client";
-import {
-  LOTE_UNIVERSOS,
-  UMBRAL_UNIVERSOS_LOTES,
-  agregarUniversosCrudos,
-  agruparGeocercasPorProximidad,
-  type UniversosCrudo,
-} from "@/lib/universos-lotes";
+import { calcularUniversosCliente } from "@/lib/universos-lotes";
 import type {
   CrucePantalla,
   GeocercaUniverso,
@@ -347,45 +341,18 @@ export default function OohView({ usuario }: { usuario: PerfilUsuario | null }) 
         radio_m: c.radioM,
       }));
       const criterio = `población alrededor de las ${crucesPlan.length.toLocaleString("es-MX")} pantallas del plan (radio ${radioTexto})`;
-      let u: Universos;
-      if (geocercas.length <= UMBRAL_UNIVERSOS_LOTES) {
-        const { universos: sencillo } = await postJson<{ universos: Universos }>(
-          "/api/universos",
-          { geocercas }
-        );
-        u = sencillo?.disponible ? { ...sencillo, criterio } : sencillo;
-      } else {
-        const lotes = agruparGeocercasPorProximidad(geocercas, LOTE_UNIVERSOS);
-        const crudos: UniversosCrudo[] = [];
-        let fallidos = 0;
-        for (let i = 0; i < lotes.length; i++) {
+      // pieza ÚNICA de universos (la misma de todos los modos de Seeker):
+      // geometría chica en un RPC, grande subdividida + lotes exactos
+      const u = await calcularUniversosCliente(geocercas, criterio, {
+        onProgreso: (lote, total) =>
           setProceso({
             etapa: "Calculando universos",
-            detalle: `lote ${i + 1} de ${lotes.length}`,
-            actual: i,
-            total: lotes.length,
-          });
-          let logrado = false;
-          for (let intento = 0; intento < 3 && !logrado; intento++) {
-            try {
-              const { crudo } = await postJson<{ crudo: UniversosCrudo }>(
-                "/api/universos",
-                { geocercas: lotes[i], crudo: true }
-              );
-              if (crudo?.ok) crudos.push(crudo);
-              logrado = true;
-            } catch {
-              await new Promise((r) => setTimeout(r, 800 * (intento + 1)));
-            }
-          }
-          if (!logrado) fallidos++;
-        }
-        setProceso(null);
-        u = agregarUniversosCrudos(
-          crudos,
-          `${criterio}${fallidos > 0 ? ` · ${fallidos} de ${lotes.length} lotes fallaron y quedaron fuera` : ""}`
-        );
-      }
+            detalle: `lote ${lote + 1} de ${total}`,
+            actual: lote,
+            total,
+          }),
+      });
+      setProceso(null);
       setUniversos(u);
       reportar(
         u?.disponible ? "ok" : "error",

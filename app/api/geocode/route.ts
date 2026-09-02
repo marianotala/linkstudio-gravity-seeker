@@ -68,7 +68,11 @@ export async function POST(req: Request) {
   } catch (e) {
     const mensaje =
       e instanceof GoogleError ? e.message : "Error inesperado al geocodificar";
-    return NextResponse.json({ error: mensaje }, { status: 502 });
+    const codigo = e instanceof GoogleError ? e.codigo : undefined;
+    return NextResponse.json(
+      { error: mensaje, ...(codigo ? { codigo } : {}) },
+      { status: codigo ? 429 : 502 }
+    );
   }
 
   return NextResponse.json({ resultados });

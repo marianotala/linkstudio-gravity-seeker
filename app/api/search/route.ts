@@ -97,6 +97,9 @@ const BodySchema = z
      * Si viene, manda sobre category/freeQuery. */
     categories: z.array(z.string().trim().min(1).max(90)).max(12).optional(),
     persist: z.boolean().optional(),
+    /** false = NO calcular universos en el servidor (geometrías
+     * grandes: el cliente los calcula por lotes con la pieza común). */
+    universos: z.boolean().optional(),
     /** Solo modo cp: códigos postales de 5 dígitos. */
     cps: z
       .array(z.string().regex(/^\d{5}$/, "CP inválido: usa 5 dígitos"))
@@ -145,7 +148,8 @@ const BodySchema = z
 
 // Límites diarios por usuario (los admin no tienen límite).
 const LIMITE_BUSQUEDAS = parseInt(process.env.DAILY_SEARCH_LIMIT ?? "", 10) || 50;
-const LIMITE_CELDAS = parseInt(process.env.DAILY_CELL_LIMIT ?? "", 10) || 300;
+// Respaldo si app_config no tiene tope (consumir_cuota lee la base).
+const LIMITE_CELDAS = parseInt(process.env.DAILY_CELL_LIMIT ?? "", 10) || 2500;
 
 const LOTE_CENTROS = 8;
 
@@ -309,11 +313,17 @@ export async function POST(req: Request) {
     if (errorCuota) {
       console.error("No se pudo verificar la cuota:", errorCuota.message);
     } else if (cuota && (cuota as { permitido?: boolean }).permitido === false) {
-      const c = cuota as { searches_count?: number; cells_count?: number };
+      const c = cuota as {
+        searches_count?: number;
+        cells_count?: number;
+        tope_celdas?: number;
+      };
+      const topeCeldas = c.tope_celdas ?? LIMITE_CELDAS;
       return NextResponse.json(
         {
+          codigo: "limite_diario",
           error: esLote
-            ? `Alcanzaste tu límite diario de celdas/lotes (${LIMITE_CELDAS} por día; llevas ${c.cells_count ?? LIMITE_CELDAS}). Se reinicia mañana; los admin no tienen límite.`
+            ? `Alcanzaste tu límite diario de celdas/lotes (${topeCeldas} por día; llevas ${c.cells_count ?? topeCeldas}). El avance queda guardado y el tope se reinicia mañana; un admin puede subirlo en Admin.`
             : `Alcanzaste tu límite diario (${LIMITE_BUSQUEDAS} búsquedas por día; llevas ${c.searches_count ?? LIMITE_BUSQUEDAS}). Se reinicia mañana; los admin no tienen límite.`,
         },
         { status: 429 }
@@ -555,7 +565,7 @@ export async function POST(req: Request) {
     // CP = interpolación areal contra el POLÍGONO real de cada código.
     // Nunca bloquea los POIs: si falla, universos.disponible = false.
     let universos: Universos | undefined;
-    if (poisFinales.length > 0) {
+    if (poisFinales.length > 0 && parsed.data.universos !== false) {
       const geocercas: GeocercaUniverso[] =
         mode === "cp"
           ? cpsEncontrados.map((c) => ({
@@ -637,6 +647,10 @@ export async function POST(req: Request) {
   } catch (e) {
     const mensaje =
       e instanceof GoogleError ? e.message : "Error inesperado al buscar POIs";
-    return NextResponse.json({ error: mensaje }, { status: 502 });
+    const codigo = e instanceof GoogleError ? e.codigo : undefined;
+    return NextResponse.json(
+      { error: mensaje, ...(codigo ? { codigo } : {}) },
+      { status: codigo ? 429 : 502 }
+    );
   }
 }

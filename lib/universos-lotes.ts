@@ -90,6 +90,282 @@ export function agruparGeocercasPorProximidad(
   return lotes;
 }
 
+// ------------------------------------------------------------------
+// Subdivisión de geometrías GRANDES (radios de 10-30 km, viewports de
+// ciudad completa): una sola unión gigante excede el timeout del RPC.
+// Un círculo grande se parte en celdas de cuadrícula CLIPEADAS al
+// círculo (celda ∩ círculo, exacto — validado en vivo al habitante) y
+// un viewport grande en sub-rectángulos (teselado exacto). Las celdas
+// no se traslapan entre lotes: la agregación de crudos es exacta.
+// ------------------------------------------------------------------
+
+/** Círculo con radio mayor a esto se subdivide en celdas. */
+export const RADIO_SUBDIVIDIR_M = 8000;
+/** Lado de las celdas al subdividir un círculo. */
+const CELDA_CIRCULO_M = 4000;
+/** Viewport con lado mayor a esto (km) se subdivide. */
+const LADO_SUBDIVIDIR_VIEWPORT_KM = 25;
+const PASO_VIEWPORT_KM = 18;
+/** Área máxima (km²) que puede cargar un lote del RPC crudo. */
+export const MAX_AREA_LOTE_KM2 = 300;
+
+const KM_POR_GRADO = 111.32;
+
+/** Área estimada (km²) de una geocerca, para acotar los lotes. */
+export function areaGeocercaKm2(g: GeocercaUniverso): number {
+  if (g.viewport) {
+    const midLat = ((g.viewport.north + g.viewport.south) / 2) * (Math.PI / 180);
+    const w =
+      Math.abs(g.viewport.east - g.viewport.west) *
+      KM_POR_GRADO *
+      Math.max(0.2, Math.cos(midLat));
+    const h = Math.abs(g.viewport.north - g.viewport.south) * KM_POR_GRADO;
+    return w * h;
+  }
+  if (g.lat !== undefined && g.radio_m !== undefined) {
+    return (Math.PI * g.radio_m * g.radio_m) / 1e6;
+  }
+  return 3; // CP: polígono chico típico
+}
+
+/** Área total estimada (km²) — para decidir servidor vs lotes. */
+export function areaTotalKm2(geocercas: GeocercaUniverso[]): number {
+  return geocercas.reduce((s, g) => s + areaGeocercaKm2(g), 0);
+}
+
+/**
+ * Subdivide las geocercas grandes. Regresa la lista fina y si hubo
+ * subdivisión (para decidir el camino por lotes).
+ */
+export function subdividirGeocercas(geocercas: GeocercaUniverso[]): {
+  finas: GeocercaUniverso[];
+  huboSubdivision: boolean;
+} {
+  const finas: GeocercaUniverso[] = [];
+  let huboSubdivision = false;
+
+  for (const g of geocercas) {
+    // círculo grande → celdas clipeadas al círculo (exacto)
+    if (
+      g.lat !== undefined &&
+      g.lng !== undefined &&
+      g.radio_m !== undefined &&
+      !g.viewport &&
+      !g.cp &&
+      g.radio_m > RADIO_SUBDIVIDIR_M
+    ) {
+      huboSubdivision = true;
+      const dLat = CELDA_CIRCULO_M / 111320;
+      const dLng =
+        CELDA_CIRCULO_M /
+        (111320 * Math.max(0.2, Math.cos((g.lat * Math.PI) / 180)));
+      const n = Math.ceil(g.radio_m / CELDA_CIRCULO_M);
+      const clip = { lat: g.lat, lng: g.lng, radio_m: g.radio_m };
+      for (let i = -n - 1; i <= n; i++) {
+        for (let j = -n - 1; j <= n; j++) {
+          const south = g.lat + i * dLat;
+          const north = south + dLat;
+          const west = g.lng + j * dLng;
+          const east = west + dLng;
+          // ¿la celda toca el círculo? distancia del punto del
+          // rectángulo más cercano al centro (aprox plana escalada)
+          const cLat = Math.min(Math.max(g.lat, south), north);
+          const cLng = Math.min(Math.max(g.lng, west), east);
+          const dy = (cLat - g.lat) * 111320;
+          const dx =
+            (cLng - g.lng) *
+            111320 *
+            Math.max(0.2, Math.cos((g.lat * Math.PI) / 180));
+          if (Math.sqrt(dx * dx + dy * dy) > g.radio_m) continue;
+          finas.push({
+            id: `${g.id}~${i}:${j}`,
+            viewport: { north, south, east, west },
+            clip,
+          });
+        }
+      }
+      continue;
+    }
+    // viewport grande → sub-rectángulos (teselado exacto, sin clip)
+    if (g.viewport && !g.cp) {
+      const midLat =
+        ((g.viewport.north + g.viewport.south) / 2) * (Math.PI / 180);
+      const wKm =
+        Math.abs(g.viewport.east - g.viewport.west) *
+        KM_POR_GRADO *
+        Math.max(0.2, Math.cos(midLat));
+      const hKm =
+        Math.abs(g.viewport.north - g.viewport.south) * KM_POR_GRADO;
+      if (Math.max(wKm, hKm) > LADO_SUBDIVIDIR_VIEWPORT_KM) {
+        huboSubdivision = true;
+        const nx = Math.max(1, Math.ceil(wKm / PASO_VIEWPORT_KM));
+        const ny = Math.max(1, Math.ceil(hKm / PASO_VIEWPORT_KM));
+        const dLng = (g.viewport.east - g.viewport.west) / nx;
+        const dLat = (g.viewport.north - g.viewport.south) / ny;
+        for (let iy = 0; iy < ny; iy++) {
+          for (let ix = 0; ix < nx; ix++) {
+            finas.push({
+              id: `${g.id}~${ix}:${iy}`,
+              viewport: {
+                west: g.viewport.west + ix * dLng,
+                east: g.viewport.west + (ix + 1) * dLng,
+                south: g.viewport.south + iy * dLat,
+                north: g.viewport.south + (iy + 1) * dLat,
+              },
+            });
+          }
+        }
+        continue;
+      }
+    }
+    finas.push(g);
+  }
+  return { finas, huboSubdivision };
+}
+
+/**
+ * Agrupa por proximidad y parte en lotes acotados por CONTEO y por
+ * ÁREA estimada: celdas de subdivisión (16 km² c/u) llenan un lote
+ * mucho antes que buffers de 500 m — cada unión queda barata.
+ */
+export function agruparGeocercasEnLotes(
+  geocercas: GeocercaUniverso[],
+  maxPorLote = LOTE_UNIVERSOS,
+  maxAreaKm2 = MAX_AREA_LOTE_KM2
+): GeocercaUniverso[][] {
+  const ordenadas = geocercas
+    .map((g) => ({ g, c: llaveEspacial(g) }))
+    .sort((a, b) => {
+      const ca = `${Math.floor(a.c.lat)}:${Math.floor(a.c.lng)}`;
+      const cb = `${Math.floor(b.c.lat)}:${Math.floor(b.c.lng)}`;
+      if (ca !== cb) return ca < cb ? -1 : 1;
+      return a.c.lat - b.c.lat || a.c.lng - b.c.lng;
+    })
+    .map(({ g }) => g);
+  const lotes: GeocercaUniverso[][] = [];
+  let actual: GeocercaUniverso[] = [];
+  let area = 0;
+  for (const g of ordenadas) {
+    const a = areaGeocercaKm2(g);
+    if (actual.length > 0 && (actual.length >= maxPorLote || area + a > maxAreaKm2)) {
+      lotes.push(actual);
+      actual = [];
+      area = 0;
+    }
+    actual.push(g);
+    area += a;
+  }
+  if (actual.length > 0) lotes.push(actual);
+  return lotes;
+}
+
+// ------------------------------------------------------------------
+// PIEZA ÚNICA del cálculo de universos desde el cliente — la comparten
+// TODOS los modos (orígenes, zona, CPs, censo de marca, censo
+// territorial, OOH). Geometría chica → RPC único (conserva el desglose
+// por geocerca); geometría grande o muchas geocercas → subdivisión +
+// lotes crudos con reintentos y progreso. Cada fix aquí aplica a todos
+// los modos de una vez.
+// ------------------------------------------------------------------
+
+/** Área total máxima para el RPC único (sin lotes). */
+export const MAX_AREA_SENCILLO_KM2 = 300;
+
+export interface OpcionesUniversosCliente {
+  /** Progreso del camino por lotes (lote actual 0-based, total). */
+  onProgreso?: (lote: number, totalLotes: number) => void;
+  /** true = abortar entre lotes (botón Detener). */
+  cancelado?: () => boolean;
+}
+
+async function postUniversos<T>(body: unknown): Promise<T> {
+  const res = await fetch("/api/universos", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`);
+  return data;
+}
+
+export async function calcularUniversosCliente(
+  geocercas: GeocercaUniverso[],
+  criterio: string,
+  opciones: OpcionesUniversosCliente = {}
+): Promise<Universos> {
+  if (geocercas.length === 0) {
+    return { disponible: false, mensaje: "Sin geocercas para calcular" };
+  }
+  const { finas, huboSubdivision } = subdividirGeocercas(geocercas);
+
+  // geometría CHICA: un solo RPC — conserva porGeocerca y el detalle
+  if (
+    !huboSubdivision &&
+    geocercas.length <= UMBRAL_UNIVERSOS_LOTES &&
+    areaTotalKm2(geocercas) <= MAX_AREA_SENCILLO_KM2
+  ) {
+    try {
+      const { universos } = await postUniversos<{ universos: Universos }>({
+        geocercas,
+      });
+      return universos?.disponible ? { ...universos, criterio } : universos;
+    } catch (e) {
+      return {
+        disponible: false,
+        mensaje:
+          e instanceof Error ? e.message : "Error al calcular universos",
+      };
+    }
+  }
+
+  // geometría GRANDE: lotes crudos con reintentos y agregación exacta
+  const lotes = agruparGeocercasEnLotes(finas);
+  const crudos: UniversosCrudo[] = [];
+  const fallidos: number[] = [];
+  for (let i = 0; i < lotes.length; i++) {
+    if (opciones.cancelado?.()) {
+      return {
+        disponible: false,
+        mensaje: `Cálculo detenido en el lote ${i + 1} de ${lotes.length}.`,
+      };
+    }
+    opciones.onProgreso?.(i, lotes.length);
+    let logrado = false;
+    let ultimoError = "";
+    for (let intento = 0; intento < 3 && !logrado; intento++) {
+      try {
+        const { crudo } = await postUniversos<{ crudo: UniversosCrudo }>({
+          geocercas: lotes[i],
+          crudo: true,
+        });
+        if (crudo?.ok) crudos.push(crudo);
+        logrado = true;
+      } catch (e) {
+        ultimoError = e instanceof Error ? e.message : "error de consulta";
+        await new Promise((r) => setTimeout(r, 800 * (intento + 1)));
+      }
+    }
+    if (!logrado) {
+      fallidos.push(i + 1);
+      console.error(
+        `Universos: el lote ${i + 1} de ${lotes.length} falló tras 3 intentos: ${ultimoError}`
+      );
+    }
+  }
+  if (crudos.length === 0) {
+    return {
+      disponible: false,
+      mensaje: `Los ${lotes.length} lotes de universos fallaron — reintenta; si persiste, avisa al admin.`,
+    };
+  }
+  const nota =
+    fallidos.length > 0
+      ? ` · ${fallidos.length} de ${lotes.length} lotes fallaron (${fallidos.slice(0, 5).join(", ")}${fallidos.length > 5 ? "…" : ""}) y quedaron fuera del total`
+      : "";
+  return agregarUniversosCrudos(crudos, `${criterio}${nota}`);
+}
+
 const r1 = (x: number) => Math.round(x * 10) / 10;
 
 /**

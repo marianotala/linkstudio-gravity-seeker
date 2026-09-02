@@ -2302,3 +2302,327 @@ $$;
 
 revoke execute on function public.screens_resumen() from public, anon;
 grant execute on function public.screens_resumen() to authenticated;
+
+-- ============================================================
+-- MIGRACIÓN FASE 15 — universos a escala (clip) + cuotas
+-- ============================================================
+-- (a) calcular_universos_crudo v2: una geocerca puede traer "clip"
+--     (círculo lat/lng/radio_m). La geometría queda como la
+--     INTERSECCIÓN de la base (viewport/círculo/cp) con el clip: así
+--     el cliente subdivide un círculo o viewport GRANDE en celdas
+--     chicas EXACTAS (celda ∩ círculo) que se reparten en lotes sin
+--     traslape ni doble conteo — mismos totales que la geometría
+--     completa, pero cada lote es barato y no excede el timeout.
+--     (Validado en vivo: círculo de 12 km CDMX == 40 celdas clipeadas
+--     en 2 lotes, población/adultos/edades idénticos al habitante.)
+-- (b) app_config: configuración editable desde /admin (tope diario de
+--     celdas por usuario). consumir_cuota v2 lee el tope de ahí (el
+--     parámetro queda de respaldo) y regresa el tope efectivo.
+-- (c) cuota_estado(): saldo del usuario para avisar ANTES de ejecutar.
+-- (d) admin_consumo_api(): consumo por usuario hoy y en el mes.
+
+create or replace function public.calcular_universos_crudo(p_geocercas jsonb)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v jsonb;
+begin
+  if coalesce(jsonb_array_length(p_geocercas), 0) = 0
+     or jsonb_array_length(p_geocercas) > 500 then
+    return jsonb_build_object('ok', false, 'motivo', 'geocercas_invalidas');
+  end if;
+
+  with gc as (
+    select case
+      when g.value ? 'clip' then ST_Intersection(
+        base.geom,
+        (ST_Buffer(
+          ST_SetSRID(ST_MakePoint(
+            (g.value->'clip'->>'lng')::float,
+            (g.value->'clip'->>'lat')::float), 4326)::geography,
+          least(greatest((g.value->'clip'->>'radio_m')::float, 10), 100000)
+        ))::geometry
+      )
+      else base.geom
+    end as geom
+    from jsonb_array_elements(p_geocercas) with ordinality as g
+    cross join lateral (
+      select case
+        when g.value ? 'cp' then (select c.geom from public.cp_poligonos c where c.codigo_postal = g.value->>'cp')
+        when g.value ? 'viewport' then ST_MakeEnvelope(
+          (g.value->'viewport'->>'west')::float,
+          (g.value->'viewport'->>'south')::float,
+          (g.value->'viewport'->>'east')::float,
+          (g.value->'viewport'->>'north')::float, 4326)
+        else (ST_Buffer(
+          ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+          least(greatest((g.value->>'radio_m')::float, 10), 100000)
+        ))::geometry
+      end as geom
+    ) base
+  ),
+  un as (select ST_Union(geom) as geom from gc),
+  inter as (
+    select a.pobtot, a.pobfem, a.pobmas, a.p_18ymas, a.p_18a24,
+           a.p_60ymas, a.tvivhab, a.nse_proxy,
+           coalesce(a.pob65_mas, coalesce(a.p_60ymas, 0) * 0.673) as p65_fila,
+           ST_Area(ST_Intersection(a.geom, un.geom)::geography)
+             / nullif(ST_Area(a.geom::geography), 0) as frac
+    from public.agebs a, un
+    where un.geom is not null and a.geom && un.geom and ST_Intersects(a.geom, un.geom)
+  ),
+  agg as (
+    select
+      count(*) as n,
+      coalesce(sum(pobtot * frac), 0) as pob,
+      coalesce(sum(p_18ymas * frac), 0) as adultos,
+      coalesce(sum(tvivhab * frac), 0) as viv,
+      sum(pobfem * frac) as pobfem,
+      sum(pobmas * frac) as pobmas,
+      coalesce(sum(p_18a24 * frac), 0) as e18a24,
+      coalesce(sum(greatest(coalesce(p_18ymas,0) - coalesce(p_18a24,0) - coalesce(p_60ymas,0), 0) * frac), 0) as e25a59,
+      coalesce(sum(greatest(coalesce(p_60ymas,0) - p65_fila, 0) * frac), 0) as e60a64,
+      coalesce(sum(p65_fila * frac), 0) as e65,
+      coalesce(sum(p_60ymas * frac), 0) as e60,
+      coalesce(sum(nse_proxy * coalesce(pobtot,0) * frac), 0) as s_nse,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy is not null), 0) as w_nse,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 75), 0) as w_ab,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 65 and nse_proxy < 75), 0) as w_cmas,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 55 and nse_proxy < 65), 0) as w_c,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 45 and nse_proxy < 55), 0) as w_cmenos,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 35 and nse_proxy < 45), 0) as w_dmas,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy < 35), 0) as w_de
+    from inter where frac > 0
+  ),
+  rur as (
+    select
+      count(*) as n_loc,
+      coalesce(sum(l.pobtot), 0) as pob,
+      coalesce(sum(l.p_18ymas), 0) as adultos,
+      coalesce(sum(l.tvivhab), 0) as viv,
+      sum(l.pobfem) as pobfem,
+      sum(l.pobmas) as pobmas,
+      coalesce(sum(l.p_18a24), 0) as e18a24,
+      coalesce(sum(greatest(coalesce(l.p_18ymas,0) - coalesce(l.p_18a24,0) - coalesce(l.p_60ymas,0), 0)), 0) as e25a59,
+      coalesce(sum(l.p_60ymas), 0) as e60
+    from public.localidades_rurales l, un
+    where un.geom is not null and l.geom && un.geom and ST_Within(l.geom, un.geom)
+  )
+  select jsonb_build_object(
+    'ok', true,
+    'agebs', agg.n,
+    'rurales', rur.n_loc,
+    'pob_u', agg.pob, 'adultos_u', agg.adultos, 'viv_u', agg.viv,
+    'pobfem_u', agg.pobfem, 'pobmas_u', agg.pobmas,
+    'e18a24_u', agg.e18a24, 'e25a59_u', agg.e25a59,
+    'e60a64_u', agg.e60a64, 'e65_u', agg.e65, 'e60_u', agg.e60,
+    's_nse', agg.s_nse,
+    'w_nse', agg.w_nse, 'w_ab', agg.w_ab, 'w_cmas', agg.w_cmas,
+    'w_c', agg.w_c, 'w_cmenos', agg.w_cmenos, 'w_dmas', agg.w_dmas,
+    'w_de', agg.w_de,
+    'pob_r', rur.pob, 'adultos_r', rur.adultos, 'viv_r', rur.viv,
+    'pobfem_r', rur.pobfem, 'pobmas_r', rur.pobmas,
+    'e18a24_r', rur.e18a24, 'e25a59_r', rur.e25a59, 'e60_r', rur.e60
+  )
+  into v from agg, rur;
+  return v;
+end;
+$$;
+
+revoke execute on function public.calcular_universos_crudo(jsonb) from public, anon;
+grant execute on function public.calcular_universos_crudo(jsonb) to authenticated;
+
+-- ------------------------------------------------------------
+-- app_config: configuración editable desde /admin
+-- ------------------------------------------------------------
+create table if not exists public.app_config (
+  clave text primary key,
+  valor jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.app_config enable row level security;
+
+drop policy if exists "config: leer autenticados" on public.app_config;
+create policy "config: leer autenticados"
+  on public.app_config for select
+  to authenticated
+  using (true);
+
+drop policy if exists "config: insertar admin" on public.app_config;
+create policy "config: insertar admin"
+  on public.app_config for insert
+  to authenticated
+  with check (public.es_admin());
+
+drop policy if exists "config: actualizar admin" on public.app_config;
+create policy "config: actualizar admin"
+  on public.app_config for update
+  to authenticated
+  using (public.es_admin());
+
+insert into public.app_config (clave, valor)
+values ('cuotas', '{"tope_celdas_dia": 2500}'::jsonb)
+on conflict (clave) do nothing;
+
+-- ------------------------------------------------------------
+-- consumir_cuota v2: el tope de celdas configurado en app_config
+-- MANDA sobre el parámetro (que queda de respaldo). Regresa el tope
+-- efectivo para que el mensaje del cliente sea correcto.
+-- ------------------------------------------------------------
+create or replace function public.consumir_cuota(
+  p_tipo text,             -- 'busqueda' | 'celda'
+  p_max_busquedas int,
+  p_max_celdas int
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v usage_limits%rowtype;
+  v_tope_celdas int;
+begin
+  if v_uid is null then
+    return jsonb_build_object('permitido', false, 'motivo', 'sin_sesion');
+  end if;
+
+  if exists (select 1 from public.profiles where id = v_uid and rol = 'admin') then
+    return jsonb_build_object('permitido', true, 'admin', true);
+  end if;
+
+  v_tope_celdas := coalesce(
+    (select (valor ->> 'tope_celdas_dia')::int from public.app_config where clave = 'cuotas'),
+    p_max_celdas
+  );
+
+  insert into public.usage_limits (user_id, date)
+  values (v_uid, current_date)
+  on conflict (user_id, date) do nothing;
+
+  select * into v
+  from public.usage_limits
+  where user_id = v_uid and date = current_date
+  for update;
+
+  if p_tipo = 'celda' then
+    if v.cells_count >= v_tope_celdas then
+      return jsonb_build_object(
+        'permitido', false,
+        'searches_count', v.searches_count,
+        'cells_count', v.cells_count,
+        'tope_celdas', v_tope_celdas
+      );
+    end if;
+    update public.usage_limits
+      set cells_count = cells_count + 1
+      where user_id = v_uid and date = current_date;
+    v.cells_count := v.cells_count + 1;
+  else
+    if v.searches_count >= p_max_busquedas then
+      return jsonb_build_object(
+        'permitido', false,
+        'searches_count', v.searches_count,
+        'cells_count', v.cells_count,
+        'tope_celdas', v_tope_celdas
+      );
+    end if;
+    update public.usage_limits
+      set searches_count = searches_count + 1
+      where user_id = v_uid and date = current_date;
+    v.searches_count := v.searches_count + 1;
+  end if;
+
+  return jsonb_build_object(
+    'permitido', true,
+    'searches_count', v.searches_count,
+    'cells_count', v.cells_count,
+    'tope_celdas', v_tope_celdas
+  );
+end;
+$$;
+
+revoke execute on function public.consumir_cuota(text, int, int) from public, anon;
+grant execute on function public.consumir_cuota(text, int, int) to authenticated;
+
+-- ------------------------------------------------------------
+-- cuota_estado(): saldo del usuario actual, para avisar ANTES de
+-- ejecutar ("esta búsqueda usará ~N celdas; te quedan M hoy").
+-- ------------------------------------------------------------
+create or replace function public.cuota_estado()
+returns jsonb
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'es_admin', public.es_admin(),
+    'celdas_hoy', coalesce((
+      select cells_count from public.usage_limits
+      where user_id = auth.uid() and date = current_date
+    ), 0),
+    'busquedas_hoy', coalesce((
+      select searches_count from public.usage_limits
+      where user_id = auth.uid() and date = current_date
+    ), 0),
+    'tope_celdas', coalesce(
+      (select (valor ->> 'tope_celdas_dia')::int from public.app_config where clave = 'cuotas'),
+      2500
+    )
+  );
+$$;
+
+revoke execute on function public.cuota_estado() from public, anon;
+grant execute on function public.cuota_estado() to authenticated;
+
+-- ------------------------------------------------------------
+-- admin_consumo_api(): consumo por usuario hoy y en el mes (solo
+-- admin), para monitorear el gasto real de la API y calibrar el tope.
+-- ------------------------------------------------------------
+create or replace function public.admin_consumo_api()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v jsonb;
+begin
+  if not public.es_admin() then
+    return '[]'::jsonb;
+  end if;
+  select coalesce(jsonb_agg(fila order by celdas_mes desc, celdas_hoy desc), '[]'::jsonb)
+  into v
+  from (
+    select jsonb_build_object(
+      'user_id', p.id,
+      'email', p.email,
+      'nombre', p.nombre,
+      'rol', p.rol,
+      'celdas_hoy', coalesce(sum(u.cells_count) filter (where u.date = current_date), 0),
+      'busquedas_hoy', coalesce(sum(u.searches_count) filter (where u.date = current_date), 0),
+      'celdas_mes', coalesce(sum(u.cells_count) filter (where u.date >= date_trunc('month', current_date)), 0),
+      'busquedas_mes', coalesce(sum(u.searches_count) filter (where u.date >= date_trunc('month', current_date)), 0)
+    ) as fila,
+    coalesce(sum(u.cells_count) filter (where u.date >= date_trunc('month', current_date)), 0) as celdas_mes,
+    coalesce(sum(u.cells_count) filter (where u.date = current_date), 0) as celdas_hoy
+    from public.profiles p
+    left join public.usage_limits u on u.user_id = p.id
+    group by p.id, p.email, p.nombre, p.rol
+    having coalesce(sum(u.cells_count), 0) + coalesce(sum(u.searches_count), 0) > 0
+        or p.rol = 'admin'
+  ) t;
+  return v;
+end;
+$$;
+
+revoke execute on function public.admin_consumo_api() from public, anon;
+grant execute on function public.admin_consumo_api() to authenticated;

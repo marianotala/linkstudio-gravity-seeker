@@ -90,6 +90,22 @@ export default function AdminView({
   const [mensajePantallas, setMensajePantallas] = useState<{ tipo: "ok" | "error" | "info"; texto: string } | null>(null);
   const inputPantallasRef = useRef<HTMLInputElement>(null);
 
+  // ---- consumo de la API y tope diario de celdas (configurable)
+  interface ConsumoUsuario {
+    user_id: string;
+    email: string;
+    nombre: string | null;
+    rol: string;
+    celdas_hoy: number;
+    busquedas_hoy: number;
+    celdas_mes: number;
+    busquedas_mes: number;
+  }
+  const [consumo, setConsumo] = useState<ConsumoUsuario[]>([]);
+  const [topeCeldas, setTopeCeldas] = useState<string>("");
+  const [guardandoTope, setGuardandoTope] = useState(false);
+  const [mensajeTope, setMensajeTope] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+
   // ---- catálogo CP → colonias (Correos de México)
   const [totalColonias, setTotalColonias] = useState<number | null>(null);
   const [cargandoColonias, setCargandoColonias] = useState(false);
@@ -114,9 +130,20 @@ export default function AdminView({
     );
     const { data: pantallas } = await supabase.rpc("screens_resumen");
     setResumenPantallas(((pantallas ?? []) as ResumenLotePantallas[]) ?? []);
+    const { data: consumoApi } = await supabase.rpc("admin_consumo_api");
+    setConsumo(((consumoApi ?? []) as ConsumoUsuario[]) ?? []);
+    const { data: config } = await supabase
+      .from("app_config")
+      .select("valor")
+      .eq("clave", "cuotas")
+      .maybeSingle();
+    const tope = (config?.valor as { tope_celdas_dia?: number } | null)
+      ?.tope_celdas_dia;
+    if (tope) setTopeCeldas(String(tope));
   }
   useEffect(() => {
     cargarResumen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const porExtension = (ext: string) =>
@@ -501,6 +528,36 @@ export default function AdminView({
       setCargandoPantallas(false);
       setProgresoPantallas(null);
     }
+  }
+
+  // ---- tope diario de celdas: editable, vive en app_config (la RPC
+  //      consumir_cuota lo lee de ahí en cada consulta)
+  async function guardarTopeCeldas() {
+    const tope = parseInt(topeCeldas, 10);
+    if (!Number.isFinite(tope) || tope < 1 || tope > 1000000) {
+      setMensajeTope({ tipo: "error", texto: "Escribe un tope válido (1 a 1,000,000)." });
+      return;
+    }
+    setGuardandoTope(true);
+    setMensajeTope(null);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("app_config")
+      .upsert({ clave: "cuotas", valor: { tope_celdas_dia: tope }, updated_at: new Date().toISOString() });
+    if (error) {
+      setMensajeTope({
+        tipo: "error",
+        texto: /row-level security/i.test(error.message)
+          ? "Tu usuario no tiene rol admin."
+          : error.message,
+      });
+    } else {
+      setMensajeTope({
+        tipo: "ok",
+        texto: `Tope guardado: ${tope.toLocaleString("es-MX")} celdas/día por usuario (aplica de inmediato; los admin siguen sin límite).`,
+      });
+    }
+    setGuardandoTope(false);
   }
 
   async function borrarLotePantallas(lote: string) {
@@ -1010,6 +1067,94 @@ export default function AdminView({
                   ))}
                 </tbody>
               </table>
+            )}
+          </div>
+
+          {/* consumo de la API + tope diario de celdas */}
+          <div className="tarjeta glow-cian px-6 py-6">
+            <h2 className="font-display text-xl font-extrabold tracking-tight text-white">
+              Consumo de la API y tope diario
+            </h2>
+            <p className="mt-1 font-mono text-[11px] leading-relaxed text-zinc-500">
+              Cada celda de censo/lote es una consulta a Google. El tope
+              diario por usuario protege la cuota — edítalo aquí con datos
+              reales del consumo (los admin no tienen límite). Los usuarios
+              ven su saldo antes de ejecutar y, al toparlo, el avance queda
+              guardado y se reanuda al día siguiente.
+            </p>
+
+            <div className="mt-3 flex items-center gap-2">
+              <label className="font-mono text-[11px] text-zinc-400">
+                Tope de celdas/día por usuario
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={topeCeldas}
+                onChange={(e) => setTopeCeldas(e.target.value)}
+                placeholder="2500"
+                className={`${inputCls} w-32`}
+              />
+              <button
+                onClick={guardarTopeCeldas}
+                disabled={guardandoTope}
+                className="shrink-0 rounded-md bg-cian px-4 py-2 font-display text-xs font-extrabold text-fondo transition-opacity hover:opacity-90 disabled:opacity-40"
+              >
+                {guardandoTope ? "Guardando…" : "Guardar tope"}
+              </button>
+            </div>
+            {mensajeTope && (
+              <p
+                className={`mt-2 font-mono text-[11px] ${
+                  mensajeTope.tipo === "ok" ? "text-emerald-400" : "text-magenta"
+                }`}
+              >
+                {mensajeTope.texto}
+              </p>
+            )}
+
+            {consumo.length > 0 && (
+              <table className="mt-4 w-full text-left font-mono text-xs">
+                <thead className="text-zinc-500">
+                  <tr>
+                    <th className="py-1.5 pr-3 font-medium">Usuario</th>
+                    <th className="py-1.5 pr-3 text-right font-medium">Celdas hoy</th>
+                    <th className="py-1.5 pr-3 text-right font-medium">Búsq. hoy</th>
+                    <th className="py-1.5 pr-3 text-right font-medium">Celdas mes</th>
+                    <th className="py-1.5 text-right font-medium">Búsq. mes</th>
+                  </tr>
+                </thead>
+                <tbody className="text-zinc-300">
+                  {consumo.map((c) => (
+                    <tr key={c.user_id} className="border-t border-linea/60">
+                      <td className="max-w-[220px] truncate py-2 pr-3" title={c.email}>
+                        {c.nombre ?? c.email}
+                        {c.rol === "admin" && (
+                          <span className="ml-1.5 text-violeta">· admin (sin límite)</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-cian">
+                        {c.celdas_hoy.toLocaleString("es-MX")}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-zinc-400">
+                        {c.busquedas_hoy.toLocaleString("es-MX")}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-violeta">
+                        {c.celdas_mes.toLocaleString("es-MX")}
+                      </td>
+                      <td className="py-2 text-right text-zinc-400">
+                        {c.busquedas_mes.toLocaleString("es-MX")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {consumo.length === 0 && (
+              <p className="mt-3 font-mono text-[11px] text-zinc-600">
+                Sin consumo registrado todavía (el consumo de los admin no se
+                contabiliza).
+              </p>
             )}
           </div>
 

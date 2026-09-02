@@ -11,8 +11,43 @@ const TEXT_URL = "https://places.googleapis.com/v1/places:searchText";
 const FIELD_MASK =
   "places.id,places.displayName,places.formattedAddress,places.location,places.types";
 
+/** Tipo de límite de Google: rate limit por minuto (pausa breve y se
+ * reanuda solo) vs cuota DIARIA agotada (se reinicia a medianoche,
+ * hora del Pacífico). El cliente decide el backoff con este código. */
+export type CodigoErrorGoogle = "rate" | "cuota_diaria";
+
 /** Error de Google ya traducido a un mensaje claro en español. */
-export class GoogleError extends Error {}
+export class GoogleError extends Error {
+  codigo?: CodigoErrorGoogle;
+  constructor(mensaje: string, codigo?: CodigoErrorGoogle) {
+    super(mensaje);
+    this.codigo = codigo;
+  }
+}
+
+// ------------------------------------------------------------------
+// PACING: espaciar las consultas a Google para respetar el límite por
+// minuto — mejor lento y completo que rápido y muerto. Configurable
+// con GOOGLE_MAX_QPS (consultas/segundo, default 8). El limitador es
+// por instancia del servidor (suficiente: los lotes del cliente corren
+// en secuencia, así que casi todo el tráfico pasa por una instancia).
+// ------------------------------------------------------------------
+const QPS =
+  Number(process.env.GOOGLE_MAX_QPS) > 0
+    ? Number(process.env.GOOGLE_MAX_QPS)
+    : 8;
+const INTERVALO_MS = 1000 / QPS;
+let proximoTurno = 0;
+
+/** Reserva un turno en la fila del limitador y espera hasta que toque. */
+async function turnoGoogle(): Promise<void> {
+  const ahora = Date.now();
+  const mio = Math.max(ahora, proximoTurno);
+  proximoTurno = mio + INTERVALO_MS;
+  if (mio > ahora) {
+    await new Promise((r) => setTimeout(r, mio - ahora));
+  }
+}
 
 function getKey(): string {
   const key = process.env.GOOGLE_MAPS_KEY;
@@ -43,8 +78,17 @@ function traducirErrorPlaces(status: number, data: unknown): GoogleError {
     );
   }
   if (status === 429 || estado === "RESOURCE_EXHAUSTED") {
+    // distinguir el TIPO de límite: por minuto (se reanuda solo con
+    // backoff) vs cuota diaria (se reinicia a medianoche del Pacífico)
+    if (/per day|perday|daily/i.test(mensaje)) {
+      return new GoogleError(
+        "La cuota DIARIA de la API de Google se agotó — se reinicia a la medianoche, hora del Pacífico (≈ 1-2 a.m. CDMX). El avance queda guardado: reanuda mañana o aumenta la cuota en Google Cloud Console.",
+        "cuota_diaria"
+      );
+    }
     return new GoogleError(
-      "Se agotó la cuota de la API de Google. Espera un momento e intenta de nuevo."
+      "Google limitó el ritmo de consultas (límite por minuto) — pausa breve y se reanuda solo.",
+      "rate"
     );
   }
   return new GoogleError(
@@ -89,6 +133,7 @@ async function postPlaces(
   body: Record<string, unknown>,
   fieldMask: string
 ): Promise<unknown> {
+  await turnoGoogle();
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -197,6 +242,7 @@ export async function geocodeDireccion(
     language: "es",
     key: getKey(),
   });
+  await turnoGoogle();
   const res = await fetch(`${GEOCODE_URL}?${params}`, { cache: "no-store" });
   const data = (await res.json().catch(() => ({}))) as {
     status?: string;
@@ -237,10 +283,15 @@ export async function geocodeDireccion(
     }
     case "ZERO_RESULTS":
       return { ok: false, error: "Sin resultados para esta dirección" };
-    case "OVER_QUERY_LIMIT":
     case "OVER_DAILY_LIMIT":
       throw new GoogleError(
-        "Se agotó la cuota de la API de Geocoding. Espera un momento e intenta de nuevo."
+        "La cuota DIARIA de la API de Geocoding se agotó — se reinicia a la medianoche, hora del Pacífico (≈ 1-2 a.m. CDMX).",
+        "cuota_diaria"
+      );
+    case "OVER_QUERY_LIMIT":
+      throw new GoogleError(
+        "Google limitó el ritmo de geocodificación (límite por minuto) — pausa breve y se reanuda solo.",
+        "rate"
       );
     case "REQUEST_DENIED":
       if (/api key/i.test(data.error_message ?? "")) {

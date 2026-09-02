@@ -25,6 +25,15 @@ const GeocercaSchema = z.object({
   viewport: ViewportSchema.optional(),
   /** Polígono real de un código postal cargado en cp_poligonos. */
   cp: z.string().regex(/^\d{5}$/).optional(),
+  /** Recorte con círculo (celda ∩ círculo): subdivisión exacta de
+   * radios grandes — solo lo usa el camino por lotes (crudo). */
+  clip: z
+    .object({
+      lat: z.number().min(-90).max(90),
+      lng: z.number().min(-180).max(180),
+      radio_m: z.number().min(10).max(100000),
+    })
+    .optional(),
 });
 
 const BodySchema = z.object({

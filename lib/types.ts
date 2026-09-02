@@ -149,7 +149,9 @@ export interface DeltaCenso {
 // ------------------------------------------------------------------
 
 /** Geocerca para calcular universos: círculo, rectángulo (viewport)
- * o polígono real de código postal ({cp: "11560"}). */
+ * o polígono real de código postal ({cp: "11560"}). `clip` recorta la
+ * geometría base con un círculo (celda ∩ círculo): así se subdividen
+ * círculos GRANDES en celdas exactas sin traslape entre lotes. */
 export interface GeocercaUniverso {
   id: string;
   lat?: number;
@@ -157,6 +159,7 @@ export interface GeocercaUniverso {
   radio_m?: number;
   viewport?: Viewport;
   cp?: string;
+  clip?: { lat: number; lng: number; radio_m: number };
 }
 
 export interface UniversoPorGeocerca {
@@ -256,6 +259,9 @@ export interface SearchRequest {
    * completo se guarda al final vía POST /api/searches).
    */
   persist?: boolean;
+  /** false = el servidor NO calcula universos (geometrías grandes: el
+   * cliente los calcula por lotes con la pieza común escalable). */
+  universos?: boolean;
   /** Solo en búsquedas census guardadas: metadata de la cuadrícula. */
   censo?: CensoInfo;
   /** Solo modo cp: códigos postales de 5 dígitos (centers va vacío). */

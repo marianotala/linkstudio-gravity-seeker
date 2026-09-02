@@ -28,10 +28,10 @@ import {
   normalizarComparable,
 } from "@/lib/geo";
 import {
-  agregarUniversosCrudos,
-  agruparGeocercasPorProximidad,
+  areaTotalKm2,
+  calcularUniversosCliente,
+  MAX_AREA_SENCILLO_KM2,
   UMBRAL_UNIVERSOS_LOTES,
-  type UniversosCrudo,
 } from "@/lib/universos-lotes";
 import { createClient } from "@/lib/supabase/client";
 import { DIAS_AMARILLO, frescuraCenso } from "@/lib/censos";
@@ -405,6 +405,13 @@ function Kpi({
   );
 }
 
+/** Error de la API con código para decidir el manejo: "rate" (backoff
+ * automático y se reanuda solo), "cuota_diaria" (Google: se reinicia a
+ * medianoche del Pacífico) o "limite_diario" (celdas por usuario). */
+class ErrorApi extends Error {
+  codigo?: string;
+}
+
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
@@ -413,10 +420,16 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error((data as ApiError).error ?? `Error ${res.status}`);
+    const err = new ErrorApi((data as ApiError).error ?? `Error ${res.status}`);
+    err.codigo = (data as { codigo?: string }).codigo;
+    throw err;
   }
   return data as T;
 }
+
+/** Esperas del backoff automático ante rate limit de Google (2b). */
+const ESPERAS_CUOTA_S = [30, 60, 120, 240, 300];
+const MAX_ESPERAS_CUOTA = 5;
 
 export default function SeekerApp({
   usuario,
@@ -473,6 +486,64 @@ export default function SeekerApp({
     detExc: Set<string>;
     detDesc: Set<string>;
   } | null>(null);
+  /** El avance de la búsqueda por lotes también se PERSISTE en el
+   * navegador: si la cuota diaria (de Google o de celdas) topa hoy,
+   * mañana se reanuda EXACTAMENTE donde quedó — sin re-consultar ni
+   * re-pagar los POIs ya acumulados — aunque se cierre la pestaña. */
+  const CLAVE_AVANCE_BUSQUEDA = "seeker:avance-busqueda";
+  function persistirAvanceBusqueda() {
+    try {
+      const s = busquedaGrandeRef.current;
+      if (!s) {
+        localStorage.removeItem(CLAVE_AVANCE_BUSQUEDA);
+        return;
+      }
+      const json = JSON.stringify({
+        firma: s.firma,
+        indice: s.indice,
+        pois: Array.from(s.acumulados.values()),
+        excluidos: s.excluidos,
+        descartados: s.descartados,
+        detExc: Array.from(s.detExc),
+        detDesc: Array.from(s.detDesc),
+      });
+      // localStorage aguanta ~5 MB: listas gigantes viven solo en memoria
+      if (json.length <= 4_500_000) {
+        localStorage.setItem(CLAVE_AVANCE_BUSQUEDA, json);
+      }
+    } catch {
+      // almacenamiento lleno o bloqueado: el avance sigue en memoria
+    }
+  }
+  useEffect(() => {
+    try {
+      const crudo = localStorage.getItem(CLAVE_AVANCE_BUSQUEDA);
+      if (!crudo) return;
+      const s = JSON.parse(crudo) as {
+        firma: string;
+        indice: number;
+        pois: Poi[];
+        excluidos?: number;
+        descartados?: number;
+        detExc?: string[];
+        detDesc?: string[];
+      };
+      if (!s?.firma || !Array.isArray(s.pois)) return;
+      busquedaGrandeRef.current = {
+        firma: s.firma,
+        indice: s.indice ?? 0,
+        acumulados: new Map(s.pois.map((p) => [p.placeId, p])),
+        excluidos: s.excluidos ?? 0,
+        descartados: s.descartados ?? 0,
+        detExc: new Set(s.detExc ?? []),
+        detDesc: new Set(s.detDesc ?? []),
+      };
+    } catch {
+      // avance corrupto: se ignora
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /** Confirmación de costo para búsquedas con muchos orígenes. La
    * estimación se muestra en una CAJA visible (el header trunca los
    * mensajes largos — así se perdía el aviso). */
@@ -487,6 +558,60 @@ export default function SeekerApp({
     setPlanOrigenes(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [radio, categoriasSel, nameFilters, excludes, origenes]);
+
+  // ---- saldo diario de celdas del usuario (3c): se consulta al armar
+  //      cualquier plan de ejecución para avisar ANTES de gastar
+  const [saldoCeldas, setSaldoCeldas] = useState<{
+    esAdmin: boolean;
+    usadas: number;
+    tope: number;
+  } | null>(null);
+  async function cargarSaldoCeldas() {
+    try {
+      const supabase = createClient();
+      const { data } = await supabase.rpc("cuota_estado");
+      const d = data as {
+        es_admin?: boolean;
+        celdas_hoy?: number;
+        tope_celdas?: number;
+      } | null;
+      if (d) {
+        setSaldoCeldas({
+          esAdmin: !!d.es_admin,
+          usadas: d.celdas_hoy ?? 0,
+          tope: d.tope_celdas ?? 2500,
+        });
+      }
+    } catch {
+      // sin saldo visible no se bloquea nada: el servidor sigue vigilando
+    }
+  }
+
+  /** Nota de saldo bajo los planes de ejecución: "usará ~N celdas · te
+   * quedan M hoy", con aviso al acercarse (80%) o rebasar el tope. */
+  function notaSaldoCeldas(consultas: number) {
+    if (!saldoCeldas || saldoCeldas.esAdmin) return null;
+    const restantes = Math.max(0, saldoCeldas.tope - saldoCeldas.usadas);
+    const excede = consultas > restantes;
+    const cerca =
+      !excede && (saldoCeldas.usadas + consultas) / saldoCeldas.tope >= 0.8;
+    return (
+      <p
+        className={`mt-1.5 font-mono text-[10px] leading-relaxed ${
+          excede ? "text-magenta" : cerca ? "text-amber-400" : "text-zinc-500"
+        }`}
+      >
+        Tu saldo diario: te quedan{" "}
+        {restantes.toLocaleString("es-MX")} de {saldoCeldas.tope.toLocaleString("es-MX")}{" "}
+        celdas hoy
+        {excede
+          ? ` — esta corrida (~${consultas.toLocaleString("es-MX")}) no alcanza completa: el avance queda guardado al topar y se reanuda mañana.`
+          : cerca
+            ? ` — con esta corrida te acercas al tope diario.`
+            : "."}
+      </p>
+    );
+  }
 
   // ---- estado de resultados
   const [pois, setPois] = useState<Poi[]>([]);
@@ -1175,6 +1300,7 @@ export default function SeekerApp({
     setOrigenes(conNombre);
     setPlanOrigenes(null);
     busquedaGrandeRef.current = null;
+    persistirAvanceBusqueda();
     const notas: string[] = [];
     const corregidos =
       (correcciones?.lngCorregidas ?? 0) + (correcciones?.coordsSeparadas ?? 0);
@@ -1584,6 +1710,7 @@ export default function SeekerApp({
         return;
       }
       setCoberturaCp({ celdas, factor });
+      cargarSaldoCeldas();
       reportar(
         celdas.length <= MAX_CELDAS_CP ? "ok" : "error",
         celdas.length <= MAX_CELDAS_CP
@@ -1623,19 +1750,12 @@ export default function SeekerApp({
     reportar("busy", `Calculando universos de ${cpsGeo.length} CPs…`);
     try {
       const cpsCodigos = cpsGeo.map((c) => c.codigo_postal);
-      const { universos: u } = await postJson<{ universos: Universos }>(
-        "/api/universos",
-        { geocercas: cpsCodigos.map((cp) => ({ id: cp, cp })) }
-      );
       const mostrados = cpsCodigos.slice(0, 8).join(", ");
-      setUniversos(
-        u?.disponible
-          ? {
-              ...u,
-              criterio: `población dentro de los CPs ${mostrados}${cpsCodigos.length > 8 ? ` y ${cpsCodigos.length - 8} más` : ""}`,
-            }
-          : u
+      const u = await calcularUniversosEscalables(
+        cpsCodigos.map((cp) => ({ id: cp, cp })),
+        `población dentro de los CPs ${mostrados}${cpsCodigos.length > 8 ? ` y ${cpsCodigos.length - 8} más` : ""}`
       );
+      setUniversos(u);
       setAgebsGeo(null);
       setCapaDemografica(false);
       geocercasRef.current = cpsCodigos.map((cp) => ({ id: cp, cp }));
@@ -1681,6 +1801,7 @@ export default function SeekerApp({
       let errorFatal: string | null = null;
       let celdasFallidas = 0;
       let fallosSeguidos = 0;
+      let esperasCuota = 0;
 
       // Filtro múltiple: con "separar en capas" y "solo por nombre" se
       // corre UNA PASADA POR TÉRMINO sobre la misma malla (Google no
@@ -1711,6 +1832,7 @@ export default function SeekerApp({
               persist: false,
             } satisfies SearchRequest);
             fallosSeguidos = 0;
+            esperasCuota = 0;
             excluidosTotal += data.excluidos;
             descartadosTotal += data.descartadosPorNombre;
             (data.detalleExcluidos ?? []).forEach((n) => {
@@ -1724,7 +1846,27 @@ export default function SeekerApp({
             }
           } catch (e) {
             const mensaje = e instanceof Error ? e.message : "Error en la celda";
-            if (esErrorFatalDeCenso(mensaje)) {
+            const codigo = e instanceof ErrorApi ? e.codigo : undefined;
+            if (codigo === "rate" && esperasCuota < MAX_ESPERAS_CUOTA) {
+              const seguir = await esperarCuotaGoogle(
+                esperasCuota,
+                "Buscando POIs",
+                pi * celdasCp.length + i,
+                totalPasos,
+                detenerCensoRef
+              );
+              esperasCuota++;
+              if (seguir) {
+                i--;
+                continue;
+              }
+              break bucle;
+            }
+            if (
+              codigo === "cuota_diaria" ||
+              codigo === "limite_diario" ||
+              esErrorFatalDeCenso(mensaje)
+            ) {
               errorFatal = mensaje;
               break bucle;
             }
@@ -1837,17 +1979,11 @@ export default function SeekerApp({
       let universosCp: Universos | null = reutilizarUniversos ? universos : null;
       if (lista.length > 0 && !reutilizarUniversos) {
         try {
-          const { universos: u } = await postJson<{ universos: Universos }>(
-            "/api/universos",
-            { geocercas: cpsCodigos.map((cp) => ({ id: cp, cp })) }
-          );
           const mostrados = cpsCodigos.slice(0, 8).join(", ");
-          universosCp = u?.disponible
-            ? {
-                ...u,
-                criterio: `población dentro de los CPs ${mostrados}${cpsCodigos.length > 8 ? ` y ${cpsCodigos.length - 8} más` : ""}`,
-              }
-            : u;
+          universosCp = await calcularUniversosEscalables(
+            cpsCodigos.map((cp) => ({ id: cp, cp })),
+            `población dentro de los CPs ${mostrados}${cpsCodigos.length > 8 ? ` y ${cpsCodigos.length - 8} más` : ""}`
+          );
         } catch (e) {
           console.error("No se pudieron calcular universos de los CPs:", e);
         }
@@ -1926,6 +2062,7 @@ export default function SeekerApp({
     detenerOrigenesRef.current = true;
     geocodePendienteRef.current = null;
     busquedaGrandeRef.current = null;
+    persistirAvanceBusqueda();
     setPlanOrigenes(null);
     setProceso(null);
     setTextDirecciones("");
@@ -1994,27 +2131,25 @@ export default function SeekerApp({
   ): Promise<Universos | null> {
     if (lista.length === 0) return null;
     try {
-      const geocercas: GeocercaUniverso[] = lista.slice(0, 2000).map((p) => ({
+      // SIN tope de geocercas: la pieza común reparte en lotes crudos
+      // (censos grandes tipo "Bares y antros CDMX 20 km" con miles de
+      // buffers ya no truenan por timeout)
+      const geocercas: GeocercaUniverso[] = lista.map((p) => ({
         id: p.placeId,
         lat: p.lat,
         lng: p.lng,
         radio_m: radio,
       }));
-      geocercasRef.current = geocercas;
-      const { universos: u } = await postJson<{ universos: Universos }>(
-        "/api/universos",
-        { geocercas }
+      // la capa demográfica (choropleth) solo aplica en censos chicos
+      geocercasRef.current = geocercas.length <= 2000 ? geocercas : null;
+      const u = await calcularUniversosEscalables(
+        geocercas,
+        `población a ${etiquetaMetros(radio)} de los puntos censados`
       );
-      const conCriterio: Universos = u?.disponible
-        ? {
-            ...u,
-            criterio: `población a ${etiquetaMetros(radio)} de los puntos censados`,
-          }
-        : u;
-      setUniversos(conCriterio);
+      setUniversos(u);
       setAgebsGeo(null);
       setCapaDemografica(false);
-      return conCriterio;
+      return u;
     } catch (e) {
       console.error("No se pudieron calcular universos del censo:", e);
       return null;
@@ -2117,6 +2252,7 @@ export default function SeekerApp({
       setZona(centro);
       const cuadricula = generarCuadricula(centro, alcance, radioCelda, tipoCuadricula);
       setCeldas(cuadricula);
+      cargarSaldoCeldas();
       reportar(
         "ok",
         `Cuadrícula lista: ${cuadricula.length} celdas = ${cuadricula.length} llamadas a Google. Confirma para ejecutar.`
@@ -2146,6 +2282,7 @@ export default function SeekerApp({
     let celdasCorridas = 0;
     let celdasFallidas = 0;
     let fallosSeguidos = 0;
+    let esperasCuota = 0;
 
     for (let i = 0; i < celdas.length; i++) {
       if (detenerCensoRef.current) break;
@@ -2161,6 +2298,7 @@ export default function SeekerApp({
         } satisfies SearchRequest);
         celdasCorridas++;
         fallosSeguidos = 0;
+        esperasCuota = 0;
         excluidosTotal += data.excluidos;
         descartadosTotal += data.descartadosPorNombre;
         (data.detalleExcluidos ?? []).forEach((n) => {
@@ -2181,9 +2319,31 @@ export default function SeekerApp({
         }
       } catch (e) {
         const mensaje = e instanceof Error ? e.message : "Error en el censo";
-        // Solo cuota/auth/configuración abortan; una celda con timeout
-        // o error de red se salta y el censo sigue.
-        if (esErrorFatalDeCenso(mensaje)) {
+        const codigo = e instanceof ErrorApi ? e.codigo : undefined;
+        // rate limit por minuto: espera con cuenta regresiva y reintenta
+        // la MISMA celda — backoff automático sin perder avance
+        if (codigo === "rate" && esperasCuota < MAX_ESPERAS_CUOTA) {
+          const seguir = await esperarCuotaGoogle(
+            esperasCuota,
+            "Censando la marca",
+            i,
+            celdas.length,
+            detenerCensoRef
+          );
+          esperasCuota++;
+          if (seguir) {
+            i--;
+            continue;
+          }
+          break;
+        }
+        // cuota diaria de Google / límite de celdas / auth / config
+        // abortan; una celda con timeout o red se salta y sigue.
+        if (
+          codigo === "cuota_diaria" ||
+          codigo === "limite_diario" ||
+          esErrorFatalDeCenso(mensaje)
+        ) {
           errorFatal = mensaje;
           break;
         }
@@ -2327,6 +2487,7 @@ export default function SeekerApp({
         plan = generarCuadricula(centro, terRadio, TER_RADIO_CELDA, "hex");
       }
       setCeldas(plan);
+      cargarSaldoCeldas();
       const fuentes = terFuente === "ambas" ? 2 : 1;
       reportar(
         "ok",
@@ -2364,6 +2525,7 @@ export default function SeekerApp({
     let celdasCorridas = 0;
     let celdasFallidas = 0;
     let fallosSeguidos = 0;
+    let esperasCuota = 0;
     // registros basura de DENUE (nombres vacíos/genéricos): se
     // descartan pero se REPORTAN en el contador, no en silencio
     let basuraDenue = 0;
@@ -2425,9 +2587,30 @@ export default function SeekerApp({
         }
         celdasCorridas++;
         fallosSeguidos = 0;
+        esperasCuota = 0;
       } catch (e) {
         const mensaje = e instanceof Error ? e.message : "Error en el censo";
-        if (esErrorFatalDeCenso(mensaje)) {
+        const codigo = e instanceof ErrorApi ? e.codigo : undefined;
+        if (codigo === "rate" && esperasCuota < MAX_ESPERAS_CUOTA) {
+          const seguir = await esperarCuotaGoogle(
+            esperasCuota,
+            "Censo territorial",
+            i,
+            celdas.length,
+            detenerCensoRef
+          );
+          esperasCuota++;
+          if (seguir) {
+            i--;
+            continue;
+          }
+          break;
+        }
+        if (
+          codigo === "cuota_diaria" ||
+          codigo === "limite_diario" ||
+          esErrorFatalDeCenso(mensaje)
+        ) {
           errorFatal = mensaje;
           break;
         }
@@ -2527,66 +2710,62 @@ export default function SeekerApp({
     setProceso(null);
   }
 
-  // ---- universos POR LOTES (listas grandes de geocercas): agrupa por
-  //      proximidad, pide sumas CRUDAS por lote (cada unión es local y
-  //      no excede el timeout) y agrega al final — las edades siguen
-  //      sumando 100% porque se suman crudos, no porcentajes. Un lote
-  //      fallido se reintenta 3 veces sin tirar el cálculo completo.
-  async function calcularUniversosPorLotes(
+  // ---- universos: UNA sola pieza para TODOS los modos (orígenes,
+  //      zona, CPs, censo de marca y territorial) — vive en
+  //      lib/universos-lotes.ts (calcularUniversosCliente): geometría
+  //      chica en un RPC, geometría grande subdividida + lotes crudos
+  //      exactos. Este wrapper solo conecta el anillo de progreso.
+  async function calcularUniversosEscalables(
     geocercas: GeocercaUniverso[],
     criterio: string
   ): Promise<Universos> {
-    const lotes = agruparGeocercasPorProximidad(geocercas);
-    const crudos: UniversosCrudo[] = [];
-    const lotesFallidos: number[] = [];
-    for (let i = 0; i < lotes.length; i++) {
+    const u = await calcularUniversosCliente(geocercas, criterio, {
+      onProgreso: (lote, total) => {
+        setProceso({
+          etapa: "Calculando universos",
+          detalle: `lote ${lote + 1} de ${total}`,
+          actual: lote,
+          total,
+        });
+        reportar("busy", `Calculando universos: lote ${lote + 1} de ${total}…`);
+      },
+    });
+    setProceso((p) => (p?.error ? p : null));
+    if (u.disponible && u.criterio?.includes("lotes fallaron")) {
+      reportar("error", `Universos parciales: ${u.criterio.split("·").pop()?.trim()}`);
+    }
+    return u;
+  }
+
+  // ---- backoff automático ante rate limit de Google (2b): espera
+  //      exponencial con cuenta regresiva visible en el anillo, sin
+  //      intervención del usuario. Regresa false si el usuario detuvo.
+  async function esperarCuotaGoogle(
+    intento: number,
+    etapa: string,
+    actual: number,
+    total: number,
+    detenerRef: { current: boolean }
+  ): Promise<boolean> {
+    const espera = ESPERAS_CUOTA_S[Math.min(intento, ESPERAS_CUOTA_S.length - 1)];
+    reportar(
+      "busy",
+      `Google limitó el ritmo — esperando cuota, reintento en ${espera}s (pausa ${intento + 1} de ${MAX_ESPERAS_CUOTA})`
+    );
+    for (let s = espera; s > 0; s--) {
+      if (detenerRef.current) return false;
       setProceso({
-        etapa: "Calculando universos",
-        detalle: `lote ${i + 1} de ${lotes.length}`,
-        actual: i,
-        total: lotes.length,
+        etapa,
+        detalle: `esperando cuota de Google · reintento en ${s}s`,
+        actual,
+        total,
+        onDetener: () => {
+          detenerRef.current = true;
+        },
       });
-      reportar("busy", `Calculando universos: lote ${i + 1} de ${lotes.length}…`);
-      let logrado = false;
-      let ultimoError = "";
-      for (let intento = 0; intento < 3 && !logrado; intento++) {
-        try {
-          const { crudo } = await postJson<{ crudo: UniversosCrudo }>(
-            "/api/universos",
-            { geocercas: lotes[i], crudo: true }
-          );
-          if (crudo?.ok) crudos.push(crudo);
-          logrado = true;
-        } catch (e) {
-          ultimoError = e instanceof Error ? e.message : "error de consulta";
-          await new Promise((r) => setTimeout(r, 800 * (intento + 1)));
-        }
-      }
-      if (!logrado) {
-        lotesFallidos.push(i + 1);
-        console.error(
-          `Universos: el lote ${i + 1} de ${lotes.length} falló tras 3 intentos: ${ultimoError}`
-        );
-      }
+      await new Promise((r) => setTimeout(r, 1000));
     }
-    setProceso(null);
-    if (crudos.length === 0) {
-      return {
-        disponible: false,
-        mensaje: `Los ${lotes.length} lotes de universos fallaron — reintenta; si persiste, avisa al admin.`,
-      };
-    }
-    const nota =
-      lotesFallidos.length > 0
-        ? ` · ${lotesFallidos.length} de ${lotes.length} lotes fallaron (${lotesFallidos.slice(0, 5).join(", ")}${lotesFallidos.length > 5 ? "…" : ""}) y quedaron fuera del total`
-        : "";
-    if (lotesFallidos.length > 0) {
-      reportar(
-        "error",
-        `Universos parciales: fallaron los lotes ${lotesFallidos.slice(0, 8).join(", ")} de ${lotes.length} — el total no los incluye.`
-      );
-    }
-    return agregarUniversosCrudos(crudos, `${criterio}${nota}`);
+    return !detenerRef.current;
   }
 
   // ---- opción "solo universos" (modo orígenes): demografía de las
@@ -2607,16 +2786,7 @@ export default function SeekerApp({
         radio_m: radio,
       }));
       const criterio = `población a ${radio} m de ${origenes.length.toLocaleString("es-MX")} orígenes`;
-      let u: Universos;
-      if (geocercas.length <= UMBRAL_UNIVERSOS_LOTES) {
-        const { universos: sencillo } = await postJson<{ universos: Universos }>(
-          "/api/universos",
-          { geocercas }
-        );
-        u = sencillo?.disponible ? { ...sencillo, criterio } : sencillo;
-      } else {
-        u = await calcularUniversosPorLotes(geocercas, criterio);
-      }
+      const u = await calcularUniversosEscalables(geocercas, criterio);
       setUniversos(u);
       setAgebsGeo(null);
       setCapaDemografica(false);
@@ -2666,9 +2836,12 @@ export default function SeekerApp({
       lotes.push(centros.slice(i, i + tamanoLote));
     }
     let li = previo?.indice ?? 0;
+    // backoff automático ante rate limit: el MISMO lote se reintenta
+    // tras la espera — lo ya acumulado nunca se re-consulta ni re-paga
+    let esperasCuota = 0;
 
     try {
-      for (; li < lotes.length; li++) {
+      for (; li < lotes.length; ) {
         if (detenerOrigenesRef.current) break;
         setProceso({
           etapa: "Buscando POIs",
@@ -2683,18 +2856,40 @@ export default function SeekerApp({
           "busy",
           `Buscando POIs: lote ${li + 1} de ${lotes.length} · ${acumulados.size.toLocaleString("es-MX")} acumulados`
         );
-        const data = await postJson<SearchResponse>("/api/search", {
-          mode: "origins",
-          centers: lotes[li],
-          radius: radio,
-          category: categoriaParaApi,
-          freeQuery: freeQueryApi,
-        categories: categoriasApi.length ? categoriasApi : undefined,
-          nameFilter: filtroNombreTexto,
-          nameFilters,
-          excludes,
-          persist: false,
-        } satisfies SearchRequest);
+        let data: SearchResponse;
+        try {
+          data = await postJson<SearchResponse>("/api/search", {
+            mode: "origins",
+            centers: lotes[li],
+            radius: radio,
+            category: categoriaParaApi,
+            freeQuery: freeQueryApi,
+            categories: categoriasApi.length ? categoriasApi : undefined,
+            nameFilter: filtroNombreTexto,
+            nameFilters,
+            excludes,
+            persist: false,
+          } satisfies SearchRequest);
+        } catch (e) {
+          if (
+            e instanceof ErrorApi &&
+            e.codigo === "rate" &&
+            esperasCuota < MAX_ESPERAS_CUOTA
+          ) {
+            const seguir = await esperarCuotaGoogle(
+              esperasCuota,
+              "Buscando POIs",
+              li,
+              lotes.length,
+              detenerOrigenesRef
+            );
+            esperasCuota++;
+            if (!seguir) break;
+            continue; // reintenta el MISMO lote
+          }
+          throw e;
+        }
+        esperasCuota = 0;
         excluidosTotal += data.excluidos;
         descartadosTotal += data.descartadosPorNombre;
         (data.detalleExcluidos ?? []).forEach((n) => {
@@ -2715,14 +2910,20 @@ export default function SeekerApp({
           detExc,
           detDesc,
         };
+        // el avance también se persiste en el navegador: si la cuota
+        // diaria topa hoy, mañana se reanuda EXACTAMENTE donde quedó
+        persistirAvanceBusqueda();
+        li++;
       }
     } catch (e) {
+      const esDiaria = e instanceof ErrorApi && e.codigo === "cuota_diaria";
+      const esLimite = e instanceof ErrorApi && e.codigo === "limite_diario";
       setProceso({
         etapa: "Buscando POIs",
         detalle: "",
-        actual: 0,
-        total: 1,
-        error: `${e instanceof Error ? e.message : "Error al buscar"} — el avance quedó guardado (lote ${li + 1} de ${lotes.length}).`,
+        actual: li,
+        total: lotes.length,
+        error: `${e instanceof Error ? e.message : "Error al buscar"} — el avance quedó guardado (lote ${li + 1} de ${lotes.length}${esDiaria || esLimite ? "; también sobrevive si cierras la pestaña" : ""}).`,
         onReintentar: () => {
           setProceso(null);
           ejecutarBusquedaOrigenes(centros);
@@ -2774,6 +2975,7 @@ export default function SeekerApp({
       return;
     }
     busquedaGrandeRef.current = null;
+    persistirAvanceBusqueda();
     setPlanOrigenes(null);
 
     // universos por lotes sobre TODOS los orígenes (no los consolidados)
@@ -2783,7 +2985,7 @@ export default function SeekerApp({
       lng: o.lng,
       radio_m: radio,
     }));
-    const u = await calcularUniversosPorLotes(
+    const u = await calcularUniversosEscalables(
       geocercas,
       `población a ${radio} m de ${origenes.length.toLocaleString("es-MX")} orígenes`
     );
@@ -2841,6 +3043,7 @@ export default function SeekerApp({
       const consultas = centros.length * consultasPorCentro;
       const excedeTope = consultas > MAX_CONSULTAS_BUSQUEDA;
       setPlanOrigenes({ centros, consultas, excedeTope });
+      cargarSaldoCeldas();
       reportar(
         excedeTope ? "error" : "ok",
         excedeTope
@@ -2866,6 +3069,19 @@ export default function SeekerApp({
         : `Buscando POIs en ${centrosActivos.length} ${centrosActivos.length === 1 ? "zona" : "zonas"}…`
     );
     try {
+      // Geometría GRANDE (radios de 10-30 km, viewports de ciudad
+      // completa): el servidor NO calcula universos en línea (excedería
+      // su timeout); se calculan aquí con la pieza común por lotes.
+      const geocercasPrevistas: GeocercaUniverso[] = centrosActivos.map((c, i) =>
+        mode === "zone"
+          ? c.viewport
+            ? { id: c.nombre ?? String(i), viewport: c.viewport }
+            : { id: c.nombre ?? String(i), lat: c.lat, lng: c.lng, radio_m: radio }
+          : { id: c.nombre ?? String(i), lat: c.lat, lng: c.lng, radio_m: radio }
+      );
+      const universosEnServidor =
+        centrosActivos.length <= UMBRAL_UNIVERSOS_LOTES &&
+        areaTotalKm2(geocercasPrevistas) <= MAX_AREA_SENCILLO_KM2;
       const body: SearchRequest = {
         mode,
         centers: centrosActivos,
@@ -2876,6 +3092,7 @@ export default function SeekerApp({
         nameFilter: filtroNombreTexto,
         nameFilters,
         excludes,
+        ...(universosEnServidor ? {} : { universos: false }),
       };
       const data = await postJson<SearchResponse>("/api/search", body);
       setPois(data.pois);
@@ -2908,16 +3125,23 @@ export default function SeekerApp({
         descartados: data.detalleDescartados ?? [],
       });
       setVerLista(null);
-      // universos calculados por el servidor + geocercas para el choropleth
+      // universos: del servidor en geometrías chicas; en grandes se
+      // calculan aquí con la pieza común (subdivisión + lotes exactos)
       if (!reutilizarUniversos) {
-        setUniversos(data.universos ?? null);
+        geocercasRef.current = geocercasPrevistas;
+        if (universosEnServidor) {
+          setUniversos(data.universos ?? null);
+        } else if (data.pois.length > 0) {
+          const criterio =
+            mode === "zone"
+              ? `población dentro de ${centrosActivos.length === 1 ? "la zona" : `las ${centrosActivos.length} zonas`}`
+              : `población a ${radio >= 1000 ? `${radio / 1000} km` : `${radio} m`} de ${centrosActivos.length.toLocaleString("es-MX")} ${centrosActivos.length === 1 ? "origen" : "orígenes"}`;
+          setUniversos(await calcularUniversosEscalables(geocercasPrevistas, criterio));
+        } else {
+          setUniversos(null);
+        }
         setAgebsGeo(null);
         setCapaDemografica(false);
-        geocercasRef.current = centrosActivos.map((c, i) =>
-          mode === "zone"
-            ? { id: c.nombre ?? String(i), viewport: c.viewport }
-            : { id: c.nombre ?? String(i), lat: c.lat, lng: c.lng, radio_m: radio }
-        );
       }
       setTablaColapsada(false);
       const extras: string[] = [];
@@ -3697,6 +3921,9 @@ export default function SeekerApp({
                     {coberturaCp.factor > 1 && ` (celdas ×${coberturaCp.factor})`}{" "}
                     · tope {MAX_CELDAS_CP.toLocaleString("es-MX")}
                   </p>
+                  {notaSaldoCeldas(
+                    coberturaCp.celdas.length * consultasPorCentro
+                  )}
                   {coberturaCp.celdas.length <= MAX_CELDAS_CP ? (
                     <button
                       onClick={() => ejecutarCensoCp()}
@@ -3839,6 +4066,7 @@ export default function SeekerApp({
                     <span className="text-magenta">{celdas.length} llamadas</span> a
                     Google Places (searchText), en serie con pausa de 250 ms.
                   </p>
+                  {notaSaldoCeldas(celdas.length)}
                   <button
                     onClick={ejecutarCenso}
                     disabled={ocupado}
@@ -4417,6 +4645,7 @@ export default function SeekerApp({
                     reanudar.
                   </>
                 )}
+                {notaSaldoCeldas(planOrigenes.consultas)}
               </div>
             )}
             {mode === "origins" && planOrigenes && !ocupado && (
@@ -4432,6 +4661,7 @@ export default function SeekerApp({
                   onClick={() => {
                     setPlanOrigenes(null);
                     busquedaGrandeRef.current = null;
+                    persistirAvanceBusqueda();
                     reportar("ok", "Búsqueda cancelada");
                   }}
                   className="rounded-md border border-linea bg-panel2 px-3 py-2 text-left font-mono text-[11px] text-zinc-500 transition-colors hover:text-zinc-300"
