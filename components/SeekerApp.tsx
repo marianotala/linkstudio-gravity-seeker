@@ -168,11 +168,13 @@ const PALETA_CAPAS = [
 // procesamiento y búsqueda POR LOTES con confirmación de costo.
 const LOTE_GEOCODE = 500;
 const LOTE_CENTROS_BUSQUEDA = 150;
-/** Tope de consultas a Google por búsqueda (costo). Configurable. */
+/** Tope de consultas a Google por búsqueda (costo). Configurable.
+ * Default 10,000: una lista de 10 mil PDVs dispersos = 10 mil
+ * consultas nearby, el caso de uso máximo soportado. */
 const MAX_CONSULTAS_BUSQUEDA =
   Number(process.env.NEXT_PUBLIC_MAX_CONSULTAS_BUSQUEDA) > 0
     ? Number(process.env.NEXT_PUBLIC_MAX_CONSULTAS_BUSQUEDA)
-    : 5000;
+    : 10000;
 /** Con más orígenes que esto, la búsqueda pide confirmación de costo
  * y corre por lotes (y los universos van por lotes espaciales). */
 const UMBRAL_ORIGENES_GRANDES = 50;
@@ -469,11 +471,20 @@ export default function SeekerApp({
     detExc: Set<string>;
     detDesc: Set<string>;
   } | null>(null);
-  /** Confirmación de costo para búsquedas con muchos orígenes. */
+  /** Confirmación de costo para búsquedas con muchos orígenes. La
+   * estimación se muestra en una CAJA visible (el header trunca los
+   * mensajes largos — así se perdía el aviso). */
   const [planOrigenes, setPlanOrigenes] = useState<{
     centros: Origin[];
     consultas: number;
+    excedeTope: boolean;
   } | null>(null);
+  // la estimación caduca si cambian los insumos (radio, términos,
+  // categoría, orígenes): nunca ejecutar un plan obsoleto
+  useEffect(() => {
+    setPlanOrigenes(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [radio, categoria, categoriaLibre, nameFilters, excludes, origenes]);
 
   // ---- estado de resultados
   const [pois, setPois] = useState<Poi[]>([]);
@@ -2778,24 +2789,27 @@ export default function SeekerApp({
     // estimar consultas y CONFIRMAR antes de gastar; luego correr por
     // lotes con progreso y reanudación.
     if (mode === "origins" && centrosActivos.length > UMBRAL_ORIGENES_GRANDES) {
-      if (planOrigenes) {
+      if (planOrigenes && !planOrigenes.excedeTope) {
         await ejecutarBusquedaOrigenes(planOrigenes.centros);
         return;
       }
       const centros = consolidarCentros(centrosActivos, radio);
       const consultas = centros.length * consultasPorCentro;
-      if (consultas > MAX_CONSULTAS_BUSQUEDA) {
-        reportar(
-          "error",
-          `Esta búsqueda necesita ~${consultas.toLocaleString("es-MX")} consultas y el máximo es ${MAX_CONSULTAS_BUSQUEDA.toLocaleString("es-MX")} por búsqueda (NEXT_PUBLIC_MAX_CONSULTAS_BUSQUEDA). Sube el radio para consolidar más, divide la lista, o corre "solo universos" sin costo.`
-        );
-        return;
-      }
-      setPlanOrigenes({ centros, consultas });
+      const excedeTope = consultas > MAX_CONSULTAS_BUSQUEDA;
+      setPlanOrigenes({ centros, consultas, excedeTope });
       reportar(
-        "ok",
-        `Esta búsqueda usará ~${consultas.toLocaleString("es-MX")} consultas a Google (${centrosActivos.length.toLocaleString("es-MX")} orígenes${centros.length < centrosActivos.length ? ` consolidados en ${centros.length.toLocaleString("es-MX")} zonas por traslape` : ""} · tope ${MAX_CONSULTAS_BUSQUEDA.toLocaleString("es-MX")}). Confirma abajo — o corre "solo universos" sin costo.`
+        excedeTope ? "error" : "ok",
+        excedeTope
+          ? `~${consultas.toLocaleString("es-MX")} consultas > tope ${MAX_CONSULTAS_BUSQUEDA.toLocaleString("es-MX")} — detalle abajo.`
+          : `Estimación lista: ~${consultas.toLocaleString("es-MX")} consultas — confirma abajo.`
       );
+      return;
+    }
+
+    // Cinturón: JAMÁS mandar >200 centros en un solo request (el gate
+    // de arriba ya lo cubre; esto lo garantiza aunque algo cambie).
+    if (mode === "origins" && centrosActivos.length > 200) {
+      await ejecutarBusquedaOrigenes(consolidarCentros(centrosActivos, radio));
       return;
     }
 
@@ -4301,14 +4315,52 @@ export default function SeekerApp({
             >
               {ocupado
                 ? "Buscando…"
-                : mode === "origins" && planOrigenes
+                : mode === "origins" && planOrigenes && !planOrigenes.excedeTope
                   ? `Continuar: buscar POIs (~${planOrigenes.consultas.toLocaleString("es-MX")} consultas)`
                   : "Buscar POIs"}
             </button>
             )}
 
-            {/* guardarraíl de costo (orígenes grandes): confirmar o
-                correr solo universos sin gastar una llamada a Google */}
+            {/* guardarraíl de costo (orígenes grandes): la estimación va
+                en CAJA visible (el header trunca mensajes largos) —
+                confirmar, o correr solo universos sin gastar */}
+            {mode === "origins" && planOrigenes && !ocupado && (
+              <div
+                className={`mt-2 rounded-md border p-3 font-mono text-[11px] leading-relaxed ${
+                  planOrigenes.excedeTope
+                    ? "border-magenta/50 bg-magenta/5 text-zinc-300"
+                    : "border-cian/40 bg-cian/5 text-zinc-300"
+                }`}
+              >
+                {planOrigenes.excedeTope ? (
+                  <>
+                    Esta búsqueda necesita ~
+                    <span className="text-magenta">
+                      {planOrigenes.consultas.toLocaleString("es-MX")}
+                    </span>{" "}
+                    consultas a Google y el tope es{" "}
+                    {MAX_CONSULTAS_BUSQUEDA.toLocaleString("es-MX")} por búsqueda
+                    (NEXT_PUBLIC_MAX_CONSULTAS_BUSQUEDA). Sube el radio para
+                    consolidar más, quita términos, divide la lista — o corre
+                    solo universos (gratis).
+                  </>
+                ) : (
+                  <>
+                    Esta búsqueda usará ~
+                    <span className="text-cian">
+                      {planOrigenes.consultas.toLocaleString("es-MX")}
+                    </span>{" "}
+                    consultas a Google ·{" "}
+                    {centrosActivos.length.toLocaleString("es-MX")} orígenes
+                    {planOrigenes.centros.length < centrosActivos.length &&
+                      ` consolidados en ${planOrigenes.centros.length.toLocaleString("es-MX")} zonas por traslape`}{" "}
+                    · tope {MAX_CONSULTAS_BUSQUEDA.toLocaleString("es-MX")}.
+                    Corre por lotes con anillo de progreso; puedes detener y
+                    reanudar.
+                  </>
+                )}
+              </div>
+            )}
             {mode === "origins" && planOrigenes && !ocupado && (
               <div className="mt-2 grid grid-cols-1 gap-1.5">
                 <button

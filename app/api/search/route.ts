@@ -77,7 +77,7 @@ const BodySchema = z
       .array(CenterSchema)
       .max(
         200,
-        "Máximo 200 centros por lote de búsqueda — con más orígenes la app divide en lotes automáticamente. Si ves este mensaje, recarga la página (versión desactualizada)."
+        "Búsqueda por lotes de 200 centros · sin límite total. Recarga la página (Ctrl+Shift+R): tu versión está desactualizada."
       )
       .default([]),
     radius: z
