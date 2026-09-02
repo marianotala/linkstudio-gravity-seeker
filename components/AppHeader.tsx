@@ -65,6 +65,9 @@ export default function AppHeader({ usuario, status, onNueva }: AppHeaderProps) 
           <Link href="/censos" className={navCls(pathname === "/censos")}>
             Censos
           </Link>
+          <Link href="/ooh" className={navCls(pathname === "/ooh")}>
+            OOH
+          </Link>
           <Link href="/historial" className={navCls(pathname === "/historial")}>
             Historial
           </Link>

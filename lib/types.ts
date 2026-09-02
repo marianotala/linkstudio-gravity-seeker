@@ -310,6 +310,58 @@ export interface ResultadoGuardado {
   place_id: string | null;
 }
 
+// ------------------------------------------------------------------
+// OOH — inventario de pantallas y cruce pantalla ↔ PDV (Geo-PDOOH)
+// ------------------------------------------------------------------
+
+export type TipoPantalla =
+  | "espectacular"
+  | "muro_digital"
+  | "mall"
+  | "urbano"
+  | "aeropuerto"
+  | "transporte"
+  | "otro";
+
+/** Fila de public.screens (inventario de pantallas de la agencia). */
+export interface Pantalla {
+  clave: string;
+  nombre: string | null;
+  tipo: TipoPantalla;
+  /** Vendor / propietario de la pantalla. */
+  medio: string | null;
+  ciudad: string | null;
+  /** true digital, false estática, null sin dato. */
+  digital: boolean | null;
+  /** Impresiones mensuales (opcional en el inventario). */
+  impresiones: number | null;
+  costo: number | null;
+  direccion: string | null;
+  /** Nombre del lote de carga (listar/borrar en Admin). */
+  lote: string;
+  lat: number;
+  lng: number;
+}
+
+/** Un renglón del cruce: la pantalla y los PDVs que apoya (índices en
+ * la lista de PDVs del cliente + distancia en metros). */
+export interface CrucePantalla {
+  pantalla: Pantalla;
+  radioM: number;
+  pdvs: { idx: number; distancia: number }[];
+}
+
+/** Renglón de screens_resumen() para Admin. */
+export interface ResumenLotePantallas {
+  lote: string;
+  total: number;
+  digitales: number;
+  impresiones: number;
+  ciudades: number;
+  tipos: Record<string, number>;
+  cargado: string;
+}
+
 export interface GeocodeRequest {
   direcciones: string[];
 }

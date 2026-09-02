@@ -15,7 +15,13 @@ import {
   parsearLocalidadesRurales,
   parsearShapefileInegi,
 } from "@/lib/ingesta-cliente";
-import type { PerfilUsuario } from "@/lib/types";
+import { etiquetaTipoPantalla } from "@/lib/ooh";
+import {
+  descargarPlantillaPantallas,
+  parsearArchivoPantallas,
+  type PantallaCarga,
+} from "@/lib/parse";
+import type { GeocodeResponse, PerfilUsuario, ResumenLotePantallas } from "@/lib/types";
 
 interface ResumenEntidad {
   entidad: string;
@@ -76,6 +82,14 @@ export default function AdminView({
   const [mensajeRural, setMensajeRural] = useState<{ tipo: "ok" | "error" | "info"; texto: string } | null>(null);
   const inputRuralRef = useRef<HTMLInputElement>(null);
 
+  // ---- inventario de pantallas OOH
+  const [resumenPantallas, setResumenPantallas] = useState<ResumenLotePantallas[]>([]);
+  const [lotePantallas, setLotePantallas] = useState("");
+  const [cargandoPantallas, setCargandoPantallas] = useState(false);
+  const [progresoPantallas, setProgresoPantallas] = useState<{ hecho: number; total: number } | null>(null);
+  const [mensajePantallas, setMensajePantallas] = useState<{ tipo: "ok" | "error" | "info"; texto: string } | null>(null);
+  const inputPantallasRef = useRef<HTMLInputElement>(null);
+
   // ---- catálogo CP → colonias (Correos de México)
   const [totalColonias, setTotalColonias] = useState<number | null>(null);
   const [cargandoColonias, setCargandoColonias] = useState(false);
@@ -98,6 +112,8 @@ export default function AdminView({
       (rural as { total: number; poblacion: number; entidades: number } | null) ??
         null
     );
+    const { data: pantallas } = await supabase.rpc("screens_resumen");
+    setResumenPantallas(((pantallas ?? []) as ResumenLotePantallas[]) ?? []);
   }
   useEffect(() => {
     cargarResumen();
@@ -375,6 +391,126 @@ export default function AdminView({
     } finally {
       setCargandoRural(false);
       setProgresoRural(null);
+    }
+  }
+
+  // ---- inventario de pantallas OOH: CSV/Excel con detección de
+  //      columnas; las filas con dirección y sin coordenadas se
+  //      geocodifican; upsert por clave en lotes.
+  async function cargarPantallas(file: File | undefined) {
+    if (!file) return;
+    setCargandoPantallas(true);
+    setMensajePantallas(null);
+    setProgresoPantallas(null);
+    try {
+      setMensajePantallas({ tipo: "info", texto: "Leyendo el inventario…" });
+      const { pantallas, pendientes, deteccion, correcciones } =
+        await parsearArchivoPantallas(file);
+      if (pantallas.length === 0 && pendientes.length === 0) {
+        setMensajePantallas({ tipo: "error", texto: deteccion });
+        return;
+      }
+      const lote =
+        lotePantallas.trim() ||
+        file.name.replace(/\.(csv|txt|xlsx?|xlsm)$/i, "").trim() ||
+        "inventario";
+
+      // geocodificar pendientes (dirección sin coordenadas)
+      const listas: PantallaCarga[] = [...pantallas];
+      let sinGeo = 0;
+      if (pendientes.length > 0) {
+        const LOTE_GEO = 100;
+        for (let i = 0; i < pendientes.length; i += LOTE_GEO) {
+          const grupo = pendientes.slice(i, i + LOTE_GEO);
+          setMensajePantallas({
+            tipo: "info",
+            texto: `Geocodificando direcciones: ${Math.min(i + LOTE_GEO, pendientes.length)} de ${pendientes.length}…`,
+          });
+          const resp = await fetch("/api/geocode", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ direcciones: grupo.map((p) => p.direccion!) }),
+          });
+          const data = (await resp.json()) as GeocodeResponse & { error?: string };
+          if (!resp.ok) throw new Error(data.error ?? "Error al geocodificar");
+          data.resultados.forEach((r, j) => {
+            if (r.ok && r.lat !== undefined && r.lng !== undefined) {
+              listas.push({ ...grupo[j], lat: r.lat, lng: r.lng });
+            } else {
+              sinGeo++;
+            }
+          });
+        }
+      }
+      if (listas.length === 0) {
+        setMensajePantallas({
+          tipo: "error",
+          texto: "Ninguna pantalla quedó con coordenadas (geocodificación fallida).",
+        });
+        return;
+      }
+
+      const supabase = createClient();
+      const LOTE_UP = 500;
+      let hecho = 0;
+      for (let i = 0; i < listas.length; i += LOTE_UP) {
+        const grupo = listas.slice(i, i + LOTE_UP).map((p) => ({ ...p, lote }));
+        const { error } = await supabase.rpc("admin_upsert_screens", {
+          p_pantallas: grupo,
+        });
+        if (error) {
+          throw new Error(
+            /row-level security/i.test(error.message)
+              ? "Tu usuario no tiene rol admin: no puede cargar datos."
+              : error.message
+          );
+        }
+        hecho += grupo.length;
+        setProgresoPantallas({ hecho, total: listas.length });
+        setMensajePantallas({
+          tipo: "info",
+          texto: `Cargando pantallas: ${hecho.toLocaleString("es-MX")} de ${listas.length.toLocaleString("es-MX")}…`,
+        });
+      }
+
+      const avisos = [
+        correcciones.lngCorregidas > 0
+          ? `${correcciones.lngCorregidas} longitudes corregidas a oeste`
+          : null,
+        correcciones.coordsSeparadas > 0
+          ? `${correcciones.coordsSeparadas} pares lat,lng separados`
+          : null,
+        correcciones.descartadas + correcciones.sinClave > 0
+          ? `${correcciones.descartadas + correcciones.sinClave} filas descartadas`
+          : null,
+        sinGeo > 0 ? `${sinGeo} direcciones no geocodificadas` : null,
+      ].filter(Boolean);
+      setMensajePantallas({
+        tipo: "ok",
+        texto: `Listo: ${listas.length.toLocaleString("es-MX")} pantallas en el lote "${lote}" (${deteccion})${avisos.length > 0 ? ` · ${avisos.join(" · ")}` : ""}. Ya aparecen en la pestaña OOH.`,
+      });
+      setLotePantallas("");
+      if (inputPantallasRef.current) inputPantallasRef.current.value = "";
+      await cargarResumen();
+    } catch (e) {
+      setMensajePantallas({
+        tipo: "error",
+        texto: e instanceof Error ? e.message : "Error al cargar el inventario",
+      });
+    } finally {
+      setCargandoPantallas(false);
+      setProgresoPantallas(null);
+    }
+  }
+
+  async function borrarLotePantallas(lote: string) {
+    const supabase = createClient();
+    const { error } = await supabase.from("screens").delete().eq("lote", lote);
+    if (error) {
+      setMensajePantallas({ tipo: "error", texto: `No se pudo borrar: ${error.message}` });
+    } else {
+      setMensajePantallas({ tipo: "ok", texto: `Lote "${lote}" eliminado del inventario` });
+      await cargarResumen();
     }
   }
 
@@ -752,6 +888,128 @@ export default function AdminView({
               >
                 {mensajeRural.texto}
               </p>
+            )}
+          </div>
+
+          {/* inventario de pantallas OOH */}
+          <div className="tarjeta glow-violeta px-6 py-6">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-display text-xl font-extrabold tracking-tight text-white">
+                  Cargar inventario de pantallas (OOH)
+                </h2>
+                <p className="mt-1 font-mono text-[11px] leading-relaxed text-zinc-500">
+                  Sube el CSV/Excel del inventario de pantallas — columnas
+                  detectadas automáticamente:{" "}
+                  <span className="text-zinc-300">
+                    clave, nombre, latitud/longitud (o dirección a
+                    geocodificar), tipo, medio/vendor, ciudad,
+                    digital/estática, impresiones mensuales, costo
+                  </span>
+                  . La carga es acumulativa con upsert por clave y alimenta el
+                  cruce pantalla ↔ PDV de la pestaña OOH.
+                </p>
+              </div>
+              <button
+                onClick={descargarPlantillaPantallas}
+                className="shrink-0 rounded-md border border-linea bg-panel2 px-3 py-1.5 font-mono text-[11px] text-zinc-300 transition-colors hover:border-violeta hover:text-violeta"
+              >
+                ⬇ Descargar plantilla de pantallas
+              </button>
+            </div>
+
+            <div className="mt-3 flex gap-2">
+              <input
+                value={lotePantallas}
+                onChange={(e) => setLotePantallas(e.target.value)}
+                placeholder="Nombre del lote (default: nombre del archivo)"
+                className={`${inputCls} w-72`}
+                disabled={cargandoPantallas}
+              />
+              <input
+                ref={inputPantallasRef}
+                type="file"
+                accept=".csv,.txt,.xls,.xlsx"
+                disabled={cargandoPantallas}
+                onChange={(e) => cargarPantallas(e.target.files?.[0])}
+                className={`${inputCls} file:mr-3 file:rounded file:border-0 file:bg-violeta/20 file:px-3 file:py-1 file:font-mono file:text-[11px] file:text-violeta`}
+              />
+            </div>
+            {progresoPantallas && (
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-fondo">
+                <div
+                  className="h-full rounded-full bg-violeta transition-all"
+                  style={{ width: `${Math.round((progresoPantallas.hecho / progresoPantallas.total) * 100)}%` }}
+                />
+              </div>
+            )}
+            {mensajePantallas && (
+              <p
+                className={`mt-3 font-mono text-[11px] leading-relaxed ${
+                  mensajePantallas.tipo === "ok"
+                    ? "text-emerald-400"
+                    : mensajePantallas.tipo === "error"
+                      ? "text-magenta"
+                      : "text-zinc-400"
+                }`}
+              >
+                {mensajePantallas.texto}
+              </p>
+            )}
+
+            {resumenPantallas.length > 0 && (
+              <table className="mt-4 w-full text-left font-mono text-xs">
+                <thead className="text-zinc-500">
+                  <tr>
+                    <th className="py-1.5 pr-3 font-medium">Lote</th>
+                    <th className="py-1.5 pr-3 font-medium">Por tipo</th>
+                    <th className="py-1.5 pr-3 text-right font-medium">Pantallas</th>
+                    <th className="py-1.5 pr-3 text-right font-medium">Ciudades</th>
+                    <th className="py-1.5 pr-3 text-right font-medium">Impresiones/mes</th>
+                    <th className="py-1.5 text-right font-medium"></th>
+                  </tr>
+                </thead>
+                <tbody className="text-zinc-300">
+                  {resumenPantallas.map((r) => (
+                    <tr key={r.lote} className="border-t border-linea/60">
+                      <td className="max-w-[180px] truncate py-2 pr-3" title={r.lote}>
+                        {r.lote}
+                      </td>
+                      <td className="py-2 pr-3 text-zinc-400">
+                        {Object.entries(r.tipos ?? {})
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([t, n]) => `${etiquetaTipoPantalla(t)} ${n}`)
+                          .join(" · ")}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-violeta">
+                        {r.total.toLocaleString("es-MX")}
+                        {r.digitales > 0 && (
+                          <span className="ml-1 text-zinc-500">
+                            ({r.digitales} dig)
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-zinc-400">
+                        {r.ciudades}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-zinc-400">
+                        {r.impresiones > 0
+                          ? Number(r.impresiones).toLocaleString("es-MX")
+                          : "—"}
+                      </td>
+                      <td className="py-2 text-right">
+                        <button
+                          onClick={() => borrarLotePantallas(r.lote)}
+                          disabled={cargandoPantallas}
+                          className="rounded border border-linea bg-panel2 px-2 py-1 text-[11px] text-zinc-500 transition-colors hover:border-magenta hover:text-magenta disabled:opacity-40"
+                        >
+                          Eliminar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
 

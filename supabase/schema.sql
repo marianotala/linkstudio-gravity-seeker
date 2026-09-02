@@ -2143,3 +2143,162 @@ $$;
 
 revoke execute on function public.calcular_universos_crudo(jsonb) from public, anon;
 grant execute on function public.calcular_universos_crudo(jsonb) to authenticated;
+
+-- ============================================================
+-- MIGRACIÓN FASE 14 — inventario de pantallas OOH/DOOH
+-- ============================================================
+-- Réplica evolucionada de Plot Matrix: la agencia carga su inventario
+-- de pantallas (billboard/espectacular, muro digital, mall, urbano,
+-- aeropuerto, transporte) desde /admin y la pestaña OOH cruza por
+-- proximidad pantalla ↔ PDVs del cliente (planeación Geo-PDOOH). El
+-- cruce corre en el cliente con Haversine; el geom + GIST queda para
+-- consultas territoriales (p. ej. universos) sin re-geocodificar.
+
+create table if not exists public.screens (
+  clave text primary key,           -- clave única del inventario (upsert)
+  nombre text,
+  tipo text not null default 'otro',-- espectacular | muro_digital | mall |
+                                    -- urbano | aeropuerto | transporte | otro
+  medio text,                       -- vendor / propietario de la pantalla
+  ciudad text,
+  digital boolean,                  -- true digital, false estática, null s/d
+  impresiones bigint,               -- impresiones mensuales (opcional)
+  costo numeric,                    -- costo mensual (opcional)
+  direccion text,
+  lote text not null default 'inventario', -- nombre de la carga (listar/borrar)
+  lat double precision not null,
+  lng double precision not null,
+  geom extensions.geometry(Point, 4326) not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists screens_geom_gix
+  on public.screens using gist (geom);
+create index if not exists screens_lote_idx on public.screens (lote);
+create index if not exists screens_tipo_idx on public.screens (tipo);
+
+alter table public.screens enable row level security;
+
+drop policy if exists "screens: leer autenticados" on public.screens;
+create policy "screens: leer autenticados"
+  on public.screens for select
+  to authenticated
+  using (true);
+
+drop policy if exists "screens: insertar admin" on public.screens;
+create policy "screens: insertar admin"
+  on public.screens for insert
+  to authenticated
+  with check (public.es_admin());
+
+drop policy if exists "screens: actualizar admin" on public.screens;
+create policy "screens: actualizar admin"
+  on public.screens for update
+  to authenticated
+  using (public.es_admin());
+
+drop policy if exists "screens: borrar admin" on public.screens;
+create policy "screens: borrar admin"
+  on public.screens for delete
+  to authenticated
+  using (public.es_admin());
+
+-- Carga por lotes desde /admin. security invoker: las políticas de
+-- arriba limitan la escritura a admins. Upsert por clave: la carga es
+-- acumulativa y re-subir un inventario actualiza sus pantallas.
+create or replace function public.admin_upsert_screens(p_pantallas jsonb)
+returns int
+language plpgsql
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v_n int;
+begin
+  if coalesce(jsonb_array_length(p_pantallas), 0) = 0
+     or jsonb_array_length(p_pantallas) > 2000 then
+    raise exception 'Lote inválido: manda entre 1 y 2000 pantallas';
+  end if;
+
+  insert into public.screens
+    (clave, nombre, tipo, medio, ciudad, digital, impresiones, costo,
+     direccion, lote, lat, lng, geom)
+  select
+    r ->> 'clave',
+    r ->> 'nombre',
+    coalesce(nullif(r ->> 'tipo', ''), 'otro'),
+    r ->> 'medio',
+    r ->> 'ciudad',
+    (r ->> 'digital')::boolean,
+    (r ->> 'impresiones')::bigint,
+    (r ->> 'costo')::numeric,
+    r ->> 'direccion',
+    coalesce(nullif(r ->> 'lote', ''), 'inventario'),
+    (r ->> 'lat')::float,
+    (r ->> 'lng')::float,
+    ST_SetSRID(ST_MakePoint((r ->> 'lng')::float, (r ->> 'lat')::float), 4326)
+  from jsonb_array_elements(p_pantallas) as r
+  on conflict (clave) do update set
+    nombre = excluded.nombre, tipo = excluded.tipo,
+    medio = excluded.medio, ciudad = excluded.ciudad,
+    digital = excluded.digital, impresiones = excluded.impresiones,
+    costo = excluded.costo, direccion = excluded.direccion,
+    lote = excluded.lote, lat = excluded.lat, lng = excluded.lng,
+    geom = excluded.geom;
+
+  get diagnostics v_n = row_count;
+  return v_n;
+end;
+$$;
+
+revoke execute on function public.admin_upsert_screens(jsonb) from public, anon;
+grant execute on function public.admin_upsert_screens(jsonb) to authenticated;
+
+-- Resumen para /admin y la pestaña OOH: un renglón por lote con
+-- conteos por tipo y ciudades distintas.
+create or replace function public.screens_resumen()
+returns jsonb
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'lote', lote,
+        'total', total,
+        'digitales', digitales,
+        'impresiones', impresiones,
+        'ciudades', ciudades,
+        'tipos', tipos,
+        'cargado', cargado
+      )
+      order by cargado desc
+    ),
+    '[]'::jsonb
+  )
+  from (
+    select
+      lote,
+      count(*) as total,
+      count(*) filter (where digital) as digitales,
+      coalesce(sum(impresiones), 0) as impresiones,
+      count(distinct ciudad) filter (where ciudad is not null) as ciudades,
+      (
+        select jsonb_object_agg(t.tipo, t.n)
+        from (
+          select tipo, count(*) as n
+          from public.screens s2
+          where s2.lote = s.lote
+          group by tipo
+        ) t
+      ) as tipos,
+      max(created_at) as cargado
+    from public.screens s
+    group by lote
+  ) resumen;
+$$;
+
+revoke execute on function public.screens_resumen() from public, anon;
+grant execute on function public.screens_resumen() to authenticated;

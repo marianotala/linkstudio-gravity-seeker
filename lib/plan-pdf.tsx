@@ -82,20 +82,20 @@ export interface PlanDatos {
 // Tokens del deck
 // ------------------------------------------------------------------
 
-const FONDO = "#0a0a0f";
-const PANEL = "#12121a";
-const LINEA = "#26262e";
-const MAGENTA = "#f4368a";
-const VIOLETA = "#9d5cf0";
-const CIAN = "#2fb9e8";
-const BLANCO = "#ffffff";
-const GRIS = "#8b8b96";
-const GRIS_OSCURO = "#5c5c66";
-const TINTA = "#c9c9d1";
+export const FONDO = "#0a0a0f";
+export const PANEL = "#12121a";
+export const LINEA = "#26262e";
+export const MAGENTA = "#f4368a";
+export const VIOLETA = "#9d5cf0";
+export const CIAN = "#2fb9e8";
+export const BLANCO = "#ffffff";
+export const GRIS = "#8b8b96";
+export const GRIS_OSCURO = "#5c5c66";
+export const TINTA = "#c9c9d1";
 
-const ANCHO_PAG = 816;
-const MARGEN = 44;
-const CONT = ANCHO_PAG - MARGEN * 2; // 728
+export const ANCHO_PAG = 816;
+export const MARGEN = 44;
+export const CONT = ANCHO_PAG - MARGEN * 2; // 728
 
 let fuentesRegistradas = false;
 /** Registra las fuentes una vez. `base` = "" en el navegador
@@ -127,14 +127,14 @@ export function registrarFuentes(base = "") {
   Font.registerHyphenationCallback((palabra) => [palabra]);
 }
 
-const fmt = (n: number) => n.toLocaleString("es-MX");
+export const fmt = (n: number) => n.toLocaleString("es-MX");
 
 // ------------------------------------------------------------------
 // Componentes del sistema (réplicas del deck)
 // ------------------------------------------------------------------
 
 /** Isotipo de ondas Gravity (misma geometría que GravityMark de la app). */
-function Marca({ size = 40 }: { size?: number }) {
+export function Marca({ size = 40 }: { size?: number }) {
   const trazos: [string, string, number][] = [
     ["M7 19.5 Q4.8 24 7 28.5", "#17607f", 2.6],
     ["M12.5 14.5 Q9.2 24 12.5 33.5", "#1e8ab4", 3],
@@ -153,7 +153,7 @@ function Marca({ size = 40 }: { size?: number }) {
 }
 
 /** Divisor horizontal con el gradiente firma magenta → violeta → cian. */
-function Divisor({ width = CONT, height = 2.5 }) {
+export function Divisor({ width = CONT, height = 2.5 }) {
   return (
     <Svg width={width} height={height}>
       <Defs>
@@ -170,7 +170,7 @@ function Divisor({ width = CONT, height = 2.5 }) {
 
 /** Encabezado de sección estilo deck: etiqueta magenta en mayúsculas,
  * tres puntos de color y título en blanco. */
-function Seccion({ etiqueta, titulo }: { etiqueta: string; titulo: string }) {
+export function Seccion({ etiqueta, titulo }: { etiqueta: string; titulo: string }) {
   return (
     <View style={{ marginBottom: 14 }}>
       <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -202,7 +202,7 @@ function Seccion({ etiqueta, titulo }: { etiqueta: string; titulo: string }) {
 }
 
 /** Footer de tres columnas con línea divisoria arriba. */
-function FooterTresCol({ fecha }: { fecha: string }) {
+export function FooterTresCol({ fecha }: { fecha: string }) {
   const col = { flex: 1 } as const;
   const label = {
     fontFamily: "DMMono" as const,
@@ -232,7 +232,7 @@ function FooterTresCol({ fecha }: { fecha: string }) {
 }
 
 /** Trazos de neón sutiles para el encabezado y el cierre. */
-function Neon({ height = 120 }: { height?: number }) {
+export function Neon({ height = 120 }: { height?: number }) {
   return (
     <View style={{ position: "absolute", top: 0, left: 0, width: CONT, height }}>
       <Svg width={CONT} height={height} viewBox={`0 0 ${CONT} ${height}`} preserveAspectRatio="none">
@@ -261,7 +261,7 @@ function Neon({ height = 120 }: { height?: number }) {
 }
 
 /** Cifra protagonista estilo deck (patrón 58% / 82%). */
-function Cifra({ valor, descriptor }: { valor: string; descriptor: string }) {
+export function Cifra({ valor, descriptor }: { valor: string; descriptor: string }) {
   return (
     <View style={{ flex: 1, paddingRight: 12 }}>
       <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 30, color: BLANCO }}>
@@ -284,14 +284,14 @@ function Cifra({ valor, descriptor }: { valor: string; descriptor: string }) {
   );
 }
 
-interface Segmento {
+export interface Segmento {
   etiqueta: string;
   pct: number;
   color: string;
 }
 
 /** Barra apilada + leyenda, idéntica a la del panel de la app. */
-function BarraApilada({ titulo, segmentos, width }: { titulo: string; segmentos: Segmento[]; width: number }) {
+export function BarraApilada({ titulo, segmentos, width }: { titulo: string; segmentos: Segmento[]; width: number }) {
   return (
     <View style={{ width }}>
       <Text
@@ -338,7 +338,7 @@ function BarraApilada({ titulo, segmentos, width }: { titulo: string; segmentos:
 }
 
 /** Alto de la pill de táctica (lo comparte estimarAltura). */
-const ALTO_PILL = 72;
+export const ALTO_PILL = 72;
 
 /**
  * Pill de táctica (lámina de tácticas del deck). Las SELECCIONADAS por
@@ -346,7 +346,7 @@ const ALTO_PILL = 72;
  * la etiqueta "Recomendada para este territorio"; el resto, tarjeta
  * estándar con borde sutil.
  */
-function PillTactica({
+export function PillTactica({
   clave,
   nombre,
   descriptor,
@@ -411,7 +411,7 @@ function PillTactica({
  * vendedor (o el default por modo) van primero y destacadas; el resto
  * después en tarjeta estándar.
  */
-function ordenarTacticas(seleccion: TacticaClave[]) {
+export function ordenarTacticas(seleccion: TacticaClave[]) {
   const sel = new Set(seleccion);
   return [
     ...CLAVES_TACTICAS.filter((c) => sel.has(c)),
@@ -419,13 +419,13 @@ function ordenarTacticas(seleccion: TacticaClave[]) {
   ].map((clave) => ({ clave, ...TACTICAS[clave], destacada: sel.has(clave) }));
 }
 
-function segmentosNse(u: Universos | null): Segmento[] | null {
+export function segmentosNse(u: Universos | null): Segmento[] | null {
   const dist = u?.perfil?.nseDist;
   if (!dist) return null;
   return NIVELES_NSE.map((n) => ({ etiqueta: n.etiqueta, pct: dist[n.clave], color: n.color }));
 }
 
-function segmentosEdades(u: Universos | null): Segmento[] | null {
+export function segmentosEdades(u: Universos | null): Segmento[] | null {
   const rangos = rangosEdadEstandar(u?.perfil?.edades);
   return rangos
     ? rangos.map((r) => ({ etiqueta: r.etiqueta, pct: r.pct, color: r.color }))
@@ -585,7 +585,7 @@ function hallazgos(d: PlanDatos): string[] {
 const FILAS_TABLA = 12;
 const FILAS_POR_CAPA = 8;
 const EJEMPLOS_RANKING = 5;
-const ALTO_MAPA = Math.round((CONT * 9) / 16); // 16:9 dentro del ancho
+export const ALTO_MAPA = Math.round((CONT * 9) / 16); // 16:9 dentro del ancho
 
 type ModoTabla = "distancia" | "porZona" | "ranking";
 

@@ -4,7 +4,8 @@
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import { normalizar } from "./geo";
-import type { Origin } from "./types";
+import { normalizarTipoPantalla } from "./ooh";
+import type { Origin, TipoPantalla } from "./types";
 
 /** Filas crudas de un archivo, como objetos header→valor. */
 type Fila = Record<string, unknown>;
@@ -179,8 +180,8 @@ function filasAResultado(filas: Fila[]): ArchivoParseado {
   };
 }
 
-/** Parsea un .xlsx/.xls/.csv y detecta columnas automáticamente. */
-export async function parsearArchivo(file: File): Promise<ArchivoParseado> {
+/** Lee un .xlsx/.xls/.csv como filas header→valor (primera hoja). */
+async function filasDeArchivo(file: File): Promise<Fila[]> {
   const nombre = file.name.toLowerCase();
   if (nombre.endsWith(".csv") || nombre.endsWith(".txt")) {
     const texto = await file.text();
@@ -189,13 +190,17 @@ export async function parsearArchivo(file: File): Promise<ArchivoParseado> {
       skipEmptyLines: true,
       transformHeader: (h) => h.trim(),
     });
-    return filasAResultado(res.data);
+    return res.data;
   }
   const buffer = await file.arrayBuffer();
   const wb = XLSX.read(buffer, { type: "array" });
   const hoja = wb.Sheets[wb.SheetNames[0]];
-  const filas = XLSX.utils.sheet_to_json<Fila>(hoja, { defval: "" });
-  return filasAResultado(filas);
+  return XLSX.utils.sheet_to_json<Fila>(hoja, { defval: "" });
+}
+
+/** Parsea un .xlsx/.xls/.csv y detecta columnas automáticamente. */
+export async function parsearArchivo(file: File): Promise<ArchivoParseado> {
+  return filasAResultado(await filasDeArchivo(file));
 }
 
 /** Parsea el textarea de coordenadas: "lat, lng" o "lat, lng, nombre"
@@ -281,6 +286,276 @@ export function descargarPlantillaOrigenes() {
   XLSX.utils.book_append_sheet(wb, instrucciones, "Instrucciones");
 
   XLSX.writeFile(wb, "Seeker_plantilla_origenes.xlsx");
+}
+
+// ------------------------------------------------------------------
+// Inventario de pantallas OOH (carga en /admin)
+// ------------------------------------------------------------------
+
+/** Pantalla lista para el upsert (espejo de admin_upsert_screens). */
+export interface PantallaCarga {
+  clave: string;
+  nombre?: string;
+  tipo: TipoPantalla;
+  medio?: string;
+  ciudad?: string;
+  digital?: boolean | null;
+  impresiones?: number;
+  costo?: number;
+  direccion?: string;
+  lat?: number;
+  lng?: number;
+}
+
+export interface ArchivoPantallas {
+  /** Pantallas que ya traían coordenadas. */
+  pantallas: PantallaCarga[];
+  /** Pantallas con dirección pero sin coordenadas (a geocodificar). */
+  pendientes: PantallaCarga[];
+  deteccion: string;
+  correcciones: CorreccionesCarga & { sinClave: number };
+}
+
+const KEYS_CLAVE = ["clave", "id", "codigo", "key", "sku"];
+const KEYS_TIPO = ["tipo", "type", "formato", "categoria"];
+const KEYS_MEDIO = ["medio", "vendor", "proveedor", "propietario", "empresa"];
+const KEYS_CIUDAD = ["ciudad", "city", "plaza", "municipio"];
+const KEYS_DIGITAL = ["digital", "estatica", "tecnologia"];
+const KEYS_IMPRESIONES = ["impresiones", "impactos", "audiencia"];
+const KEYS_COSTO = ["costo", "precio", "tarifa", "renta"];
+
+/** Interpreta la celda de digital/estática con tolerancia: palabras
+ * ("digital", "LED", "estática", "impresa", "lona") o sí/no relativo
+ * al encabezado de la columna. */
+function aDigital(v: unknown, colNorm: string): boolean | null {
+  const s = normalizar(String(v ?? ""));
+  if (!s) return null;
+  if (/digital|led|dooh|pantalla/.test(s)) return true;
+  if (/estatic|impres|fija|lona|tradicional/.test(s)) return false;
+  const afirma = /^(si|s|true|1|x|yes)$/.test(s);
+  const niega = /^(no|n|false|0)$/.test(s);
+  if (!afirma && !niega) return null;
+  // columna "estática": sí = estática (digital false)
+  const colEstatica = colNorm.includes("estatic");
+  return afirma ? !colEstatica : colEstatica;
+}
+
+/**
+ * Parsea el CSV/Excel del inventario de pantallas con detección
+ * automática de columnas (clave/nombre, lat/lng o dirección, tipo,
+ * medio, ciudad, digital, impresiones, costo). Sin clave, la clave se
+ * deriva del nombre; sin ninguno de los dos, la fila se descarta.
+ */
+export async function parsearArchivoPantallas(
+  file: File
+): Promise<ArchivoPantallas> {
+  const filas = await filasDeArchivo(file);
+  const vacio = {
+    pantallas: [],
+    pendientes: [],
+    correcciones: { ...SIN_CORRECCIONES, sinClave: 0 },
+  };
+  if (filas.length === 0) return { ...vacio, deteccion: "Archivo vacío" };
+
+  const headers = Object.keys(filas[0]);
+  const colClave = detectarColumna(headers, KEYS_CLAVE);
+  const colNombre = detectarColumna(headers, KEYS_NOMBRE);
+  const colLat = detectarColumna(headers, KEYS_LAT);
+  const colLng = detectarColumna(headers, KEYS_LNG);
+  const colDir = detectarColumna(headers, KEYS_DIR);
+  const colTipo = detectarColumna(headers, KEYS_TIPO);
+  const colMedio = detectarColumna(headers, KEYS_MEDIO);
+  const colCiudad = detectarColumna(headers, KEYS_CIUDAD);
+  const colDigital = detectarColumna(headers, KEYS_DIGITAL);
+  const colImpresiones = detectarColumna(headers, KEYS_IMPRESIONES);
+  const colCosto = detectarColumna(headers, KEYS_COSTO);
+
+  if (!colClave && !colNombre) {
+    return {
+      ...vacio,
+      deteccion:
+        "No encontré columna de clave ni de nombre. Usa headers como clave, nombre, latitud, longitud, tipo, medio — o descarga la plantilla.",
+    };
+  }
+
+  const texto = (col: string | undefined, fila: Fila) =>
+    col ? String(fila[col] ?? "").trim() || undefined : undefined;
+  const pantallas: PantallaCarga[] = [];
+  const pendientes: PantallaCarga[] = [];
+  const correcciones = { ...SIN_CORRECCIONES, sinClave: 0 };
+  const clavesVistas = new Set<string>();
+
+  for (const fila of filas) {
+    const nombre = texto(colNombre, fila);
+    let clave = texto(colClave, fila) ?? nombre;
+    if (!clave) {
+      // fila sin identidad: solo cuenta si traía algo más
+      if (texto(colDir, fila) || (colLat && aNumero(fila[colLat]) !== undefined)) {
+        correcciones.sinClave++;
+      }
+      continue;
+    }
+    // clave repetida en el archivo: sufijo para no perder pantallas
+    // (el upsert en la base es por clave)
+    if (clavesVistas.has(clave)) {
+      let n = 2;
+      while (clavesVistas.has(`${clave}-${n}`)) n++;
+      clave = `${clave}-${n}`;
+    }
+    clavesVistas.add(clave);
+
+    const base: PantallaCarga = {
+      clave,
+      nombre,
+      tipo: normalizarTipoPantalla(colTipo ? fila[colTipo] : ""),
+      medio: texto(colMedio, fila),
+      ciudad: texto(colCiudad, fila),
+      digital: colDigital
+        ? aDigital(fila[colDigital], normalizar(colDigital))
+        : null,
+      impresiones: colImpresiones ? aNumero(fila[colImpresiones]) : undefined,
+      costo: colCosto ? aNumero(fila[colCosto]) : undefined,
+      direccion: texto(colDir, fila),
+    };
+
+    let lat = colLat ? aNumero(fila[colLat]) : undefined;
+    let lng = colLng ? aNumero(fila[colLng]) : undefined;
+    if ((lat === undefined || lng === undefined) && colLat) {
+      const par = separarParCoordenadas(fila[colLat]);
+      if (par) {
+        [lat, lng] = par;
+        correcciones.coordsSeparadas++;
+      }
+    }
+    if (
+      lat !== undefined &&
+      lng !== undefined &&
+      Math.abs(lat) <= 90 &&
+      Math.abs(lng) <= 180 &&
+      !(lat === 0 && lng === 0)
+    ) {
+      if (esLongitudVolteadaMx(lat, lng)) {
+        lng = -lng;
+        correcciones.lngCorregidas++;
+      }
+      pantallas.push({ ...base, lat, lng });
+    } else if (base.direccion) {
+      pendientes.push(base);
+    } else {
+      correcciones.descartadas++;
+    }
+  }
+
+  const partes = [
+    colClave ? `clave: "${colClave}"` : `clave: nombre ("${colNombre}")`,
+    colLat ? `coords: "${colLat}"${colLng ? `/"${colLng}"` : ""}` : null,
+    colDir ? `dirección: "${colDir}"` : null,
+    colTipo ? `tipo: "${colTipo}"` : null,
+    colMedio ? `medio: "${colMedio}"` : null,
+    colImpresiones ? `impresiones: "${colImpresiones}"` : null,
+  ].filter(Boolean);
+  return {
+    pantallas,
+    pendientes,
+    deteccion: partes.join(" · "),
+    correcciones,
+  };
+}
+
+/**
+ * Plantilla Excel del inventario de pantallas: hoja "Pantallas" con
+ * ejemplos + hoja "Instrucciones" (tipos válidos y reglas), como la
+ * plantilla de orígenes.
+ */
+export function descargarPlantillaPantallas() {
+  const wb = XLSX.utils.book_new();
+
+  const datos = XLSX.utils.aoa_to_sheet([
+    [
+      "clave",
+      "nombre",
+      "latitud",
+      "longitud",
+      "direccion",
+      "tipo",
+      "medio",
+      "ciudad",
+      "digital",
+      "impresiones_mensuales",
+      "costo_mensual",
+    ],
+    [
+      "MX-CDMX-001",
+      "Muro Reforma 222",
+      19.4275,
+      -99.168,
+      "",
+      "muro digital",
+      "IMU",
+      "CDMX",
+      "digital",
+      1500000,
+      85000,
+    ],
+    [
+      "MX-CDMX-002",
+      "Espectacular Periférico Sur",
+      19.361,
+      -99.262,
+      "",
+      "espectacular",
+      "Rentable",
+      "CDMX",
+      "estática",
+      900000,
+      "",
+    ],
+    [
+      "MX-GDL-001",
+      "Mall Andares acceso norte",
+      "",
+      "",
+      "Blvd. Puerta de Hierro 4965, Zapopan, Jalisco",
+      "mall",
+      "GDL Media",
+      "Guadalajara",
+      "digital",
+      "",
+      "",
+    ],
+  ]);
+  datos["!cols"] = [
+    { wch: 14 },
+    { wch: 30 },
+    { wch: 10 },
+    { wch: 10 },
+    { wch: 42 },
+    { wch: 14 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 9 },
+    { wch: 20 },
+    { wch: 13 },
+  ];
+  XLSX.utils.book_append_sheet(wb, datos, "Pantallas");
+
+  const instrucciones = XLSX.utils.aoa_to_sheet([
+    ["PLANTILLA DE INVENTARIO DE PANTALLAS — SEEKER OOH (Gravity)"],
+    [""],
+    ["· clave: identificador ÚNICO de la pantalla. Re-subir la misma clave ACTUALIZA sus datos."],
+    ["· tipo: espectacular (billboard), muro digital, mall (centro comercial), urbano (mupis),"],
+    ["  aeropuerto, transporte u otro. Se detectan variantes comunes."],
+    ["· medio: vendor / propietario de la pantalla (IMU, Rentable, Global…)."],
+    ["· digital: digital / estática (o sí / no)."],
+    ["· Coordenadas en formato DECIMAL y LONGITUD NEGATIVA (México es oeste: -99.16)."],
+    ["  Si la pantalla no tiene coordenadas, llena la dirección: se geocodifica al cargar."],
+    ["· impresiones_mensuales y costo_mensual son opcionales (suman al resumen del plan)."],
+    ["· Primera fila = encabezados, datos en la primera hoja, sin celdas combinadas."],
+  ]);
+  instrucciones["!cols"] = [{ wch: 95 }];
+  XLSX.utils.book_append_sheet(wb, instrucciones, "Instrucciones");
+
+  XLSX.writeFile(wb, "Seeker_plantilla_pantallas.xlsx");
 }
 
 // ------------------------------------------------------------------

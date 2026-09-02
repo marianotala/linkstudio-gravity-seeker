@@ -135,6 +135,21 @@ body {
   display: none;
 }
 
+/* Etiqueta de distancia (km) sobre la línea pantalla→PDV (pestaña OOH) */
+.etiqueta-linea-ooh {
+  background: rgba(10, 10, 12, 0.78);
+  border: 1px solid #26262e;
+  border-radius: 999px;
+  box-shadow: none;
+  color: #c9c9d1;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  padding: 1px 6px;
+}
+.etiqueta-linea-ooh::before {
+  display: none;
+}
+
 /* cluster de orígenes (listas grandes): círculo cian con conteo */
 .cluster-gravity {
   display: flex;

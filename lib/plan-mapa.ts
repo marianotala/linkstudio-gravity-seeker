@@ -15,6 +15,11 @@ const ANCHO = 1440;
 const ALTO = 810;
 const TILE = 256;
 
+interface PuntoSimple {
+  lat: number;
+  lng: number;
+}
+
 interface OpcionesMapa {
   pois: Poi[];
   /** Círculos de origen (modo orígenes/censo) con su radio en metros. */
@@ -26,6 +31,12 @@ interface OpcionesMapa {
   zonas?: Origin[];
   /** Color por nombre de capa (multi-búsqueda sobre la misma geografía). */
   colorPorCapa?: Record<string, string>;
+  /** OOH: pantallas con color por tipo y su radio de cruce en metros. */
+  pantallas?: { lat: number; lng: number; color: string; radioM: number }[];
+  /** OOH: líneas de conexión pantalla→PDV. */
+  lineas?: { a: PuntoSimple; b: PuntoSimple; color?: string }[];
+  /** Puntos genéricos (PDVs del cruce OOH): hueco = sin cobertura. */
+  puntos?: { lat: number; lng: number; color: string; hueco?: boolean }[];
 }
 
 const lngAX = (lng: number, z: number) => ((lng + 180) / 360) * 2 ** z;
@@ -89,6 +100,14 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
     (o.cps ?? []).forEach((c) => {
       lats.push(c.bbox.north, c.bbox.south);
       lngs.push(c.bbox.east, c.bbox.west);
+    });
+    (o.pantallas ?? []).forEach((p) => {
+      lats.push(p.lat);
+      lngs.push(p.lng);
+    });
+    (o.puntos ?? []).forEach((p) => {
+      lats.push(p.lat);
+      lngs.push(p.lng);
     });
     if (lats.length === 0) return null;
     const pad = 0.08;
@@ -205,6 +224,64 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
         ctx.stroke();
       }
     }
+    // ---- capa OOH (cruce pantallas × PDVs) ----
+    const mPorPxOoh =
+      (156543.03392 * Math.cos((((norte + sur) / 2) * Math.PI) / 180)) / 2 ** z;
+    // radios de cruce por pantalla (color del tipo, muy tenue)
+    for (const p of o.pantallas ?? []) {
+      const [px, py] = aPx(p.lat, p.lng);
+      ctx.beginPath();
+      ctx.arc(px, py, p.radioM / mPorPxOoh, 0, Math.PI * 2);
+      ctx.strokeStyle = p.color;
+      ctx.globalAlpha = 0.35;
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    // líneas pantalla→PDV
+    for (const l of o.lineas ?? []) {
+      const [x1, y1] = aPx(l.a.lat, l.a.lng);
+      const [x2, y2] = aPx(l.b.lat, l.b.lng);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.strokeStyle = l.color ?? CIAN;
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([5, 5]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+    // puntos genéricos (PDVs): hueco = sin cobertura
+    for (const p of o.puntos ?? []) {
+      const [px, py] = aPx(p.lat, p.lng);
+      ctx.beginPath();
+      ctx.arc(px, py, 4.5, 0, Math.PI * 2);
+      if (p.hueco) {
+        ctx.fillStyle = "#0a0a0f";
+        ctx.fill();
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        ctx.strokeStyle = "#0a0a0f";
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+    }
+    // pantallas encima (cuadrados con el color del tipo)
+    for (const p of o.pantallas ?? []) {
+      const [px, py] = aPx(p.lat, p.lng);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(px - 5, py - 5, 10, 10);
+      ctx.strokeStyle = "#0a0a0f";
+      ctx.lineWidth = 1.4;
+      ctx.strokeRect(px - 5, py - 5, 10, 10);
+    }
+
     // POIs (con capas, el color identifica a la capa)
     for (const p of o.pois) {
       const [px, py] = aPx(p.lat, p.lng);
