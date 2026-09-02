@@ -11,7 +11,10 @@ import AppHeader, { type StatusTipo } from "./AppHeader";
 import ResultsTable from "./ResultsTable";
 import UniversosPanel from "./UniversosPanel";
 import OverlayProgreso, { type ProcesoLargo } from "./OverlayProgreso";
-import CategoriaBuscador from "./CategoriaBuscador";
+import CategoriaBuscador, {
+  etiquetaSeleccion,
+  type SeleccionCategoria,
+} from "./CategoriaBuscador";
 import { CATEGORIA_LIBRE, CATEGORIAS, getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import {
   ciudadDeDireccion,
@@ -434,11 +437,10 @@ export default function SeekerApp({
   /** Centro de la ciudad del censo de marca. */
   const [zona, setZona] = useState<Origin | null>(null);
   const [radio, setRadio] = useState(1000);
-  /** Categoría OPCIONAL: "" = sin categoría (se busca solo con los
-   * términos del filtro por nombre, como el censo de marca). */
-  const [categoria, setCategoria] = useState("");
-  /** Texto de la búsqueda LIBRE (cuando categoria === CATEGORIA_LIBRE). */
-  const [categoriaLibre, setCategoriaLibre] = useState("");
+  /** Categorías OPCIONALES y MÚLTIPLES (OR entre ellas): cada entrada
+   * es una curada o una búsqueda libre. Vacío = solo términos de
+   * nombre (marca pura). */
+  const [categoriasSel, setCategoriasSel] = useState<SeleccionCategoria[]>([]);
   /** Filtro de nombre MÚLTIPLE (chips): OR entre términos, filtro
    * estricto dentro de cada término. */
   const [nameFilters, setNameFilters] = useState<string[]>([]);
@@ -484,7 +486,7 @@ export default function SeekerApp({
   useEffect(() => {
     setPlanOrigenes(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [radio, categoria, categoriaLibre, nameFilters, excludes, origenes]);
+  }, [radio, categoriasSel, nameFilters, excludes, origenes]);
 
   // ---- estado de resultados
   const [pois, setPois] = useState<Poi[]>([]);
@@ -675,29 +677,53 @@ export default function SeekerApp({
 
   /** Términos del filtro unidos, para etiquetas y compatibilidad. */
   const filtroNombreTexto = nameFilters.join(", ");
-  /** Sin categoría elegida: la búsqueda corre SOLO con los términos
-   * del filtro (text query directa por término, como censo de marca).
-   * SOLO_NOMBRE es el equivalente heredado del historial. */
-  const sinCategoria = !categoria || categoria === SOLO_NOMBRE;
-  /** Lo que se manda al API (el server usa SOLO_NOMBRE para "sin categoría"). */
-  const categoriaParaApi = sinCategoria ? SOLO_NOMBRE : categoria;
-  /** Consultas a Google por centro: la categoría curada/libre es una y
-   * cada término de nombre agrega otra (ambas vías se unen). */
+  /** Sin categorías: la búsqueda corre SOLO con los términos del
+   * filtro (text query directa por término, como censo de marca). */
+  const sinCategoria = categoriasSel.length === 0;
+  /** Compat de API: category/freeQuery llevan la primera selección; el
+   * array `categories` lleva todas (el server prioriza el array). */
+  const primeraSel = categoriasSel[0];
+  const categoriaParaApi = !primeraSel ? SOLO_NOMBRE : primeraSel.key;
+  const freeQueryApi =
+    primeraSel?.key === CATEGORIA_LIBRE
+      ? (primeraSel.libre ?? "").trim() || undefined
+      : undefined;
+  const categoriasApi = categoriasSel.map((c) =>
+    c.key === CATEGORIA_LIBRE ? `libre:${(c.libre ?? "").trim()}` : c.key
+  );
+  /** Etiquetas EXACTAS que el servidor pone en p.categoria (deben
+   * coincidir para poder separar en capas por categoría). */
+  const etiquetasCategorias = categoriasSel.map((c) =>
+    c.key === CATEGORIA_LIBRE
+      ? `Libre: "${(c.libre ?? "").trim()}"`
+      : etiquetaSeleccion(c)
+  );
+  /** Consultas a Google por centro: cada categoría (curada o libre) es
+   * una pasada y cada término de nombre agrega otra (todo se une). */
   const consultasPorCentro = Math.max(
     1,
-    (sinCategoria ? 0 : 1) + nameFilters.length
+    categoriasSel.length + nameFilters.length
   );
-  /** "Separar en capas" aplica hasta MAX_CAPAS términos; con más, los
-   * resultados van juntos en una sola capa (cada POI conserva su
-   * término en la columna término/marca). */
-  const separarEnCapasActivo =
-    separarEnCapas && nameFilters.length >= 2 && nameFilters.length <= MAX_CAPAS;
+  /** "Separar en capas" aplica hasta MAX_CAPAS categorías/términos; con
+   * más, los resultados van juntos en una sola capa (cada POI conserva
+   * su categoría y término en las columnas de trazabilidad). Con 2+
+   * categorías, la separación por CATEGORÍA tiene prioridad sobre la
+   * separación por término. */
+  const separarPorCategoria =
+    separarEnCapas &&
+    categoriasSel.length >= 2 &&
+    categoriasSel.length <= MAX_CAPAS;
+  const separarPorTermino =
+    !separarPorCategoria &&
+    separarEnCapas &&
+    nameFilters.length >= 2 &&
+    nameFilters.length <= MAX_CAPAS;
+  const separarEnCapasActivo = separarPorCategoria || separarPorTermino;
 
   /** Nombre visible de la búsqueda actual (para la capa). */
   function nombreCapaActual(): string {
     if (sinCategoria) return filtroNombreTexto || "Búsqueda";
-    if (categoria === CATEGORIA_LIBRE) return categoriaLibre || "Búsqueda libre";
-    return CATEGORIAS.find((c) => c.key === categoria)?.label ?? categoria;
+    return etiquetasCategorias.join(" · ");
   }
 
   // tope técnico ALTO de términos de filtro (configurable por env);
@@ -743,23 +769,28 @@ export default function SeekerApp({
   }
 
   /**
-   * Filtro múltiple + "separar en capas": convierte los resultados de
-   * UNA búsqueda en una capa por término (el servidor etiqueta cada
-   * POI con el término que lo capturó). En modo "agregar capa" se
-   * suman a las existentes; si no, reemplazan el set.
+   * "Separar en capas": convierte los resultados de UNA búsqueda en una
+   * capa por etiqueta — por CATEGORÍA (el servidor etiqueta cada POI
+   * con la categoría cuya pasada lo capturó) o por TÉRMINO del filtro
+   * de nombre. En modo "agregar capa" se suman a las existentes; si
+   * no, reemplazan el set.
    */
-  function registrarCapasPorTermino(terminos: string[], lista: Poi[]) {
+  function registrarCapasPor(
+    etiquetas: string[],
+    lista: Poi[],
+    valorDe: (p: Poi) => string | null | undefined
+  ) {
     setCapas((prev) => {
       const base = agregarCapaRef.current
-        ? prev.filter((c) => !terminos.includes(c.nombre))
+        ? prev.filter((c) => !etiquetas.includes(c.nombre))
         : [];
       const usados = new Set(base.map((c) => c.color));
-      const nuevas = terminos.map((t, i) => {
+      const nuevas = etiquetas.map((t, i) => {
         const color =
           PALETA_CAPAS.find((c) => !usados.has(c)) ??
           PALETA_CAPAS[(base.length + i) % PALETA_CAPAS.length];
         usados.add(color);
-        const propios = lista.filter((p) => p.termino === t);
+        const propios = lista.filter((p) => valorDe(p) === t);
         return {
           id: `${t}-${propios.length}-${base.length + i}`,
           nombre: t,
@@ -784,9 +815,8 @@ export default function SeekerApp({
     // el default de tácticas depende del modo: al cambiarlo se vuelve
     // al mapeo sugerido
     setTacticasPlan(null);
-    // la categoría NO persiste sola entre modos: arranca vacía
-    setCategoria("");
-    setCategoriaLibre("");
+    // las categorías NO persisten solas entre modos: arrancan vacías
+    setCategoriasSel([]);
   }, [mode]);
 
   function reportar(tipo: StatusTipo, texto: string) {
@@ -830,8 +860,21 @@ export default function SeekerApp({
       const p = busqueda.params as SearchRequest;
       setMode(p.mode);
       setRadio(p.radius);
-      setCategoria(p.category === SOLO_NOMBRE ? "" : p.category);
-      setCategoriaLibre(p.freeQuery ?? "");
+      setCategoriasSel(
+        p.categories?.length
+          ? p.categories.map((c) =>
+              c.startsWith("libre:")
+                ? { key: CATEGORIA_LIBRE, libre: c.slice(6) }
+                : { key: c }
+            )
+          : p.category && p.category !== SOLO_NOMBRE
+            ? [
+                p.category === CATEGORIA_LIBRE
+                  ? { key: CATEGORIA_LIBRE, libre: p.freeQuery ?? "" }
+                  : { key: p.category },
+              ]
+            : []
+      );
       setNameFilters(
         p.nameFilters?.length
           ? p.nameFilters
@@ -1034,7 +1077,9 @@ export default function SeekerApp({
       ? nameFilters.length === 1
         ? nameFilters[0]
         : ""
-      : (getCategoria(categoria)?.label ?? "");
+      : categoriasSel.length === 1
+        ? (getCategoria(categoriasSel[0].key)?.label ?? "")
+        : "";
     if (!objetivo) {
       setCensoSugerido(null);
       return;
@@ -1055,7 +1100,7 @@ export default function SeekerApp({
       setAvisoDescartado(false);
     }, 600);
     return () => clearTimeout(timer);
-  }, [mode, origenes.length, categoria, sinCategoria, nameFilters]);
+  }, [mode, origenes.length, categoriasSel, sinCategoria, nameFilters]);
 
   // ---- usar un censo guardado en lugar de buscar en vivo (cero llamadas)
   async function usarCensoGuardado() {
@@ -1512,10 +1557,6 @@ export default function SeekerApp({
       reportar("error", "Elige una categoría o agrega al menos un término de marca al filtro");
       return;
     }
-    if (categoria === CATEGORIA_LIBRE && !categoriaLibre.trim()) {
-      reportar("error", "Escribe el texto de la búsqueda libre (o elige una categoría sugerida)");
-      return;
-    }
     setOcupado(true);
     setFoco(null);
     setCoberturaCp(null);
@@ -1647,7 +1688,7 @@ export default function SeekerApp({
       // demás casos, una sola pasada: el servidor aplica el OR (y hace
       // sus propias subconsultas por término cuando es solo-nombre).
       const pasadas =
-        sinCategoria && separarEnCapasActivo
+        sinCategoria && separarPorTermino
           ? nameFilters.map((t) => ({ etiqueta: `buscando ${t}`, filtros: [t] }))
           : [{ etiqueta: "CP", filtros: nameFilters }];
       const totalPasos = celdasCp.length * pasadas.length;
@@ -1662,7 +1703,8 @@ export default function SeekerApp({
               centers: [{ lat: celdasCp[i].lat, lng: celdasCp[i].lng }],
               radius: celdasCp[i].radio_m,
               category: categoriaParaApi,
-              freeQuery: categoria === CATEGORIA_LIBRE ? categoriaLibre.trim() : undefined,
+              freeQuery: freeQueryApi,
+        categories: categoriasApi.length ? categoriasApi : undefined,
               nameFilter: pasada.filtros.join(", "),
               nameFilters: pasada.filtros,
               excludes,
@@ -1769,9 +1811,12 @@ export default function SeekerApp({
       // al AGREGAR capa el universo del territorio no cambia: se reusa
       const reutilizarUniversos =
         agregarCapaRef.current && (universos?.disponible ?? false);
-      if (separarEnCapasActivo) {
+      if (separarPorCategoria) {
+        // categorías múltiples: una capa por categoría con su color
+        registrarCapasPor(etiquetasCategorias, lista, (p) => p.categoria);
+      } else if (separarPorTermino) {
         // filtro múltiple: una capa por término (marca) con su color
-        registrarCapasPorTermino(nameFilters, lista);
+        registrarCapasPor(nameFilters, lista, (p) => p.termino);
       } else {
         registrarCapa(nombreCapaActual(), lista, excluidosTotal, descartadosTotal);
       }
@@ -1823,7 +1868,8 @@ export default function SeekerApp({
               mode: "cp",
               cps: cpsCodigos,
               category: categoriaParaApi,
-              freeQuery: categoria === CATEGORIA_LIBRE ? categoriaLibre.trim() : undefined,
+              freeQuery: freeQueryApi,
+        categories: categoriasApi.length ? categoriasApi : undefined,
               nameFilter: filtroNombreTexto,
               nameFilters,
               excludes,
@@ -1891,8 +1937,7 @@ export default function SeekerApp({
     setZonas([]);
     setZona(null);
     setRadio(1000);
-    setCategoria("");
-    setCategoriaLibre("");
+    setCategoriasSel([]);
     setTerCategoria("");
     setTerCategoriaLibre("");
     setNameFilters([]);
@@ -2599,7 +2644,7 @@ export default function SeekerApp({
     setOcupado(true);
     setFoco(null);
     detenerOrigenesRef.current = false;
-    const firma = `${centros.length}:${radio}:${categoria}:${filtroNombreTexto}:${excludes.join("|")}`;
+    const firma = `${centros.length}:${radio}:${categoriasApi.join(",")}:${filtroNombreTexto}:${excludes.join("|")}`;
     const previo =
       busquedaGrandeRef.current?.firma === firma
         ? busquedaGrandeRef.current
@@ -2643,7 +2688,8 @@ export default function SeekerApp({
           centers: lotes[li],
           radius: radio,
           category: categoriaParaApi,
-          freeQuery: categoria === CATEGORIA_LIBRE ? categoriaLibre.trim() : undefined,
+          freeQuery: freeQueryApi,
+        categories: categoriasApi.length ? categoriasApi : undefined,
           nameFilter: filtroNombreTexto,
           nameFilters,
           excludes,
@@ -2700,8 +2746,10 @@ export default function SeekerApp({
       .sort((a, b) => a.distancia - b.distancia);
 
     setPois(lista);
-    if (separarEnCapasActivo) {
-      registrarCapasPorTermino(nameFilters, lista);
+    if (separarPorCategoria) {
+      registrarCapasPor(etiquetasCategorias, lista, (p) => p.categoria);
+    } else if (separarPorTermino) {
+      registrarCapasPor(nameFilters, lista, (p) => p.termino);
     } else {
       setCapas([]);
     }
@@ -2780,10 +2828,6 @@ export default function SeekerApp({
       reportar("error", "Elige una categoría o agrega al menos un término de marca al filtro");
       return;
     }
-    if (categoria === CATEGORIA_LIBRE && !categoriaLibre.trim()) {
-      reportar("error", "Escribe el texto de la búsqueda libre (o elige una categoría sugerida)");
-      return;
-    }
 
     // Guardarraíl de costo (orígenes grandes): consolidar traslapes,
     // estimar consultas y CONFIRMAR antes de gastar; luego correr por
@@ -2827,21 +2871,24 @@ export default function SeekerApp({
         centers: centrosActivos,
         radius: radio,
         category: categoriaParaApi,
-        freeQuery: categoria === CATEGORIA_LIBRE ? categoriaLibre.trim() : undefined,
+        freeQuery: freeQueryApi,
+        categories: categoriasApi.length ? categoriasApi : undefined,
         nameFilter: filtroNombreTexto,
         nameFilters,
         excludes,
       };
       const data = await postJson<SearchResponse>("/api/search", body);
       setPois(data.pois);
-      // filtro múltiple + "separar en capas": una capa por término
+      // "separar en capas": una capa por categoría o por término
       const multiCapas = separarEnCapasActivo;
       // en modo zona la búsqueda se acumula como capa (misma geografía);
       // al AGREGAR capa, el universo del territorio no cambia: se reusa
       const reutilizarUniversos =
         mode === "zone" && agregarCapaRef.current && universos?.disponible;
-      if (multiCapas) {
-        registrarCapasPorTermino(nameFilters, data.pois);
+      if (separarPorCategoria) {
+        registrarCapasPor(etiquetasCategorias, data.pois, (p) => p.categoria);
+      } else if (multiCapas) {
+        registrarCapasPor(nameFilters, data.pois, (p) => p.termino);
       } else if (mode === "zone") {
         registrarCapa(
           nombreCapaActual(),
@@ -2988,7 +3035,7 @@ export default function SeekerApp({
             ? etiquetaDeCategoria(terCategoria, terCategoriaLibre)
             : sinCategoria
               ? filtroNombreTexto || "Búsqueda"
-              : etiquetaDeCategoria(categoria, categoriaLibre);
+              : etiquetasCategorias.join(" · ");
       const alcance =
         mode === "census"
           ? (zona?.nombre?.split(",")[0] ?? ciudadQuery.trim() ?? "")
@@ -3112,7 +3159,7 @@ export default function SeekerApp({
     ? filtroNombreTexto
       ? `Nombre: "${filtroNombreTexto}"`
       : "Sin categoría"
-    : etiquetaDeCategoria(categoria, categoriaLibre);
+    : etiquetasCategorias.join(" · ");
   const chipMapa =
     mode === "census"
       ? marca.trim()
@@ -3843,12 +3890,17 @@ export default function SeekerApp({
             <section className={pasoCls}>
               <label className={labelCls}>02 · Censo territorial (INEGI)</label>
               <CategoriaBuscador
-                categoria={terCategoria}
-                libre={terCategoriaLibre}
-                onChange={(key, libreTexto) => {
-                  setTerCategoria(key);
-                  setTerCategoriaLibre(libreTexto ?? "");
+                selecciones={
+                  terCategoria
+                    ? [{ key: terCategoria, libre: terCategoriaLibre || undefined }]
+                    : []
+                }
+                onCambiar={(sels) => {
+                  const s = sels[sels.length - 1];
+                  setTerCategoria(s?.key ?? "");
+                  setTerCategoriaLibre(s?.libre ?? "");
                 }}
+                max={1}
               />
               <input
                 value={terLugarQuery}
@@ -4140,12 +4192,8 @@ export default function SeekerApp({
             {mode !== "census" && (
             <>
             <CategoriaBuscador
-              categoria={categoria}
-              libre={categoriaLibre}
-              onChange={(key, libreTexto) => {
-                setCategoria(key);
-                setCategoriaLibre(libreTexto ?? "");
-              }}
+              selecciones={categoriasSel}
+              onCambiar={setCategoriasSel}
               opcional
             />
 
@@ -4211,20 +4259,30 @@ export default function SeekerApp({
               términos de inclusión multiplican consultas — el estimador de
               costo lo refleja; las exclusiones son gratis.
             </p>
-            {nameFilters.length >= 2 && (
+            {(categoriasSel.length >= 2 || nameFilters.length >= 2) && (
               <label className="mt-2 flex cursor-pointer items-center gap-2 font-mono text-[11px] text-zinc-400">
                 <input
                   type="checkbox"
                   checked={separarEnCapas}
                   onChange={(e) => setSepararEnCapas(e.target.checked)}
                   className="accent-cian"
-                  disabled={nameFilters.length > MAX_CAPAS}
+                  disabled={
+                    categoriasSel.length >= 2
+                      ? categoriasSel.length > MAX_CAPAS
+                      : nameFilters.length > MAX_CAPAS
+                  }
                 />
-                Separar en capas: cada término con su color y conteo en el
-                mapa (ideal para comparar marcas)
-                {nameFilters.length > MAX_CAPAS && (
+                Separar en capas: cada{" "}
+                {categoriasSel.length >= 2 ? "categoría" : "término"} con su
+                color y conteo en el mapa (ideal para comparar{" "}
+                {categoriasSel.length >= 2 ? "giros" : "marcas"})
+                {(categoriasSel.length >= 2
+                  ? categoriasSel.length
+                  : nameFilters.length) > MAX_CAPAS && (
                   <span className="text-zinc-600">
-                    · aplica hasta {MAX_CAPAS} términos; con más van juntos
+                    · aplica hasta {MAX_CAPAS}{" "}
+                    {categoriasSel.length >= 2 ? "categorías" : "términos"};
+                    con más van juntos
                   </span>
                 )}
               </label>

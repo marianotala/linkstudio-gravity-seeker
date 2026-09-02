@@ -11,7 +11,21 @@ import { CATEGORIA_LIBRE, getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import { createClient } from "@/lib/supabase/client";
 import type { BusquedaGuardada, PerfilUsuario } from "@/lib/types";
 
-function etiquetaCategoria(key: string, freeQuery?: string): string {
+function etiquetaCategoria(
+  key: string,
+  freeQuery?: string,
+  categories?: string[]
+): string {
+  // búsquedas nuevas: categorías múltiples (curadas y/o "libre:<texto>")
+  if (categories?.length) {
+    return categories
+      .map((c) =>
+        c.startsWith("libre:")
+          ? `Libre: "${c.slice(6)}"`
+          : (getCategoria(c)?.label ?? c)
+      )
+      .join(" · ");
+  }
   if (key === SOLO_NOMBRE) return "Solo por nombre";
   if (key === CATEGORIA_LIBRE)
     return freeQuery ? `Libre: "${freeQuery}"` : "Búsqueda libre";
@@ -203,7 +217,11 @@ export default function HistorialView({
                         </span>
                       </td>
                       <td className="px-3 py-2.5">
-                        {etiquetaCategoria(b.params.category, b.params.freeQuery)}
+                        {etiquetaCategoria(
+                          b.params.category,
+                          b.params.freeQuery,
+                          b.params.categories
+                        )}
                         {b.params.nameFilter && (
                           <span className="text-zinc-500">
                             {" "}

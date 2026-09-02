@@ -32,6 +32,11 @@ export default function ResultsTable({
     pois.map((p) => p.termino).filter(Boolean)
   );
   const conTermino = terminosDistintos.size >= 2;
+  // columna categoría: solo con 2+ categorías distintas (multi-búsqueda)
+  const categoriasDistintas = new Set(
+    pois.map((p) => p.categoria).filter(Boolean)
+  );
+  const conCategoria = categoriasDistintas.size >= 2;
 
   if (pois.length === 0) return null;
 
@@ -62,6 +67,9 @@ export default function ResultsTable({
               <tr>
                 <th className="px-4 py-2 font-medium">#</th>
                 <th className="px-2 py-2 font-medium">Nombre</th>
+                {conCategoria && (
+                  <th className="px-2 py-2 font-medium">Categoría</th>
+                )}
                 {conTermino && (
                   <th className="px-2 py-2 font-medium">Término / marca</th>
                 )}
@@ -109,6 +117,14 @@ export default function ResultsTable({
                       />
                       {p.nombre}
                     </td>
+                    {conCategoria && (
+                      <td
+                        className="max-w-[130px] truncate px-2 py-1.5 text-violeta"
+                        title={p.categoria ?? undefined}
+                      >
+                        {p.categoria ?? "—"}
+                      </td>
+                    )}
                     {conTermino && (
                       <td className="max-w-[120px] truncate px-2 py-1.5 text-cian">
                         {p.termino ?? "—"}

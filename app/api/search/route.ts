@@ -7,7 +7,7 @@ import {
   type PlaceResult,
 } from "@/lib/google";
 import { esNombreBasura, etiquetaOrigen, haversine, normalizarComparable } from "@/lib/geo";
-import { CATEGORIA_LIBRE, getCategoria, SOLO_NOMBRE } from "@/lib/categories";
+import { CATEGORIA_LIBRE, getCategoria, SOLO_NOMBRE, type Categoria } from "@/lib/categories";
 import { createClient } from "@/lib/supabase/server";
 import { calcularUniversos } from "@/lib/universos";
 import type {
@@ -93,6 +93,9 @@ const BodySchema = z
     /** Búsqueda LIBRE (category === CATEGORIA_LIBRE): el texto va como
      * query a Google Places, sin mapeo curado. */
     freeQuery: z.string().trim().max(80).optional(),
+    /** Categorías MÚLTIPLES (OR): keys curadas y/o "libre:<texto>".
+     * Si viene, manda sobre category/freeQuery. */
+    categories: z.array(z.string().trim().min(1).max(90)).max(12).optional(),
     persist: z.boolean().optional(),
     /** Solo modo cp: códigos postales de 5 dígitos. */
     cps: z
@@ -207,10 +210,41 @@ export async function POST(req: Request) {
   // búsqueda LIBRE: el texto es la query (sin mapeo curado)
   const libre =
     category === CATEGORIA_LIBRE ? (parsed.data.freeQuery ?? "").trim() : "";
+  // VÍAS de categoría (OR entre categorías): cada categoría — curada o
+  // libre — es su propia pasada de búsqueda, y cada POI queda
+  // etiquetado con la categoría que lo capturó. `categories` manda;
+  // category/freeQuery quedan como compatibilidad (una sola vía).
+  interface ViaCategoria {
+    etiqueta: string;
+    categoria?: Categoria;
+    texto?: string;
+  }
+  const vias: ViaCategoria[] = [];
+  for (const entrada of parsed.data.categories ?? []) {
+    if (vias.length >= 12) break;
+    if (entrada.startsWith("libre:")) {
+      const texto = entrada.slice(6).trim();
+      if (texto) vias.push({ etiqueta: `Libre: "${texto}"`, texto });
+    } else {
+      const c = getCategoria(entrada);
+      if (c) vias.push({ etiqueta: c.label, categoria: c });
+    }
+  }
+  const categoriaLegacy = getCategoria(category);
+  if (vias.length === 0 && !parsed.data.categories?.length) {
+    if (categoriaLegacy)
+      vias.push({ etiqueta: categoriaLegacy.label, categoria: categoriaLegacy });
+    else if (libre) vias.push({ etiqueta: `Libre: "${libre}"`, texto: libre });
+  }
+  if (vias.length === 0 && terminos.length === 0) {
+    return NextResponse.json(
+      { error: "Manda al menos una categoría o un término de nombre" },
+      { status: 400 }
+    );
+  }
   let centers = parsed.data.centers;
   // Las celdas de censo no se guardan como búsquedas individuales.
   const persistir = parsed.data.persist ?? mode !== "census";
-  const categoria = getCategoria(category);
 
   // Modo CP: resolver los códigos postales a sus polígonos. El bbox de
   // cada CP se vuelve un "centro" tipo zona (searchText restringido al
@@ -298,50 +332,52 @@ export async function POST(req: Request) {
     // nombre corren después: la categoría SUMA cobertura, no recorta.
     // Google no soporta OR en una query, así que cada término es una
     // pasada sobre los mismos centros.
-    const consultasTexto = Array.from(
-      new Set([
-        ...(categoria ? [categoria.textQuery] : libre ? [libre] : []),
-        ...consultasNombre,
-      ])
-    );
-    let crudos: PlaceResult[];
-    if (mode === "origins" && categoria && categoria.types.length > 0) {
-      // Tipo curado alrededor de cada origen: searchNearby, máx 20 por
-      // origen, ordenados por distancia.
-      const porCentro = await enLotes(centers, LOTE_CENTROS, (c) =>
-        searchNearby(c, radius, categoria.types)
-      );
-      crudos = porCentro.flat();
-      if (consultasNombre.length > 0) {
-        const porTexto = await enLotes(
-          consultasNombre.flatMap((q) => centers.map((c) => ({ q, c }))),
-          LOTE_CENTROS,
-          ({ q, c }) => searchText(q, { circle: { center: c, radius } })
-        );
-        crudos = crudos.concat(porTexto.flat());
+    // Ejecuta CADA vía de categoría como su propia pasada (searchNearby
+    // con sus tipos en orígenes, searchText con su textQuery en los
+    // demás casos y para categorías sin tipo) y etiqueta cada POI con
+    // la categoría que lo capturó; los términos de nombre agregan sus
+    // propias pasadas de texto. Google no soporta OR en una query.
+    const esTexto = (q: string, c: (typeof centers)[number]) =>
+      mode === "zone" || mode === "cp"
+        ? searchText(q, { rectangle: c.viewport ?? viewportDeRespaldo(c) })
+        : searchText(q, { circle: { center: c, radius } });
+    const crudos: PlaceResult[] = [];
+    const categoriaPorId = new Map<string, string>();
+    const registrar = (lista: PlaceResult[], etiquetaVia?: string) => {
+      for (const p of lista) {
+        crudos.push(p);
+        if (etiquetaVia && !categoriaPorId.has(p.placeId)) {
+          categoriaPorId.set(p.placeId, etiquetaVia);
+        }
       }
-    } else if (mode === "zone" || mode === "cp") {
-      // Modo zona: sin radio — restricción dura a los límites reales de
-      // cada zona (viewport de Geocoding), paginado hasta 60 por zona.
-      // Modo CP: mismo mecanismo sobre el bbox de cada código postal;
-      // el recorte al polígono real viene después.
-      const porZona = await enLotes(
-        consultasTexto.flatMap((q) => centers.map((c) => ({ q, c }))),
+    };
+    for (const via of vias) {
+      if (
+        mode === "origins" &&
+        via.categoria &&
+        via.categoria.types.length > 0
+      ) {
+        const tiposVia = via.categoria.types;
+        const porCentro = await enLotes(centers, LOTE_CENTROS, (c) =>
+          searchNearby(c, radius, tiposVia)
+        );
+        registrar(porCentro.flat(), via.etiqueta);
+      } else {
+        const q = via.categoria ? via.categoria.textQuery : (via.texto ?? "");
+        if (!q) continue;
+        const porCentro = await enLotes(centers, LOTE_CENTROS, (c) =>
+          esTexto(q, c)
+        );
+        registrar(porCentro.flat(), via.etiqueta);
+      }
+    }
+    if (consultasNombre.length > 0) {
+      const porTexto = await enLotes(
+        consultasNombre.flatMap((q) => centers.map((c) => ({ q, c }))),
         LOTE_CENTROS,
-        ({ q, c }) =>
-          searchText(q, { rectangle: c.viewport ?? viewportDeRespaldo(c) })
+        ({ q, c }) => esTexto(q, c)
       );
-      crudos = porZona.flat();
-    } else {
-      // Censo, "solo por nombre" en orígenes y categorías SIN tipo de
-      // Google (taquerías, notarías…): searchText con sesgo circular,
-      // paginado hasta 60 por centro.
-      const porCentro = await enLotes(
-        consultasTexto.flatMap((q) => centers.map((c) => ({ q, c }))),
-        LOTE_CENTROS,
-        ({ q, c }) => searchText(q, { circle: { center: c, radius } })
-      );
-      crudos = porCentro.flat();
+      registrar(porTexto.flat());
     }
 
     // 2) Deduplicar por place_id.
@@ -457,6 +493,7 @@ export async function POST(req: Request) {
           origenIdx: mejorIdx,
           fuente: "google",
           termino: terminoPorId.get(p.placeId) ?? null,
+          categoria: categoriaPorId.get(p.placeId) ?? null,
         });
       }
     }
@@ -549,10 +586,15 @@ export async function POST(req: Request) {
         nameFilter: terminos.join(", "),
         excludes,
         ...(libre ? { freeQuery: libre } : {}),
+        ...(parsed.data.categories?.length
+          ? { categories: parsed.data.categories }
+          : {}),
         ...(mode === "cp" ? { cps: cpsPedidos } : {}),
       };
       const etiquetaCategoria =
-        categoria?.label ?? (libre ? `Libre: "${libre}"` : "Solo por nombre");
+        vias.length > 0
+          ? vias.map((v) => v.etiqueta).join(" · ")
+          : "Solo por nombre";
       const { data: idGuardado, error: errorGuardado } = await supabase.rpc(
         "guardar_busqueda",
         {

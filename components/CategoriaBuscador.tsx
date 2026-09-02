@@ -1,18 +1,13 @@
 "use client";
 
-// Campo de texto INTELIGENTE para elegir categoría (reemplaza al
-// dropdown): al escribir sugiere en vivo las categorías del catálogo
-// curado (sin acentos/mayúsculas y por sinónimos: "coches" → Agencias
-// de autos). Elegir una sugerencia usa su MAPEO CURADO exacto (tipos
-// de Google + condición DENUE). Si el texto no tiene match y se
-// presiona Enter, corre como BÚSQUEDA LIBRE (el texto va como query a
-// Google y como palabra clave a DENUE).
-//
-// La categoría es OPCIONAL y REMOVIBLE: el chip trae su "×" (igual que
-// los chips de marcas) y el campo arranca vacío — sin categoría, la
-// búsqueda corre solo con los términos del filtro por nombre (marca
-// pura, text query directa). El chip dice SIEMPRE el modo activo:
-// azul = categoría verificada, gris = búsqueda libre.
+// Campo de texto INTELIGENTE para elegir CATEGORÍAS (una o varias):
+// al escribir sugiere en vivo del catálogo curado (sin acentos y por
+// sinónimos: "coches" → Agencias de autos); elegir una sugerencia usa
+// su MAPEO CURADO exacto y la agrega como CHIP azul con su × — misma
+// UX que los términos de marca. Enter sin match agrega una BÚSQUEDA
+// LIBRE (chip gris): el texto va como query a Google y como palabra
+// clave a DENUE. OR entre categorías: un POI pasa si CUALQUIERA lo
+// captura. Con max=1 funciona como selector único (censo territorial).
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -20,20 +15,31 @@ import {
   getCategoria,
   sugerirCategorias,
 } from "@/lib/categories";
+import { normalizarComparable } from "@/lib/geo";
+
+export interface SeleccionCategoria {
+  /** Key curada o CATEGORIA_LIBRE. */
+  key: string;
+  /** Texto de la búsqueda libre (cuando key === CATEGORIA_LIBRE). */
+  libre?: string;
+}
+
+export function etiquetaSeleccion(s: SeleccionCategoria): string {
+  if (s.key === CATEGORIA_LIBRE) return s.libre ?? "Búsqueda libre";
+  return getCategoria(s.key)?.label ?? s.key;
+}
 
 export default function CategoriaBuscador({
-  categoria,
-  libre,
-  onChange,
+  selecciones,
+  onCambiar,
+  max = 12,
   opcional = false,
 }: {
-  /** Key curada, CATEGORIA_LIBRE o "" (sin categoría). */
-  categoria: string;
-  /** Texto de la búsqueda libre (cuando categoria === CATEGORIA_LIBRE). */
-  libre: string;
-  onChange: (key: string, libreTexto?: string) => void;
-  /** true = puede quedar sin categoría (hay filtro por nombre abajo);
-   * false = se requiere categoría o búsqueda libre (censo territorial). */
+  selecciones: SeleccionCategoria[];
+  onCambiar: (selecciones: SeleccionCategoria[]) => void;
+  /** Máximo de categorías (1 = selector único, p. ej. territorial). */
+  max?: number;
+  /** true = puede quedar sin categoría (hay filtro por nombre abajo). */
   opcional?: boolean;
 }) {
   const [texto, setTexto] = useState("");
@@ -49,22 +55,34 @@ export default function CategoriaBuscador({
     return () => document.removeEventListener("mousedown", cerrar);
   }, [abierto]);
 
-  const sugerencias = sugerirCategorias(texto);
+  const sugerencias = sugerirCategorias(texto).filter(
+    (c) => !selecciones.some((s) => s.key === c.key)
+  );
   const textoLimpio = texto.trim();
-  const cat = getCategoria(categoria);
 
-  const elegirCurada = (key: string) => {
-    onChange(key);
+  const agregar = (sel: SeleccionCategoria) => {
+    const duplicada = selecciones.some(
+      (s) =>
+        s.key === sel.key &&
+        (s.key !== CATEGORIA_LIBRE ||
+          normalizarComparable(s.libre ?? "") ===
+            normalizarComparable(sel.libre ?? ""))
+    );
+    if (!duplicada) {
+      // con max=1 la nueva REEMPLAZA (selector único)
+      const base = max === 1 ? [] : selecciones;
+      if (base.length >= max) return;
+      onCambiar([...base, sel]);
+    }
     setTexto("");
     setAbierto(false);
   };
-  const elegirLibre = () => {
+  const agregarLibre = () => {
     if (!textoLimpio) return;
-    onChange(CATEGORIA_LIBRE, textoLimpio);
-    setTexto("");
-    setAbierto(false);
+    agregar({ key: CATEGORIA_LIBRE, libre: textoLimpio });
   };
-  const quitar = () => onChange("", "");
+  const quitar = (idx: number) =>
+    onCambiar(selecciones.filter((_, i) => i !== idx));
 
   return (
     <div ref={contRef} className="relative">
@@ -79,14 +97,16 @@ export default function CategoriaBuscador({
           if (e.key === "Escape") setAbierto(false);
           if (e.key === "Enter") {
             e.preventDefault();
-            if (sugerencias.length > 0) elegirCurada(sugerencias[0].key);
-            else elegirLibre();
+            if (sugerencias.length > 0) agregar({ key: sugerencias[0].key });
+            else agregarLibre();
           }
         }}
         placeholder={
-          opcional
-            ? "Categoría (opcional) · escribe para sugerencias"
-            : "Categoría · escribe para sugerencias, Enter = búsqueda libre"
+          selecciones.length > 0 && max > 1
+            ? "Agrega otra categoría · escribe para sugerencias"
+            : opcional
+              ? "Categoría (opcional) · escribe para sugerencias"
+              : "Categoría · escribe para sugerencias, Enter = búsqueda libre"
         }
         className="w-full rounded-md border border-linea bg-panel2 px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-cian focus:outline-none"
       />
@@ -97,12 +117,8 @@ export default function CategoriaBuscador({
             <button
               key={c.key}
               type="button"
-              onClick={() => elegirCurada(c.key)}
-              className={`flex w-full items-center justify-between px-3 py-1.5 text-left font-mono text-xs transition-colors ${
-                c.key === categoria
-                  ? "bg-cian/15 text-cian"
-                  : "text-zinc-300 hover:bg-fondo hover:text-white"
-              }`}
+              onClick={() => agregar({ key: c.key })}
+              className="flex w-full items-center justify-between px-3 py-1.5 text-left font-mono text-xs text-zinc-300 transition-colors hover:bg-fondo hover:text-white"
             >
               <span>
                 {c.label}
@@ -118,7 +134,7 @@ export default function CategoriaBuscador({
           {textoLimpio && (
             <button
               type="button"
-              onClick={elegirLibre}
+              onClick={agregarLibre}
               className="block w-full border-t border-linea/60 px-3 py-1.5 text-left font-mono text-xs text-zinc-400 transition-colors hover:bg-fondo hover:text-zinc-200"
             >
               Búsqueda libre: “{textoLimpio}”
@@ -130,35 +146,48 @@ export default function CategoriaBuscador({
         </div>
       )}
 
-      {/* chip del modo activo, con su × para quitarse */}
-      <div className="mt-1.5">
-        {categoria === CATEGORIA_LIBRE ? (
-          <button
-            type="button"
-            onClick={quitar}
-            className="group inline-flex items-center gap-1.5 rounded-full border border-zinc-600 bg-zinc-700/20 px-2.5 py-0.5 font-mono text-[10px] text-zinc-400"
-            title="Búsqueda libre (sin mapeo curado) · quitar"
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-zinc-500" />
-            búsqueda libre · “{libre}”
-            <span className="text-zinc-600 group-hover:text-zinc-300">×</span>
-          </button>
-        ) : cat ? (
-          <button
-            type="button"
-            onClick={quitar}
-            className="group inline-flex items-center gap-1.5 rounded-full border border-[#3b82f6]/60 bg-[#3b82f6]/10 px-2.5 py-0.5 font-mono text-[10px] text-[#60a5fa]"
-            title="Mapeo curado exacto (Google Places + SCIAN de DENUE) · quitar"
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-[#3b82f6]" />
-            categoría verificada · {cat.label}
-            <span className="text-[#60a5fa]/60 group-hover:text-[#60a5fa]">×</span>
-          </button>
-        ) : (
+      {/* chips de categorías activas (azul = verificada, gris = libre),
+          cada una con su × — o el estado vacío */}
+      <div className="mt-1.5 flex max-h-24 flex-wrap items-center gap-1.5 overflow-y-auto">
+        {selecciones.map((s, idx) =>
+          s.key === CATEGORIA_LIBRE ? (
+            <button
+              key={`${s.key}:${s.libre}`}
+              type="button"
+              onClick={() => quitar(idx)}
+              className="group inline-flex items-center gap-1.5 rounded-full border border-zinc-600 bg-zinc-700/20 px-2.5 py-0.5 font-mono text-[10px] text-zinc-400"
+              title="Búsqueda libre (sin mapeo curado) · quitar"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-zinc-500" />
+              libre · “{s.libre}”
+              <span className="text-zinc-600 group-hover:text-zinc-300">×</span>
+            </button>
+          ) : (
+            <button
+              key={s.key}
+              type="button"
+              onClick={() => quitar(idx)}
+              className="group inline-flex items-center gap-1.5 rounded-full border border-[#3b82f6]/60 bg-[#3b82f6]/10 px-2.5 py-0.5 font-mono text-[10px] text-[#60a5fa]"
+              title="Mapeo curado exacto (Google Places + SCIAN de DENUE) · quitar"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-[#3b82f6]" />
+              {etiquetaSeleccion(s)}
+              <span className="text-[#60a5fa]/60 group-hover:text-[#60a5fa]">
+                ×
+              </span>
+            </button>
+          )
+        )}
+        {selecciones.length === 0 && (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-linea px-2.5 py-0.5 font-mono text-[10px] text-zinc-600">
             {opcional
               ? "sin categoría — se busca con los términos del filtro (marca pura)"
               : "sin categoría — elige una sugerida o escribe y presiona Enter"}
+          </span>
+        )}
+        {selecciones.length >= 2 && (
+          <span className="font-mono text-[10px] text-zinc-600">
+            OR: un POI pasa si CUALQUIERA lo captura
           </span>
         )}
       </div>

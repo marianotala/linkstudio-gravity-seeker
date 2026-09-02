@@ -63,6 +63,9 @@ export interface Poi {
   /** Término del filtro de nombre múltiple que capturó este POI
    * (columna "término/marca" en resultados y exports). */
   termino?: string | null;
+  /** Con categorías múltiples: etiqueta de la categoría (curada o
+   * libre) cuya pasada capturó este POI. */
+  categoria?: string | null;
 }
 
 /** Una búsqueda de POIs acumulada sobre la geografía activa (capa de
@@ -243,6 +246,9 @@ export interface SearchRequest {
   /** Búsqueda LIBRE (category === CATEGORIA_LIBRE): el texto exacto
    * que corre como query en Google y palabra clave en DENUE. */
   freeQuery?: string;
+  /** Categorías MÚLTIPLES (OR): keys curadas y/o "libre:<texto>". Si
+   * viene, manda sobre category/freeQuery (que quedan de compat). */
+  categories?: string[];
   excludes: string[];
   /**
    * Si guardar la búsqueda en el historial. Default: true, excepto en
