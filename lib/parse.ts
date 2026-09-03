@@ -316,12 +316,21 @@ export interface ArchivoPantallas {
   correcciones: CorreccionesCarga & { sinClave: number };
 }
 
-const KEYS_CLAVE = ["clave", "id", "codigo", "key", "sku"];
+// Los candidatos cubren la plantilla de Seeker Y los exports típicos
+// de inventario DOOH ("Inventory - Sites": Site ID, Site name, Site
+// location (city), Site latitude/longitude, Screen network, Site max
+// impressions capacity).
+const KEYS_CLAVE = ["clave", "site id", "id", "codigo", "key", "sku"];
 const KEYS_TIPO = ["tipo", "type", "formato", "categoria"];
 const KEYS_MEDIO = ["medio", "vendor", "proveedor", "propietario", "empresa"];
 const KEYS_CIUDAD = ["ciudad", "city", "plaza", "municipio"];
-const KEYS_DIGITAL = ["digital", "estatica", "tecnologia"];
-const KEYS_IMPRESIONES = ["impresiones", "impactos", "audiencia"];
+const KEYS_DIGITAL = ["digital", "estatica", "tecnologia", "screen network"];
+const KEYS_IMPRESIONES = [
+  "impresiones",
+  "impressions",
+  "impactos",
+  "audiencia",
+];
 const KEYS_COSTO = ["costo", "precio", "tarifa", "renta"];
 
 /** Interpreta la celda de digital/estática con tolerancia: palabras

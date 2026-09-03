@@ -963,8 +963,14 @@ export default function AdminView({
                     geocodificar), tipo, medio/vendor, ciudad,
                     digital/estática, impresiones mensuales, costo
                   </span>
-                  . La carga es acumulativa con upsert por clave y alimenta el
-                  cruce pantalla ↔ PDV de la pestaña OOH.
+                  . También acepta el export de sitios DOOH tal cual (
+                  <span className="text-zinc-300">
+                    Site ID, Site name, Site location (city), Site
+                    latitude/longitude, Screen network, Site max impressions
+                    capacity
+                  </span>
+                  ). La carga es acumulativa con upsert por clave y alimenta
+                  el cruce pantalla ↔ PDV de la pestaña OOH.
                 </p>
               </div>
               <button
