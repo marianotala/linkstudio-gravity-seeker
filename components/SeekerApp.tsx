@@ -11,6 +11,7 @@ import AppHeader, { type StatusTipo } from "./AppHeader";
 import ResultsTable from "./ResultsTable";
 import UniversosPanel from "./UniversosPanel";
 import OverlayProgreso, { type ProcesoLargo } from "./OverlayProgreso";
+import BuscadorLugar from "./BuscadorLugar";
 import CategoriaBuscador, {
   etiquetaSeleccion,
   type SeleccionCategoria,
@@ -633,7 +634,11 @@ export default function SeekerApp({
   });
   const [ocupado, setOcupado] = useState(false);
   const [tablaColapsada, setTablaColapsada] = useState(false);
-  const [foco, setFoco] = useState<Poi | null>(null);
+  /** Punto al que vuela el mapa: un POI de la tabla o un lugar recién
+   * fijado como origen (solo necesita lat/lng). */
+  const [foco, setFoco] = useState<(LatLng & { placeId?: string }) | null>(
+    null
+  );
 
   // ---- estado del censo de marca
   const [marca, setMarca] = useState("");
@@ -823,11 +828,20 @@ export default function SeekerApp({
       ? `Libre: "${(c.libre ?? "").trim()}"`
       : etiquetaSeleccion(c)
   );
-  /** Consultas a Google por centro: cada categoría (curada o libre) es
-   * una pasada y cada término de nombre agrega otra (todo se une). */
+  /** Consultas a Google por centro: cada categoría CURADA con tipos
+   * corre DOS vías (Nearby por tipo + text query, unidas — así no se
+   * pierden POIs que Google no etiqueta con el tipo), cada libre una,
+   * y cada término de nombre agrega otra pasada de texto. */
   const consultasPorCentro = Math.max(
     1,
-    categoriasSel.length + nameFilters.length
+    categoriasSel.reduce(
+      (s, c) =>
+        s +
+        (c.key !== CATEGORIA_LIBRE && (getCategoria(c.key)?.types.length ?? 0) > 0
+          ? 2
+          : 1),
+      0
+    ) + nameFilters.length
   );
   /** "Separar en capas" aplica hasta MAX_CAPAS categorías/términos; con
    * más, los resultados van juntos en una sola capa (cada POI conserva
@@ -3707,6 +3721,22 @@ export default function SeekerApp({
           {mode === "origins" ? (
             <section className={pasoCls}>
               <label className={labelCls}>02 · Tus orígenes (PDVs)</label>
+
+              {/* entrada rápida: buscar un lugar por nombre y fijarlo
+                  como origen (convive con Excel/direcciones/coords) */}
+              <div className="mb-3">
+                <BuscadorLugar
+                  disabled={ocupado}
+                  onAgregar={(lugar) => {
+                    setOrigenes((prev) => [...prev, lugar]);
+                    setFoco({ lat: lugar.lat, lng: lugar.lng });
+                    reportar(
+                      "ok",
+                      `"${lugar.nombre}" fijado como origen — elige radio y calcula universos o busca categorías alrededor`
+                    );
+                  }}
+                />
+              </div>
               <div className="mb-3 flex gap-1 rounded-md border border-linea bg-panel2 p-1">
                 {(
                   [
@@ -4670,8 +4700,11 @@ export default function SeekerApp({
                 </button>
               </div>
             )}
+            {/* siempre disponible con orígenes listos: demografía del
+                radio SIN buscar POIs (p. ej. un lugar recién fijado con
+                el buscador → universos de 1 km al instante, gratis) */}
             {mode === "origins" &&
-              centrosActivos.length > UMBRAL_ORIGENES_GRANDES &&
+              centrosActivos.length > 0 &&
               !planOrigenes && (
                 <button
                   onClick={soloUniversosOrigenes}
@@ -4679,7 +4712,7 @@ export default function SeekerApp({
                   className="mt-2 w-full rounded-md border border-violeta bg-violeta/10 px-3 py-2 text-left font-mono text-[11px] text-violeta transition-colors hover:bg-violeta/20 disabled:opacity-40"
                   title="Demografía de las zonas de tus PDVs, sin búsqueda de POIs — puro censo, cero llamadas a Google"
                 >
-                  Solo universos, sin búsqueda de POIs · 0 consultas
+                  Calcular universos de esta zona · 0 consultas a Google
                 </button>
               )}
 

@@ -236,7 +236,7 @@ interface MapViewProps {
   radio: number;
   pois: Poi[];
   /** POI al que hay que volar (clic en la tabla). */
-  foco: Poi | null;
+  foco: LatLng | null;
   /** Centros de celda del censo de marca (modo census). */
   celdas?: LatLng[];
   /** Radio de cada celda del censo, en metros. */

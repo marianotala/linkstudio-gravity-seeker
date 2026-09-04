@@ -12,7 +12,7 @@ interface ResultsTableProps {
   colapsada: boolean;
   onToggle: () => void;
   onSeleccionar: (poi: Poi) => void;
-  seleccionado: Poi | null;
+  seleccionado: { placeId?: string } | null;
   /** Universo residencial de la geocerca de cada origen (por índice). */
   poblacionPorOrigen?: (number | null)[];
 }

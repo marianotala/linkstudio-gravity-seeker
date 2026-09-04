@@ -351,6 +351,27 @@ export async function POST(req: Request) {
       mode === "zone" || mode === "cp"
         ? searchText(q, { rectangle: c.viewport ?? viewportDeRespaldo(c) })
         : searchText(q, { circle: { center: c, radius } });
+    // Círculo equivalente de un centro para searchNearby: en zona/CP el
+    // área es un rectángulo → círculo CIRCUNSCRITO (centro del viewport
+    // + media diagonal); lo que caiga fuera del rectángulo se descarta
+    // en el paso 5 (dentroDeViewport), así que no agrega de más.
+    const circuloDe = (
+      c: (typeof centers)[number]
+    ): { centro: { lat: number; lng: number }; radio: number } => {
+      if (mode === "zone" || mode === "cp") {
+        const v = c.viewport ?? viewportDeRespaldo(c);
+        const centro = {
+          lat: (v.north + v.south) / 2,
+          lng: (v.east + v.west) / 2,
+        };
+        const radio = Math.min(
+          50000,
+          Math.max(500, haversine(centro, { lat: v.north, lng: v.east }))
+        );
+        return { centro, radio };
+      }
+      return { centro: { lat: c.lat, lng: c.lng }, radio: radius };
+    };
     const crudos: PlaceResult[] = [];
     const categoriaPorId = new Map<string, string>();
     const registrar = (lista: PlaceResult[], etiquetaVia?: string) => {
@@ -362,24 +383,29 @@ export async function POST(req: Request) {
       }
     };
     for (const via of vias) {
-      if (
-        mode === "origins" &&
-        via.categoria &&
-        via.categoria.types.length > 0
-      ) {
+      // Categoría CURADA = DOS vías unidas en TODOS los modos:
+      // (1) Nearby Search por TIPO (shopping_mall atrapa a Midtown y
+      //     Andares aunque no se llamen "centro comercial"; Nearby no
+      //     pagina — 20 máx por consulta) y
+      // (2) la text query de la categoría (pagina hasta 60), que trae
+      //     lo que Google no etiquetó con el tipo.
+      // Sin términos de marca NO hay filtro de nombre: la categoría
+      // pura entrega TODO lo que Google conoce (las exclusiones y el
+      // filtro de calidad siguen aplicando).
+      if (via.categoria && via.categoria.types.length > 0) {
         const tiposVia = via.categoria.types;
-        const porCentro = await enLotes(centers, LOTE_CENTROS, (c) =>
-          searchNearby(c, radius, tiposVia)
-        );
-        registrar(porCentro.flat(), via.etiqueta);
-      } else {
-        const q = via.categoria ? via.categoria.textQuery : (via.texto ?? "");
-        if (!q) continue;
-        const porCentro = await enLotes(centers, LOTE_CENTROS, (c) =>
-          esTexto(q, c)
-        );
+        const porCentro = await enLotes(centers, LOTE_CENTROS, (c) => {
+          const { centro, radio } = circuloDe(c);
+          return searchNearby(centro, radio, tiposVia);
+        });
         registrar(porCentro.flat(), via.etiqueta);
       }
+      const q = via.categoria ? via.categoria.textQuery : (via.texto ?? "");
+      if (!q) continue;
+      const porCentro = await enLotes(centers, LOTE_CENTROS, (c) =>
+        esTexto(q, c)
+      );
+      registrar(porCentro.flat(), via.etiqueta);
     }
     if (consultasNombre.length > 0) {
       const porTexto = await enLotes(

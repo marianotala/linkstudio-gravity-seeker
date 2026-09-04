@@ -232,6 +232,133 @@ export async function searchText(
   return resultados.slice(0, 60);
 }
 
+// ------------------------------------------------------------------
+// Buscar un lugar por nombre (estilo Google Maps): Autocomplete (New)
+// con SESIONES (sessionToken) — todas las teclas de una búsqueda + el
+// detalle final se facturan como UNA sesión barata, no por request.
+// ------------------------------------------------------------------
+
+const AUTOCOMPLETE_URL = "https://places.googleapis.com/v1/places:autocomplete";
+const DETALLE_URL = "https://places.googleapis.com/v1/places/";
+
+export interface SugerenciaLugar {
+  placeId: string;
+  /** Nombre principal ("Midtown Jalisco"). */
+  texto: string;
+  /** Contexto ("Av. Adolfo López Mateos Nte., Guadalajara"). */
+  secundario: string;
+}
+
+/** Sugerencias en vivo para el input (sesgadas a México). */
+export async function autocompleteLugares(
+  input: string,
+  sessionToken: string
+): Promise<SugerenciaLugar[]> {
+  await turnoGoogle();
+  const res = await fetch(AUTOCOMPLETE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": getKey(),
+    },
+    body: JSON.stringify({
+      input,
+      sessionToken,
+      languageCode: "es",
+      regionCode: "MX",
+      // sesgo suave al territorio nacional (no excluye resultados)
+      locationBias: {
+        rectangle: {
+          low: { latitude: 14.3, longitude: -118.5 },
+          high: { latitude: 33.0, longitude: -86.5 },
+        },
+      },
+    }),
+    cache: "no-store",
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    suggestions?: {
+      placePrediction?: {
+        placeId?: string;
+        text?: { text?: string };
+        structuredFormat?: {
+          mainText?: { text?: string };
+          secondaryText?: { text?: string };
+        };
+      };
+    }[];
+  };
+  if (!res.ok) throw traducirErrorPlaces(res.status, data);
+  return (data.suggestions ?? [])
+    .map((s) => s.placePrediction)
+    .filter(Boolean)
+    .map((p) => ({
+      placeId: p!.placeId ?? "",
+      texto: p!.structuredFormat?.mainText?.text ?? p!.text?.text ?? "",
+      secundario: p!.structuredFormat?.secondaryText?.text ?? "",
+    }))
+    .filter((s) => s.placeId && s.texto);
+}
+
+/** Detalle del lugar elegido (cierra la sesión de autocomplete). */
+export async function detalleLugar(
+  placeId: string,
+  sessionToken: string
+): Promise<{
+  nombre: string;
+  direccion: string;
+  lat: number;
+  lng: number;
+  viewport?: Viewport;
+}> {
+  await turnoGoogle();
+  const params = new URLSearchParams({
+    languageCode: "es",
+    regionCode: "MX",
+    sessionToken,
+  });
+  const res = await fetch(
+    `${DETALLE_URL}${encodeURIComponent(placeId)}?${params}`,
+    {
+      headers: {
+        "X-Goog-Api-Key": getKey(),
+        "X-Goog-FieldMask": "id,displayName,formattedAddress,location,viewport",
+      },
+      cache: "no-store",
+    }
+  );
+  const data = (await res.json().catch(() => ({}))) as {
+    displayName?: { text?: string };
+    formattedAddress?: string;
+    location?: { latitude?: number; longitude?: number };
+    viewport?: {
+      high?: { latitude?: number; longitude?: number };
+      low?: { latitude?: number; longitude?: number };
+    };
+  };
+  if (!res.ok) throw traducirErrorPlaces(res.status, data);
+  const loc = data.location;
+  if (loc?.latitude === undefined || loc?.longitude === undefined) {
+    throw new GoogleError("El lugar no trae coordenadas");
+  }
+  const vp = data.viewport;
+  return {
+    nombre: data.displayName?.text ?? "(sin nombre)",
+    direccion: data.formattedAddress ?? "",
+    lat: loc.latitude,
+    lng: loc.longitude,
+    viewport:
+      vp?.high?.latitude !== undefined && vp?.low?.latitude !== undefined
+        ? {
+            north: vp.high.latitude!,
+            south: vp.low.latitude!,
+            east: vp.high!.longitude!,
+            west: vp.low!.longitude!,
+          }
+        : undefined,
+  };
+}
+
 /** Geocodifica UNA dirección con region=mx y language=es. */
 export async function geocodeDireccion(
   direccion: string
