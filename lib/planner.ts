@@ -233,6 +233,9 @@ export interface PuntoSurvey {
     capa?: string | null;
     distancia_m?: number;
     origen_idx?: number;
+    /** Campos a la medida (p. ej. el cruce OOH: tipo, medio,
+     * impresiones y las relaciones pdvs[]). */
+    [extra: string]: unknown;
   } | null;
 }
 
@@ -253,6 +256,52 @@ export function puntoAPoi(r: PuntoSurvey): Poi {
     termino: r.metadata?.termino ?? null,
     categoria: r.categoria,
   };
+}
+
+/** Inserta filas de puntos CRUDAS (metadata a la medida — p. ej. el
+ * cruce OOH guarda por pantalla sus PDVs apoyados con distancias). */
+export async function insertarPuntosCrudos(
+  run: RunPlanner,
+  filas: {
+    place_id: string;
+    nombre: string;
+    direccion?: string | null;
+    lat: number;
+    lng: number;
+    cp?: string | null;
+    categoria?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }[]
+): Promise<void> {
+  const supabase = createClient();
+  const surveyId = run.surveys.values().next().value!;
+  for (let i = 0; i < filas.length; i += LOTE_PUNTOS) {
+    const { error } = await supabase.from("survey_points").insert(
+      filas.slice(i, i + LOTE_PUNTOS).map((f) => ({ survey_id: surveyId, ...f }))
+    );
+    if (error) throw new Error(`No se pudieron guardar los puntos: ${error.message}`);
+  }
+}
+
+/** Puntos CRUDOS de un survey (con metadata completa — p. ej. las
+ * relaciones pantalla→PDV de un cruce OOH), paginado. */
+export async function cargarPuntosCrudosSurvey(
+  surveyId: string
+): Promise<PuntoSurvey[]> {
+  const supabase = createClient();
+  const filas: PuntoSurvey[] = [];
+  for (let desde = 0; ; desde += 1000) {
+    const { data, error } = await supabase
+      .from("survey_points")
+      .select("place_id, nombre, direccion, lat, lng, cp, categoria, metadata")
+      .eq("survey_id", surveyId)
+      .order("id")
+      .range(desde, desde + 999);
+    if (error) break;
+    filas.push(...((data ?? []) as unknown as PuntoSurvey[]));
+    if (!data || data.length < 1000) break;
+  }
+  return filas;
 }
 
 /** Carga TODOS los puntos de una lista de surveys (paginado 1000). */

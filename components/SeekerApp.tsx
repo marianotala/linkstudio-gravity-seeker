@@ -1291,6 +1291,55 @@ export default function SeekerApp({
   // puente consulta → Planner: guardar la búsqueda activa en un plan
   const [modalGuardarPlan, setModalGuardarPlan] = useState(false);
 
+  /** CARGA DIRECTA (Planner): los puntos del Excel/direcciones SON el
+   * levantamiento — sin búsqueda de POIs, 0 consultas. El caso típico
+   * es Proximidad (la lista de lugares de afinidad del cliente) o los
+   * PDVs propios tal cual. Si ya hay universos calculados en pantalla
+   * (solo-universos), se guardan con el survey. */
+  async function guardarPuntosDirectosPlanner() {
+    if (!planner || origenes.length === 0) return;
+    setOcupado(true);
+    try {
+      const run = await crearSurveysPlanner(
+        planner,
+        [null],
+        {
+          mode: "origins",
+          origenes,
+          radius: radio,
+          cargaDirecta: true,
+          nombre: `${origenes.length.toLocaleString("es-MX")} puntos cargados`,
+        },
+        "carga_directa"
+      );
+      const puntos: Poi[] = origenes.map((o, i) => ({
+        placeId: `carga:${i}`,
+        nombre: etiquetaOrigen(o, i),
+        direccion: o.direccion ?? "",
+        lat: o.lat,
+        lng: o.lng,
+        types: [],
+        distancia: 0,
+        origenIdx: i,
+        fuente: "google" as const,
+      }));
+      await guardarPuntosPlanner(run, puntos);
+      if (universos?.disponible) await guardarUniversosPlanner(run, universos);
+      await actualizarRunPlanner(run, { status: "completado", progreso: null });
+      reportar(
+        "ok",
+        `${origenes.length.toLocaleString("es-MX")} puntos guardados como levantamiento de ${ETIQUETA_ROL[planner.rol]} · 0 consultas a Google`
+      );
+    } catch (e) {
+      reportar(
+        "error",
+        e instanceof Error ? e.message : "No se pudieron guardar los puntos"
+      );
+    } finally {
+      setOcupado(false);
+    }
+  }
+
   // ---- abrir o actualizar un censo de la biblioteca (?censo=id[&actualizar=1])
   const censoRef = useRef(false);
   useEffect(() => {
@@ -4258,6 +4307,17 @@ export default function SeekerApp({
                 <p className="mt-2 font-mono text-[11px] text-cian">
                   ● {origenes.length} orígenes listos
                 </p>
+              )}
+              {planner && origenes.length > 0 && (
+                <button
+                  onClick={guardarPuntosDirectosPlanner}
+                  disabled={ocupado}
+                  className="mt-2 w-full rounded-md border border-violeta bg-violeta/10 px-3 py-2 text-left font-mono text-[11px] text-violeta transition-colors hover:bg-violeta/20 disabled:opacity-40"
+                  title="Los puntos cargados SON el levantamiento (lista de lugares del cliente) — sin búsqueda de POIs; si calculaste universos, se guardan también"
+                >
+                  Guardar estos {origenes.length.toLocaleString("es-MX")} puntos
+                  como levantamiento · 0 consultas
+                </button>
               )}
             </section>
           ) : mode === "zone" ? (

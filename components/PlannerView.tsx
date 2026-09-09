@@ -17,7 +17,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AppHeader from "./AppHeader";
 import UniversosPanel from "./UniversosPanel";
-import { cargarPuntosSurveys, colorSurvey, ETIQUETA_ROL } from "@/lib/planner";
+import {
+  cargarPuntosCrudosSurvey,
+  cargarPuntosSurveys,
+  colorSurvey,
+  ETIQUETA_ROL,
+  type PuntoSurvey,
+} from "@/lib/planner";
 import { createClient } from "@/lib/supabase/client";
 import type {
   LatLng,
@@ -82,22 +88,20 @@ const SECCIONES: {
   {
     clave: "proximidad",
     nombre: "Proximidad",
-    descriptor: "Qué hay alrededor de los PDVs",
+    descriptor: "Puntos de afinidad del target",
     color: "#9d5cf0",
-    activa: false,
-    fase: "F3",
-    detalle:
-      "Categorías y generadores de tráfico alrededor de los puntos propios (la táctica Geo-Fence Proximidad).",
+    activa: true,
+    fase: "",
+    detalle: "",
   },
   {
     clave: "ooh",
     nombre: "OOH",
     descriptor: "Pantallas × puntos de venta",
     color: "#ff8c42",
-    activa: false,
-    fase: "F3",
-    detalle:
-      "Cruce del inventario de pantallas contra los PDVs del cliente (Geo-PDOOH) como levantamiento del plan.",
+    activa: true,
+    fase: "",
+    detalle: "",
   },
   {
     clave: "exportar",
@@ -129,6 +133,8 @@ export default function PlannerView({
   /** Visibilidad por survey en el mapa (default: visible). */
   const [visibles, setVisibles] = useState<Record<string, boolean>>({});
   const [puntosCache, setPuntosCache] = useState<Record<string, Poi[]>>({});
+  /** Crudos con metadata (cruces OOH: relaciones pantalla→PDV). */
+  const [crudosCache, setCrudosCache] = useState<Record<string, PuntoSurvey[]>>({});
   const [seleccionado, setSeleccionado] = useState<string | null>(null);
   const [foco, setFoco] = useState<LatLng | null>(null);
   const [confirmando, setConfirmando] = useState<{
@@ -200,19 +206,29 @@ export default function PlannerView({
 
   const esVisible = (id: string) => visibles[id] !== false;
 
-  // puntos de los surveys visibles (cache por survey)
+  // puntos de los surveys visibles (cache por survey; los cruces OOH
+  // se cargan CRUDOS para redibujar sus líneas pantalla→PDV)
   useEffect(() => {
     const faltan = surveys
-      .filter((s) => esVisible(s.id) && !(s.id in puntosCache))
-      .map((s) => s.id);
+      .filter(
+        (s) => esVisible(s.id) && !(s.id in puntosCache) && !(s.id in crudosCache)
+      )
+      .map((s) => ({ id: s.id, rol: s.rol }));
     if (faltan.length === 0) return;
     (async () => {
-      const mapa = await cargarPuntosSurveys(faltan);
-      setPuntosCache((prev) => {
-        const nuevo = { ...prev };
-        mapa.forEach((pts, id) => (nuevo[id] = pts));
-        return nuevo;
-      });
+      const normales = faltan.filter((f) => f.rol !== "ooh").map((f) => f.id);
+      if (normales.length > 0) {
+        const mapa = await cargarPuntosSurveys(normales);
+        setPuntosCache((prev) => {
+          const nuevo = { ...prev };
+          mapa.forEach((pts, id) => (nuevo[id] = pts));
+          return nuevo;
+        });
+      }
+      for (const f of faltan.filter((x) => x.rol === "ooh")) {
+        const crudos = await cargarPuntosCrudosSurvey(f.id);
+        setCrudosCache((prev) => ({ ...prev, [f.id]: crudos }));
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surveys, visibles]);
@@ -230,18 +246,50 @@ export default function PlannerView({
   };
 
   const capasMapa: CapaProyecto[] = surveys
-    .filter((s) => esVisible(s.id) && (puntosCache[s.id]?.length ?? 0) > 0)
-    .map((s) => ({
-      id: s.id,
-      nombre: `${nombreDe(s)} · ${ETIQUETA_ROL[s.rol]}`,
-      color: colorDe(s),
-      puntos: (puntosCache[s.id] ?? []).map((p) => ({
-        lat: p.lat,
-        lng: p.lng,
-        nombre: p.nombre,
-        direccion: p.direccion,
-      })),
-    }));
+    .filter(
+      (s) =>
+        esVisible(s.id) &&
+        ((puntosCache[s.id]?.length ?? 0) > 0 ||
+          (crudosCache[s.id]?.length ?? 0) > 0)
+    )
+    .map((s) => {
+      if (s.rol === "ooh") {
+        const crudos = crudosCache[s.id] ?? [];
+        return {
+          id: s.id,
+          nombre: `${nombreDe(s)} · ${ETIQUETA_ROL[s.rol]}`,
+          color: colorDe(s),
+          cuadrados: true,
+          puntos: crudos.map((p) => ({
+            lat: p.lat,
+            lng: p.lng,
+            nombre: p.nombre,
+            direccion: p.direccion,
+          })),
+          lineas: crudos.flatMap((p) =>
+            (
+              (p.metadata?.pdvs as
+                | { lat: number; lng: number }[]
+                | undefined) ?? []
+            ).map((rel) => ({
+              a: { lat: p.lat, lng: p.lng },
+              b: { lat: rel.lat, lng: rel.lng },
+            }))
+          ),
+        };
+      }
+      return {
+        id: s.id,
+        nombre: `${nombreDe(s)} · ${ETIQUETA_ROL[s.rol]}`,
+        color: colorDe(s),
+        puntos: (puntosCache[s.id] ?? []).map((p) => ({
+          lat: p.lat,
+          lng: p.lng,
+          nombre: p.nombre,
+          direccion: p.direccion,
+        })),
+      };
+    });
 
   const surveySeleccionado = surveys.find((s) => s.id === seleccionado) ?? null;
   const universoSeleccionado = surveySeleccionado
@@ -263,7 +311,10 @@ export default function PlannerView({
     const supabase = createClient();
     const runId = (s.configuracion?.runId as string) ?? s.id;
     try {
-      sessionStorage.setItem("seeker:recorrer", JSON.stringify(s.configuracion));
+      sessionStorage.setItem(
+        s.rol === "ooh" ? "seeker:recorrer-ooh" : "seeker:recorrer",
+        JSON.stringify(s.configuracion)
+      );
     } catch {
       setError("No se pudo preparar el re-correr (almacenamiento bloqueado)");
       return;
@@ -274,7 +325,84 @@ export default function PlannerView({
       .eq("project_id", proyectoId)
       .eq("configuracion->>runId", runId);
     setConfirmando(null);
-    router.push(`/planner/${proyectoId}/levantar/${s.rol}`);
+    router.push(
+      s.rol === "ooh"
+        ? `/planner/${proyectoId}/ooh`
+        : `/planner/${proyectoId}/levantar/${s.rol}`
+    );
+  }
+
+  /** Export rápido de un survey (Proximidad): coordenadas + nombre en
+   * CSV y GeoJSON, listos para alimentar DSPs. */
+  function descargarTexto(nombre: string, contenido: string, mime: string) {
+    const blob = new Blob([contenido], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nombre;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  const campoCsv = (v: string) =>
+    /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  async function puntosParaExport(s: SurveyFila): Promise<Poi[]> {
+    if (puntosCache[s.id]) return puntosCache[s.id];
+    const mapa = await cargarPuntosSurveys([s.id]);
+    const pts = mapa.get(s.id) ?? [];
+    setPuntosCache((prev) => ({ ...prev, [s.id]: pts }));
+    return pts;
+  }
+  function nombreArchivo(s: SurveyFila): string {
+    return (
+      nombreDe(s)
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 50) || "levantamiento"
+    );
+  }
+  async function exportarCsvSurvey(s: SurveyFila) {
+    const pts = await puntosParaExport(s);
+    const filas = [
+      "nombre,direccion,lat,lng,categoria",
+      ...pts.map((p) =>
+        [
+          campoCsv(p.nombre),
+          campoCsv(p.direccion ?? ""),
+          p.lat,
+          p.lng,
+          campoCsv(p.categoria ?? ""),
+        ].join(",")
+      ),
+    ];
+    descargarTexto(
+      `seeker_${nombreArchivo(s)}.csv`,
+      filas.join("\n"),
+      "text/csv;charset=utf-8"
+    );
+  }
+  async function exportarGeoJsonSurvey(s: SurveyFila) {
+    const pts = await puntosParaExport(s);
+    const fc = {
+      type: "FeatureCollection",
+      features: pts.map((p) => ({
+        type: "Feature",
+        properties: {
+          nombre: p.nombre,
+          direccion: p.direccion ?? null,
+          categoria: p.categoria ?? null,
+        },
+        geometry: { type: "Point", coordinates: [p.lng, p.lat] },
+      })),
+    };
+    descargarTexto(
+      `seeker_${nombreArchivo(s)}.geojson`,
+      JSON.stringify(fc, null, 2),
+      "application/geo+json"
+    );
   }
 
   async function renombrarSurvey(id: string, nombre: string) {
@@ -437,16 +565,24 @@ export default function PlannerView({
                       {activa.nombre}
                     </h2>
                     <p className="font-mono text-[10px] text-zinc-500">
-                      {filasSeccion.length === 0
-                        ? "Sin levantamientos todavía — corre el primero con el buscador completo"
-                        : `${filasSeccion.length} ${filasSeccion.length === 1 ? "levantamiento" : "levantamientos"} · el mapa pinta todos los visibles del proyecto`}
+                      {filasSeccion.length > 0
+                        ? `${filasSeccion.length} ${filasSeccion.length === 1 ? "levantamiento" : "levantamientos"} · el mapa pinta todos los visibles del proyecto`
+                        : seccion === "proximidad"
+                          ? "Carga la lista de lugares de afinidad (Excel, sin búsqueda) o censa categorías alrededor de una zona"
+                          : seccion === "ooh"
+                            ? "Cruza el inventario de pantallas contra los PDVs del proyecto (o un Excel)"
+                            : "Sin levantamientos todavía — corre el primero con el buscador completo"}
                     </p>
                   </div>
                   <Link
-                    href={`/planner/${proyectoId}/levantar/${seccion}`}
+                    href={
+                      seccion === "ooh"
+                        ? `/planner/${proyectoId}/ooh`
+                        : `/planner/${proyectoId}/levantar/${seccion}`
+                    }
                     className="shrink-0 rounded-md bg-violeta px-4 py-2 font-display text-xs font-extrabold text-white transition-opacity hover:opacity-90"
                   >
-                    + Nuevo levantamiento
+                    {seccion === "ooh" ? "+ Nuevo cruce de pantallas" : "+ Nuevo levantamiento"}
                   </Link>
                 </div>
 
@@ -571,7 +707,7 @@ export default function PlannerView({
                                     className="inline-flex gap-1"
                                     onClick={(e) => e.stopPropagation()}
                                   >
-                                    {s.status !== "completado" && (
+                                    {s.rol !== "ooh" && s.status !== "completado" && (
                                       <Link
                                         href={`/planner/${proyectoId}/levantar/${s.rol}?reanudar=${s.id}`}
                                         className="rounded border border-amber-400/60 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-400 hover:bg-amber-400/20"
@@ -579,6 +715,24 @@ export default function PlannerView({
                                       >
                                         Reanudar
                                       </Link>
+                                    )}
+                                    {s.rol === "proximidad" && (
+                                      <>
+                                        <button
+                                          onClick={() => exportarCsvSurvey(s)}
+                                          className="rounded border border-linea bg-panel2 px-2 py-0.5 text-[10px] text-zinc-400 hover:border-emerald-400 hover:text-emerald-400"
+                                          title="Coordenadas + nombre en CSV, listo para DSPs"
+                                        >
+                                          CSV
+                                        </button>
+                                        <button
+                                          onClick={() => exportarGeoJsonSurvey(s)}
+                                          className="rounded border border-linea bg-panel2 px-2 py-0.5 text-[10px] text-zinc-400 hover:border-emerald-400 hover:text-emerald-400"
+                                          title="GeoJSON de puntos, listo para DSPs"
+                                        >
+                                          GeoJSON
+                                        </button>
+                                      </>
                                     )}
                                     <button
                                       onClick={() =>

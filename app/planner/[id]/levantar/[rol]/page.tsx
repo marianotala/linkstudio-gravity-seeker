@@ -6,7 +6,7 @@ import type { PerfilUsuario, RolLevantamiento } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-const ROLES_F2: RolLevantamiento[] = ["poi_propio", "competencia"];
+const ROLES_F2: RolLevantamiento[] = ["poi_propio", "competencia", "proximidad"];
 
 /** Levantamiento dentro de un plan: el MISMO buscador del modo
  * consulta, con contexto de Planner — los resultados se persisten al

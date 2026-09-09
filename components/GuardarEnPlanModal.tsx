@@ -23,6 +23,9 @@ export default function GuardarEnPlanModal({
   universos,
   configuracion,
   onGuardado,
+  roles = ["poi_propio", "competencia", "proximidad"],
+  alGuardar,
+  descripcion,
 }: {
   abierto: boolean;
   onCerrar: () => void;
@@ -31,10 +34,16 @@ export default function GuardarEnPlanModal({
   universos: Universos | null;
   configuracion: Record<string, unknown>;
   onGuardado: (nombreCliente: string) => void;
+  /** Roles ofrecidos (p. ej. la pestaña OOH solo ofrece "ooh"). */
+  roles?: RolLevantamiento[];
+  /** Guardado a la medida (p. ej. el cruce OOH); si no viene, se usa
+   * el guardado estándar de POIs por capa. */
+  alGuardar?: (proyecto: Proyecto, rol: RolLevantamiento) => Promise<void>;
+  descripcion?: string;
 }) {
   const [proyectos, setProyectos] = useState<Proyecto[]>([]);
   const [proyectoId, setProyectoId] = useState("");
-  const [rol, setRol] = useState<RolLevantamiento>("competencia");
+  const [rol, setRol] = useState<RolLevantamiento>(roles[0] ?? "competencia");
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState("");
 
@@ -66,6 +75,12 @@ export default function GuardarEnPlanModal({
     setGuardando(true);
     setError("");
     try {
+      if (alGuardar) {
+        await alGuardar(proyecto, rol);
+        onGuardado(proyecto.nombre_cliente);
+        onCerrar();
+        return;
+      }
       const etiquetas = capas ? capas.map((c) => c.nombre) : [];
       const run = await crearSurveysPlanner(
         { proyectoId: proyecto.id, rol },
@@ -100,9 +115,8 @@ export default function GuardarEnPlanModal({
           Guardar en un plan
         </h2>
         <p className="mt-1 font-mono text-[11px] leading-relaxed text-zinc-500">
-          Esta búsqueda ({pois.length.toLocaleString("es-MX")} puntos
-          {capas ? ` en ${capas.length} capas — cada capa será su propio levantamiento` : ""}
-          ) se guarda como levantamiento del plan que elijas.
+          {descripcion ??
+            `Esta búsqueda (${pois.length.toLocaleString("es-MX")} puntos${capas ? ` en ${capas.length} capas — cada capa será su propio levantamiento` : ""}) se guarda como levantamiento del plan que elijas.`}
         </p>
 
         <label className="mt-4 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
@@ -133,7 +147,7 @@ export default function GuardarEnPlanModal({
           Rol del levantamiento
         </label>
         <div className="mt-1.5 flex gap-1.5">
-          {(["poi_propio", "competencia"] as RolLevantamiento[]).map((r) => (
+          {roles.map((r) => (
             <button
               key={r}
               onClick={() => setRol(r)}
@@ -142,7 +156,11 @@ export default function GuardarEnPlanModal({
                 rol === r
                   ? r === "poi_propio"
                     ? "border-cian bg-cian/10 text-cian"
-                    : "border-magenta bg-magenta/10 text-magenta"
+                    : r === "proximidad"
+                      ? "border-violeta bg-violeta/10 text-violeta"
+                      : r === "ooh"
+                        ? "border-[#ff8c42] bg-[#ff8c42]/10 text-[#ff8c42]"
+                        : "border-magenta bg-magenta/10 text-magenta"
                   : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
               }`}
             >

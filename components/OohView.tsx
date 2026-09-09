@@ -9,8 +9,10 @@
 // táctica Geo-PDOOH, con universos, CSV del cruce y Export plan (PDF).
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import AppHeader, { type StatusTipo } from "./AppHeader";
+import GuardarEnPlanModal from "./GuardarEnPlanModal";
 import OverlayProgreso, { type ProcesoLargo } from "./OverlayProgreso";
 import UniversosPanel from "./UniversosPanel";
 import { etiquetaOrigen } from "@/lib/geo";
@@ -24,6 +26,14 @@ import {
   etiquetaTipoPantalla,
   pdvsCubiertos,
 } from "@/lib/ooh";
+import {
+  actualizarRunPlanner,
+  cargarPuntosSurveys,
+  crearSurveysPlanner,
+  guardarUniversosPlanner,
+  insertarPuntosCrudos,
+  type RunPlanner,
+} from "@/lib/planner";
 import { descargarPlantillaOrigenes, parsearArchivo } from "@/lib/parse";
 import { createClient } from "@/lib/supabase/client";
 import { calcularUniversosCliente } from "@/lib/universos-lotes";
@@ -35,6 +45,8 @@ import type {
   Origin,
   Pantalla,
   PerfilUsuario,
+  Proyecto,
+  RolLevantamiento,
   Universos,
 } from "@/lib/types";
 
@@ -74,7 +86,15 @@ const PRESETS_KM = [3, 5, 6, 10, 15];
 /** Máximo de filas visibles en la tabla del cruce (el CSV trae todo). */
 const MAX_FILAS_TABLA = 400;
 
-export default function OohView({ usuario }: { usuario: PerfilUsuario | null }) {
+export default function OohView({
+  usuario,
+  planner,
+}: {
+  usuario: PerfilUsuario | null;
+  /** Contexto de Planner: los PDVs pueden venir de los surveys del
+   * proyecto y el cruce se guarda como survey rol "ooh". */
+  planner?: { proyectoId: string; nombreCliente?: string };
+}) {
   const [status, setStatus] = useState<{ tipo: StatusTipo; texto: string }>({
     tipo: "idle",
     texto: "Carga los PDVs del cliente y ejecuta el cruce",
@@ -111,10 +131,109 @@ export default function OohView({ usuario }: { usuario: PerfilUsuario | null }) 
     })();
   }, []);
 
+  // ---- Planner: surveys del proyecto como fuente de PDVs + guardado
+  interface SurveyFuente {
+    id: string;
+    nombre: string;
+    rol: string;
+    puntos: number;
+  }
+  const [surveysFuente, setSurveysFuente] = useState<SurveyFuente[]>([]);
+  const [surveyFuenteId, setSurveyFuenteId] = useState("");
+  const runOohRef = useRef<RunPlanner | null>(null);
+  const [modalGuardarPlan, setModalGuardarPlan] = useState(false);
+  useEffect(() => {
+    if (!planner) return;
+    (async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("surveys")
+        .select("id, rol, configuracion, survey_points(count)")
+        .eq("project_id", planner.proyectoId)
+        .in("rol", ["poi_propio", "proximidad"])
+        .order("created_at", { ascending: false });
+      const lista = ((data ?? []) as {
+        id: string;
+        rol: string;
+        configuracion: { nombre?: string };
+        survey_points: { count: number }[];
+      }[]).map((s) => ({
+        id: s.id,
+        rol: s.rol,
+        nombre: s.configuracion?.nombre ?? s.rol,
+        puntos: s.survey_points?.[0]?.count ?? 0,
+      }));
+      setSurveysFuente(lista.filter((s) => s.puntos > 0));
+    })();
+  }, [planner]);
+
+  async function usarPuntosDeSurvey(id: string) {
+    const fuente = surveysFuente.find((s) => s.id === id);
+    if (!fuente) return;
+    setOcupado(true);
+    try {
+      const mapa = await cargarPuntosSurveys([id]);
+      const puntos = mapa.get(id) ?? [];
+      setPdvs(
+        puntos.map((pt) => ({
+          lat: pt.lat,
+          lng: pt.lng,
+          nombre: pt.nombre,
+          direccion: pt.direccion || undefined,
+        }))
+      );
+      setNotaCarga(`PDVs del levantamiento "${fuente.nombre}" (${puntos.length})`);
+      reportar(
+        "ok",
+        `${puntos.length.toLocaleString("es-MX")} PDVs tomados del levantamiento "${fuente.nombre}" — ajusta radio y filtros y ejecuta el cruce`
+      );
+    } catch {
+      reportar("error", "No pude cargar los puntos de ese levantamiento");
+    } finally {
+      setOcupado(false);
+    }
+  }
+
   // ---- PDVs del cliente
   const [pdvs, setPdvs] = useState<Origin[]>([]);
   const [notaCarga, setNotaCarga] = useState("");
   const inputPdvsRef = useRef<HTMLInputElement>(null);
+
+  // re-correr un cruce guardado: PlannerView deja la config en
+  // sessionStorage y navega aquí; se restaura todo (incluida la fuente
+  // de PDVs si era un survey del proyecto) y el usuario ejecuta
+  const recorrerRef = useRef(false);
+  useEffect(() => {
+    if (!planner || recorrerRef.current || surveysFuente.length === 0) return;
+    let config: Record<string, unknown> | null = null;
+    try {
+      const crudo = sessionStorage.getItem("seeker:recorrer-ooh");
+      if (crudo) {
+        sessionStorage.removeItem("seeker:recorrer-ooh");
+        config = JSON.parse(crudo) as Record<string, unknown>;
+      }
+    } catch {
+      // sin re-correr
+    }
+    if (!config) return;
+    recorrerRef.current = true;
+    if (typeof config.radioKm === "number") setRadioKm(config.radioKm);
+    if (typeof config.radioDiferenciado === "boolean")
+      setRadioDiferenciado(config.radioDiferenciado);
+    if (typeof config.radioUrbanoKm === "number") setRadioUrbanoKm(config.radioUrbanoKm);
+    if (typeof config.radioForaneoKm === "number") setRadioForaneoKm(config.radioForaneoKm);
+    setFTipos(new Set((config.tipos as string[]) ?? []));
+    setFCiudades(new Set((config.ciudades as string[]) ?? []));
+    setFMedios(new Set((config.medios as string[]) ?? []));
+    if (config.digital) setFDigital(config.digital as "todas" | "digital" | "estatica");
+    const fuenteId = config.pdvsSurveyId as string | undefined;
+    if (fuenteId && surveysFuente.some((s) => s.id === fuenteId)) {
+      setSurveyFuenteId(fuenteId);
+      usarPuntosDeSurvey(fuenteId);
+    }
+    reportar("ok", "Configuración del cruce restaurada — ejecuta para re-correrlo");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planner, surveysFuente]);
 
   // ---- radio de cruce
   const [radioKm, setRadioKm] = useState(6);
@@ -298,8 +417,84 @@ export default function OohView({ usuario }: { usuario: PerfilUsuario | null }) 
     }
   }
 
+  /** Configuración del cruce (reabrible/re-ejecutable como survey). */
+  function configCruce(resumen?: {
+    pantallas: number;
+    cubiertos: number;
+    sinCobertura: number;
+    impresiones: number | null;
+  }) {
+    return {
+      mode: "ooh",
+      radioKm,
+      radioDiferenciado,
+      radioUrbanoKm,
+      radioForaneoKm,
+      tipos: Array.from(fTipos),
+      ciudades: Array.from(fCiudades),
+      medios: Array.from(fMedios),
+      digital: fDigital,
+      pdvsSurveyId: surveyFuenteId || undefined,
+      totalPdvs: pdvs.length,
+      ...(resumen ?? {}),
+      nombre: `Cruce OOH · ${resumen?.pantallas ?? 0} pantallas × ${pdvs.length} PDVs`,
+    };
+  }
+
+  /** Filas crudas del cruce: una por pantalla del plan, con sus PDVs
+   * apoyados (nombre, coordenadas, distancia) en metadata — suficiente
+   * para redibujar las líneas al reabrir el survey. */
+  function filasCruce(plan: CrucePantalla[], listaPdvs: Origin[]) {
+    return plan.map((c) => ({
+      place_id: c.pantalla.clave,
+      nombre: c.pantalla.nombre ?? c.pantalla.clave,
+      direccion: c.pantalla.direccion,
+      lat: c.pantalla.lat,
+      lng: c.pantalla.lng,
+      categoria: c.pantalla.tipo,
+      metadata: {
+        tipo: c.pantalla.tipo,
+        medio: c.pantalla.medio,
+        ciudad: c.pantalla.ciudad,
+        digital: c.pantalla.digital,
+        impresiones: c.pantalla.impresiones,
+        radio_m: c.radioM,
+        pdvs: c.pdvs.map((rel) => ({
+          nombre: etiquetaOrigen(listaPdvs[rel.idx], rel.idx),
+          lat: listaPdvs[rel.idx].lat,
+          lng: listaPdvs[rel.idx].lng,
+          distancia_m: rel.distancia,
+        })),
+      },
+    }));
+  }
+
+  /** Guarda el cruce como survey rol "ooh" en un proyecto. */
+  async function guardarCruceEnProyecto(
+    proyectoId: string,
+    plan: CrucePantalla[],
+    listaPdvs: Origin[],
+    cubiertosN: number,
+    impresiones: number | null
+  ): Promise<RunPlanner> {
+    const run = await crearSurveysPlanner(
+      { proyectoId, rol: "ooh" },
+      [null],
+      configCruce({
+        pantallas: plan.length,
+        cubiertos: cubiertosN,
+        sinCobertura: listaPdvs.length - cubiertosN,
+        impresiones,
+      }),
+      "inventario"
+    );
+    await insertarPuntosCrudos(run, filasCruce(plan, listaPdvs));
+    await actualizarRunPlanner(run, { status: "completado", progreso: null });
+    return run;
+  }
+
   // ---- ejecutar cruce (local: Haversine con hash espacial)
-  function ejecutarCruce() {
+  async function ejecutarCruce() {
     if (pdvs.length === 0) {
       reportar("error", "Primero carga los PDVs del cliente");
       return;
@@ -320,9 +515,39 @@ export default function OohView({ usuario }: { usuario: PerfilUsuario | null }) 
     setFoco(null);
     const enPlan = resultado.filter((c) => c.pdvs.length > 0);
     const cub = pdvsCubiertos(resultado).size;
+    // PLANNER: el cruce se guarda como survey rol "ooh"; re-ejecutar en
+    // la misma sesión REEMPLAZA el auto-guardado anterior (ajustar
+    // parámetros no acumula levantamientos)
+    if (planner && enPlan.length > 0) {
+      try {
+        if (runOohRef.current) {
+          const supabase = createClient();
+          await supabase
+            .from("surveys")
+            .delete()
+            .in("id", Array.from(runOohRef.current.surveys.values()));
+        }
+        const impPlan = enPlan.some((c) => c.pantalla.impresiones != null)
+          ? enPlan.reduce((t, c) => t + (c.pantalla.impresiones ?? 0), 0)
+          : null;
+        runOohRef.current = await guardarCruceEnProyecto(
+          planner.proyectoId,
+          enPlan,
+          pdvs,
+          cub,
+          impPlan
+        );
+      } catch (e) {
+        reportar(
+          "error",
+          e instanceof Error ? e.message : "No se pudo guardar el cruce al plan"
+        );
+        return;
+      }
+    }
     reportar(
       "ok",
-      `Cruce listo: ${enPlan.length.toLocaleString("es-MX")} pantallas apoyan ${cub.toLocaleString("es-MX")} de ${pdvs.length.toLocaleString("es-MX")} PDVs (radio ${radioTexto}) · 0 llamadas a Google`
+      `Cruce listo: ${enPlan.length.toLocaleString("es-MX")} pantallas apoyan ${cub.toLocaleString("es-MX")} de ${pdvs.length.toLocaleString("es-MX")} PDVs (radio ${radioTexto})${planner && enPlan.length > 0 ? " · guardado al plan" : ""} · 0 llamadas a Google`
     );
   }
 
@@ -354,10 +579,13 @@ export default function OohView({ usuario }: { usuario: PerfilUsuario | null }) 
       });
       setProceso(null);
       setUniversos(u);
+      if (planner && runOohRef.current && u?.disponible) {
+        await guardarUniversosPlanner(runOohRef.current, u);
+      }
       reportar(
         u?.disponible ? "ok" : "error",
         u?.disponible
-          ? "Universos del plan de pantallas listos"
+          ? `Universos del plan de pantallas listos${planner && runOohRef.current ? " · guardados al plan" : ""}`
           : (u?.mensaje ?? "Universos no disponibles")
       );
     } catch (e) {
@@ -522,12 +750,67 @@ export default function OohView({ usuario }: { usuario: PerfilUsuario | null }) 
     <div className="flex h-screen flex-col gap-3 overflow-hidden bg-fondo p-3">
       <AppHeader usuario={usuario} status={status} />
 
+      {planner && (
+        <div className="tarjeta flex shrink-0 items-center gap-2 px-4 py-2 font-mono text-[11px]">
+          <span className="shrink-0 rounded-full border border-violeta/50 bg-violeta/10 px-2.5 py-0.5 text-violeta">
+            Planner
+          </span>
+          <span className="shrink-0 text-zinc-200">
+            {planner.nombreCliente ?? "Plan"}
+          </span>
+          <span className="text-zinc-700">·</span>
+          <span className="truncate text-zinc-400">
+            Sección OOH — el cruce se guarda automáticamente al plan al
+            ejecutarlo (re-ejecutar lo reemplaza)
+          </span>
+          <Link
+            href={`/planner/${planner.proyectoId}`}
+            className="ml-auto shrink-0 rounded-full border border-linea bg-panel2 px-3 py-1 text-zinc-400 transition-colors hover:border-violeta hover:text-violeta"
+          >
+            ← Volver al plan
+          </Link>
+        </div>
+      )}
+
       <div className="flex min-h-0 flex-1 gap-3">
         {/* ---------- panel lateral ---------- */}
         <aside className="tarjeta w-[360px] shrink-0 overflow-y-auto">
           {/* 01 · PDVs del cliente */}
           <section className={pasoCls}>
             <label className={labelCls}>01 · PDVs del cliente</label>
+            {planner && surveysFuente.length > 0 && (
+              <div className="mb-3 rounded-md border border-violeta/40 bg-violeta/5 p-2.5">
+                <p className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-violeta">
+                  Usar puntos del proyecto
+                </p>
+                <div className="flex gap-1.5">
+                  <select
+                    value={surveyFuenteId}
+                    onChange={(e) => setSurveyFuenteId(e.target.value)}
+                    disabled={ocupado}
+                    className="min-w-0 flex-1 rounded-md border border-linea bg-panel2 px-2 py-1.5 font-mono text-[11px] text-zinc-200 focus:border-violeta focus:outline-none"
+                  >
+                    <option value="">Elige un levantamiento…</option>
+                    {surveysFuente.map((sf) => (
+                      <option key={sf.id} value={sf.id}>
+                        {sf.nombre} · {sf.rol === "poi_propio" ? "POI propios" : "Proximidad"} ({sf.puntos})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => surveyFuenteId && usarPuntosDeSurvey(surveyFuenteId)}
+                    disabled={ocupado || !surveyFuenteId}
+                    className="shrink-0 rounded-md border border-violeta bg-violeta/10 px-3 py-1.5 font-mono text-[11px] text-violeta transition-colors hover:bg-violeta/20 disabled:opacity-40"
+                  >
+                    Usar
+                  </button>
+                </div>
+                <p className="mt-1.5 font-mono text-[9px] text-zinc-600">
+                  Sin recargar Excel: los PDVs vienen de los levantamientos del
+                  plan — o carga un archivo abajo, como siempre.
+                </p>
+              </div>
+            )}
             <input
               ref={inputPdvsRef}
               type="file"
@@ -789,6 +1072,16 @@ export default function OohView({ usuario }: { usuario: PerfilUsuario | null }) 
                   Export plan (PDF)
                 </button>
               </div>
+              {!planner && (
+                <button
+                  onClick={() => setModalGuardarPlan(true)}
+                  disabled={ocupado || crucesPlan.length === 0}
+                  className="mt-2 w-full rounded-md border border-violeta bg-violeta/10 px-3 py-2 text-left font-mono text-[11px] text-violeta transition-colors hover:bg-violeta/20 disabled:opacity-40"
+                  title="Guarda este cruce como levantamiento OOH de un plan del Planner"
+                >
+                  ⤒ Guardar en un plan… <span className="text-violeta/60">rol OOH</span>
+                </button>
+              )}
             </section>
           )}
         </aside>
@@ -1139,6 +1432,33 @@ export default function OohView({ usuario }: { usuario: PerfilUsuario | null }) 
           </div>
         </main>
       </div>
+
+      <GuardarEnPlanModal
+        abierto={modalGuardarPlan}
+        onCerrar={() => setModalGuardarPlan(false)}
+        pois={[]}
+        capas={null}
+        universos={universos}
+        configuracion={{}}
+        roles={["ooh"] as RolLevantamiento[]}
+        descripcion={`Este cruce (${crucesPlan.length.toLocaleString("es-MX")} pantallas × ${pdvs.length.toLocaleString("es-MX")} PDVs, ${cubiertos.size.toLocaleString("es-MX")} cubiertos) se guarda como levantamiento OOH del plan que elijas.`}
+        alGuardar={async (proyecto: Proyecto) => {
+          const impPlan = crucesPlan.some((c) => c.pantalla.impresiones != null)
+            ? crucesPlan.reduce((t, c) => t + (c.pantalla.impresiones ?? 0), 0)
+            : null;
+          const run = await guardarCruceEnProyecto(
+            proyecto.id,
+            crucesPlan,
+            pdvs,
+            cubiertos.size,
+            impPlan
+          );
+          if (universos?.disponible) await guardarUniversosPlanner(run, universos);
+        }}
+        onGuardado={(nombreCliente) =>
+          reportar("ok", `Cruce guardado como levantamiento OOH en el plan de ${nombreCliente}`)
+        }
+      />
     </div>
   );
 }
