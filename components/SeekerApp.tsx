@@ -6,12 +6,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import AppHeader, { type StatusTipo } from "./AppHeader";
 import ResultsTable from "./ResultsTable";
 import UniversosPanel from "./UniversosPanel";
 import OverlayProgreso, { type ProcesoLargo } from "./OverlayProgreso";
 import BuscadorLugar from "./BuscadorLugar";
+import GuardarEnPlanModal from "./GuardarEnPlanModal";
 import CategoriaBuscador, {
   etiquetaSeleccion,
   type SeleccionCategoria,
@@ -36,6 +38,17 @@ import {
 } from "@/lib/universos-lotes";
 import { createClient } from "@/lib/supabase/client";
 import { DIAS_AMARILLO, frescuraCenso } from "@/lib/censos";
+import {
+  actualizarRunPlanner,
+  cargarRunParaReanudar,
+  crearSurveysPlanner,
+  ETIQUETA_ROL,
+  guardarPuntosPlanner,
+  guardarUniversosPlanner,
+  reescribirPuntosPlanner,
+  type ContextoPlanner,
+  type RunPlanner,
+} from "@/lib/planner";
 import {
   CLAVES_TACTICAS,
   TACTICAS,
@@ -434,8 +447,13 @@ const MAX_ESPERAS_CUOTA = 5;
 
 export default function SeekerApp({
   usuario,
+  planner,
 }: {
   usuario: PerfilUsuario | null;
+  /** Contexto de Planner: el MISMO buscador, pero los resultados se
+   * PERSISTEN al proyecto como surveys con rol (F2). Sin él, el modo
+   * consulta se comporta exactamente igual que siempre. */
+  planner?: ContextoPlanner;
 }) {
   // ---- estado de configuración
   const [mode, setMode] = useState<SearchMode>("origins");
@@ -962,6 +980,133 @@ export default function SeekerApp({
     setStatus({ tipo, texto });
   }
 
+  // ================================================================
+  // PLANNER (F2): cuando el buscador corre DENTRO de un proyecto, los
+  // resultados se persisten como surveys con rol — una capa = un
+  // survey, puntos por lote (autosave) y progreso para reanudar sin
+  // repagar. El motor es EL MISMO: estas piezas solo enganchan la
+  // persistencia en los flujos existentes.
+  // ================================================================
+  const plannerRunRef = useRef<RunPlanner | null>(null);
+  const semillaPlannerRef = useRef<{
+    run: RunPlanner;
+    modo: SearchMode;
+    indice: number;
+    total: number;
+    puntos: Poi[];
+  } | null>(null);
+  const [notaPlanner, setNotaPlanner] = useState("");
+
+  /** Crea (o reusa, al reanudar) los surveys del run activo. */
+  async function iniciarPlanner(
+    etiquetas: string[],
+    configuracion: Record<string, unknown>,
+    fuente: string
+  ) {
+    if (!planner) return;
+    if (plannerRunRef.current) return; // reintento del mismo run
+    const semilla = semillaPlannerRef.current;
+    if (semilla && semilla.modo === (configuracion.mode as SearchMode)) {
+      plannerRunRef.current = semilla.run;
+      return;
+    }
+    semillaPlannerRef.current = null;
+    try {
+      plannerRunRef.current = await crearSurveysPlanner(
+        planner,
+        etiquetas.length > 0 ? etiquetas : [null],
+        configuracion,
+        fuente
+      );
+    } catch (e) {
+      plannerRunRef.current = null;
+      reportar(
+        "error",
+        e instanceof Error ? e.message : "No se pudo crear el levantamiento"
+      );
+    }
+  }
+
+  /** Autosave: puntos nuevos + progreso (nunca rompe la búsqueda). */
+  async function autosavePlanner(
+    pois: Poi[],
+    progreso: Record<string, unknown>
+  ) {
+    const run = plannerRunRef.current;
+    if (!run) return;
+    await guardarPuntosPlanner(run, pois);
+    await actualizarRunPlanner(run, { progreso, status: "en_progreso" });
+  }
+
+  /** Cierre del run: al COMPLETAR se reescriben los puntos con la
+   * lista final limpia (CP resuelto, distancias reasignadas) y se
+   * guardan los universos; al interrumpir, el progreso queda para
+   * Reanudar. */
+  async function finalizarPlanner(
+    lista: Poi[],
+    universosRun: Universos | null,
+    completo: boolean
+  ) {
+    const run = plannerRunRef.current;
+    if (!run) return;
+    if (completo) {
+      await reescribirPuntosPlanner(run, lista);
+      if (universosRun?.disponible) await guardarUniversosPlanner(run, universosRun);
+      await actualizarRunPlanner(run, { status: "completado", progreso: null });
+      setNotaPlanner("");
+    } else {
+      await guardarPuntosPlanner(run, lista);
+      await actualizarRunPlanner(run, { status: "interrumpido" });
+    }
+    plannerRunRef.current = null;
+    semillaPlannerRef.current = null;
+  }
+
+  /** Restaura la configuración de un levantamiento (reanudar o
+   * re-correr) en el estado del buscador. */
+  function restaurarConfigPlanner(p: Record<string, unknown>) {
+    const modo = (p.mode as SearchMode) ?? "census";
+    setMode(modo);
+    if (typeof p.radius === "number") setRadio(p.radius);
+    const cats = (p.categories as string[]) ?? [];
+    setCategoriasSel(
+      cats.map((c) =>
+        c.startsWith("libre:")
+          ? { key: CATEGORIA_LIBRE, libre: c.slice(6) }
+          : { key: c }
+      )
+    );
+    setNameFilters((p.nameFilters as string[]) ?? []);
+    setExcludes((p.excludes as string[]) ?? []);
+    if (modo === "origins") {
+      setOrigenes(
+        ((p.origenes as Origin[]) ?? (p.centers as Origin[]) ?? []) as Origin[]
+      );
+      setTab("coordenadas");
+    } else if (modo === "zone") {
+      setZonas(((p.centers as Origin[]) ?? []) as Origin[]);
+    } else if (modo === "cp") {
+      setCpsInput(((p.cps as string[]) ?? []).join(", "));
+    } else if (modo === "census") {
+      setZona((p.centro as Origin) ?? null);
+      setMarca((p.marca as string) ?? "");
+      setCiudadQuery((p.ciudad as string) ?? "");
+      if (p.tipoCuadricula) setTipoCuadricula(p.tipoCuadricula as "hex" | "square");
+      if (typeof p.radioCelda === "number") setRadioCelda(p.radioCelda);
+      if (typeof p.alcance === "number") setAlcance(p.alcance);
+    } else if (modo === "territorial") {
+      setTerCentro((p.terCentro as Origin) ?? null);
+      setTerLugarQuery((p.lugar as string) ?? "");
+      setTerCategoria((p.terCategoria as string) ?? "");
+      setTerCategoriaLibre((p.terCategoriaLibre as string) ?? "");
+      if (p.terAlcanceTipo) setTerAlcanceTipo(p.terAlcanceTipo as "radio" | "ciudad");
+      if (typeof p.terRadio === "number") setTerRadio(p.terRadio);
+      if (p.terFuente) setTerFuente(p.terFuente as Fuente);
+    }
+  }
+
+
+
   // Al cambiar de modo, limpiar el plan de celdas del censo anterior.
   useEffect(() => {
     setCeldas(null);
@@ -1091,6 +1236,60 @@ export default function SeekerApp({
       });
     })();
   }, [searchParams]);
+
+  // reanudar (?reanudar=surveyId) o re-correr (config en sessionStorage)
+  const plannerCargaRef = useRef(false);
+  useEffect(() => {
+    if (!planner || plannerCargaRef.current) return;
+    const reanudarId = searchParams.get("reanudar");
+    let recorrer: Record<string, unknown> | null = null;
+    try {
+      const crudo = sessionStorage.getItem("seeker:recorrer");
+      if (crudo) {
+        sessionStorage.removeItem("seeker:recorrer");
+        recorrer = JSON.parse(crudo) as Record<string, unknown>;
+      }
+    } catch {
+      // sin re-correr
+    }
+    if (!reanudarId && !recorrer) return;
+    plannerCargaRef.current = true;
+    (async () => {
+      if (reanudarId) {
+        reportar("busy", "Restaurando el levantamiento…");
+        const cargado = await cargarRunParaReanudar(reanudarId);
+        if (!cargado) {
+          reportar("error", "No encontré ese levantamiento (¿fue eliminado?)");
+          return;
+        }
+        restaurarConfigPlanner(cargado.configuracion);
+        const prog = cargado.progreso ?? {};
+        semillaPlannerRef.current = {
+          run: cargado.run,
+          modo: ((cargado.configuracion.mode as SearchMode) ?? "census"),
+          indice: Number(prog.indice ?? 0),
+          total: Number(prog.total ?? 0),
+          puntos: cargado.puntos,
+        };
+        setPois(cargado.puntos);
+        setTablaColapsada(false);
+        setNotaPlanner(
+          `Levantamiento restaurado: ${cargado.puntos.length.toLocaleString("es-MX")} puntos guardados${prog.indice ? ` · paso ${prog.indice} de ${prog.total}` : ""}. Prepara el plan del modo (calcular celdas / procesar orígenes) y ejecuta: continúa donde quedó sin repagar.`
+        );
+        reportar("ok", "Levantamiento restaurado — ejecuta para continuar donde quedó");
+      } else if (recorrer) {
+        restaurarConfigPlanner(recorrer);
+        setNotaPlanner(
+          "Configuración restaurada para re-correr: prepara el plan del modo y ejecuta (reemplaza el levantamiento anterior)."
+        );
+        reportar("ok", "Configuración lista para re-correr el levantamiento");
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planner, searchParams]);
+
+  // puente consulta → Planner: guardar la búsqueda activa en un plan
+  const [modalGuardarPlan, setModalGuardarPlan] = useState(false);
 
   // ---- abrir o actualizar un censo de la biblioteca (?censo=id[&actualizar=1])
   const censoRef = useRef(false);
@@ -1827,10 +2026,37 @@ export default function SeekerApp({
           ? nameFilters.map((t) => ({ etiqueta: `buscando ${t}`, filtros: [t] }))
           : [{ etiqueta: "CP", filtros: nameFilters }];
       const totalPasos = celdasCp.length * pasadas.length;
+      if (planner) {
+        await iniciarPlanner(
+          sinCategoria && separarPorTermino ? nameFilters : [],
+          {
+            mode: "cp",
+            cps: cpsCodigos,
+            categories: categoriasApi,
+            nameFilters,
+            excludes,
+            factor: coberturaCp.factor,
+            nombre: nombreCapaActual(),
+          },
+          "google"
+        );
+      }
+      const semillaCp =
+        planner &&
+        semillaPlannerRef.current?.modo === "cp" &&
+        semillaPlannerRef.current.total === totalPasos
+          ? semillaPlannerRef.current
+          : null;
+      if (semillaCp) {
+        for (const p of semillaCp.puntos) acumulados.set(p.placeId, p);
+      }
+      const pasoInicial = semillaCp?.indice ?? 0;
 
       bucle: for (let pi = 0; pi < pasadas.length; pi++) {
         const pasada = pasadas[pi];
         for (let i = 0; i < celdasCp.length; i++) {
+          // reanudación: saltar los pasos ya corridos y pagados
+          if (pi * celdasCp.length + i < pasoInicial) continue;
           if (detenerCensoRef.current) break bucle;
           try {
             const data = await postJson<SearchResponse>("/api/search", {
@@ -1905,6 +2131,11 @@ export default function SeekerApp({
               detenerCensoRef.current = true;
             },
           });
+          await autosavePlanner(Array.from(acumulados.values()), {
+            modo: "cp",
+            indice: pi * celdasCp.length + i + 1,
+            total: totalPasos,
+          });
           reportar(
             "busy",
             `${pasada.etiqueta}: celda ${i + 1} de ${celdasCp.length} · ${acumulados.size} POIs acumulados`
@@ -1916,6 +2147,9 @@ export default function SeekerApp({
       }
       if (errorFatal) {
         const mensajeFatal = errorFatal;
+        if (plannerRunRef.current) {
+          actualizarRunPlanner(plannerRunRef.current, { status: "interrumpido" });
+        }
         setProceso({
           etapa: "Buscando POIs",
           detalle: "",
@@ -2008,6 +2242,11 @@ export default function SeekerApp({
         setCapaDemografica(false);
         geocercasRef.current = cpsCodigos.map((cp) => ({ id: cp, cp }));
       }
+      await finalizarPlanner(
+        lista,
+        universosCp,
+        !detenerCensoRef.current
+      );
 
       // 4) guardar en el historial como UNA búsqueda
       if (lista.length > 0) {
@@ -2282,12 +2521,42 @@ export default function SeekerApp({
   async function ejecutarCenso() {
     if (!celdas || celdas.length === 0 || !zona) return;
     const m = marca.trim();
+    // multi-marca por comas ("byd, chirey, geely"): OR en el servidor
+    // con etiquetado por término; con 2+ se separa en capas (y en el
+    // Planner cada capa se guarda como su propio survey)
+    const terminosMarca = dividirTerminos(m);
     setOcupado(true);
     setFoco(null);
     detenerCensoRef.current = false;
     setPois([]);
+    if (planner) {
+      await iniciarPlanner(
+        terminosMarca.length >= 2 ? terminosMarca : [],
+        {
+          mode: "census",
+          marca: m,
+          centro: zona,
+          ciudad: zona.nombre ?? ciudadQuery.trim(),
+          tipoCuadricula,
+          radioCelda,
+          alcance,
+          excludes,
+          nombre: m,
+        },
+        "google"
+      );
+    }
 
     const acumulados = new Map<string, Poi>();
+    const semillaCenso =
+      planner &&
+      semillaPlannerRef.current?.modo === "census" &&
+      semillaPlannerRef.current.total === celdas.length
+        ? semillaPlannerRef.current
+        : null;
+    if (semillaCenso) {
+      for (const p of semillaCenso.puntos) acumulados.set(p.placeId, p);
+    }
     const detExcluidos = new Set<string>();
     const detDescartados = new Set<string>();
     let excluidosTotal = 0;
@@ -2298,7 +2567,7 @@ export default function SeekerApp({
     let fallosSeguidos = 0;
     let esperasCuota = 0;
 
-    for (let i = 0; i < celdas.length; i++) {
+    for (let i = semillaCenso?.indice ?? 0; i < celdas.length; i++) {
       if (detenerCensoRef.current) break;
       try {
         const data = await postJson<SearchResponse>("/api/search", {
@@ -2307,6 +2576,7 @@ export default function SeekerApp({
           radius: radioCelda,
           category: SOLO_NOMBRE,
           nameFilter: m,
+          nameFilters: terminosMarca,
           excludes,
           persist: false,
         } satisfies SearchRequest);
@@ -2379,6 +2649,11 @@ export default function SeekerApp({
         },
       });
       setPois(Array.from(acumulados.values()));
+      await autosavePlanner(Array.from(acumulados.values()), {
+        modo: "census",
+        indice: i + 1,
+        total: celdas.length,
+      });
       reportar(
         "busy",
         `Censo: celda ${i + 1} de ${celdas.length} · ${acumulados.size} POIs acumulados`
@@ -2392,6 +2667,10 @@ export default function SeekerApp({
       (a, b) => a.distancia - b.distancia
     );
     setPois(lista);
+    // multi-marca: una capa por término, con su color y conteo
+    if (terminosMarca.length >= 2) {
+      registrarCapasPor(terminosMarca, lista, (p) => p.termino);
+    }
     setContadores({
       excluidos: excluidosTotal,
       descartadosPorNombre: descartadosTotal,
@@ -2405,6 +2684,11 @@ export default function SeekerApp({
 
     // Universos sobre las geocercas por POI + guardado en la biblioteca.
     const universosCenso = await calcularUniversosDeCenso(lista);
+    await finalizarPlanner(
+      lista,
+      universosCenso,
+      !errorFatal && !detenerCensoRef.current
+    );
     let guardado = false;
     let delta: DeltaCenso | null = null;
     if (lista.length > 0 || celdasCorridas > 0) {
@@ -2527,6 +2811,24 @@ export default function SeekerApp({
     detenerCensoRef.current = false;
     setPois([]);
     setDeltaInfo(null);
+    if (planner) {
+      await iniciarPlanner(
+        [],
+        {
+          mode: "territorial",
+          lugar: terCentro.nombre ?? terLugarQuery.trim(),
+          terCentro,
+          terCategoria,
+          terCategoriaLibre,
+          terAlcanceTipo,
+          terRadio,
+          terFuente,
+          nombre:
+            cat?.label ?? (terCategoriaLibre.trim() || "Censo territorial"),
+        },
+        terFuente
+      );
+    }
 
     const radioCeldaTer =
       celdas.length === 1 && terAlcanceTipo === "radio"
@@ -2544,8 +2846,20 @@ export default function SeekerApp({
     // descartan pero se REPORTAN en el contador, no en silencio
     let basuraDenue = 0;
     const detalleBasura = new Set<string>();
+    const semillaTer =
+      planner &&
+      semillaPlannerRef.current?.modo === "territorial" &&
+      semillaPlannerRef.current.total === celdas.length
+        ? semillaPlannerRef.current
+        : null;
+    if (semillaTer) {
+      for (const p of semillaTer.puntos) {
+        if (p.fuente === "denue") denueAcum.set(p.placeId, p);
+        else googleAcum.set(p.placeId, p);
+      }
+    }
 
-    for (let i = 0; i < celdas.length; i++) {
+    for (let i = semillaTer?.indice ?? 0; i < celdas.length; i++) {
       if (detenerCensoRef.current) break;
       try {
         if (terFuente === "denue" || terFuente === "ambas") {
@@ -2652,6 +2966,13 @@ export default function SeekerApp({
           Array.from(denueAcum.values())
         )
       );
+      await autosavePlanner(
+        mezclarFuentes(
+          Array.from(googleAcum.values()),
+          Array.from(denueAcum.values())
+        ),
+        { modo: "territorial", indice: i + 1, total: celdas.length }
+      );
       reportar(
         "busy",
         `Censo territorial: consulta ${i + 1} de ${celdas.length} · ${acumTotal} establecimientos`
@@ -2672,6 +2993,11 @@ export default function SeekerApp({
     setTablaColapsada(false);
 
     const universosCenso = await calcularUniversosDeCenso(lista);
+    await finalizarPlanner(
+      lista,
+      universosCenso,
+      !errorFatal && !detenerCensoRef.current
+    );
     let guardado = false;
     let delta: DeltaCenso | null = null;
     if (lista.length > 0 || celdasCorridas > 0) {
@@ -2829,6 +3155,24 @@ export default function SeekerApp({
     setFoco(null);
     detenerOrigenesRef.current = false;
     const firma = `${centros.length}:${radio}:${categoriasApi.join(",")}:${filtroNombreTexto}:${excludes.join("|")}`;
+    // reanudación de PLANNER: sembrar el avance guardado en el proyecto
+    // (los puntos ya persistidos no se re-consultan ni re-pagan)
+    if (
+      planner &&
+      semillaPlannerRef.current?.modo === "origins" &&
+      busquedaGrandeRef.current?.firma !== firma
+    ) {
+      const sem = semillaPlannerRef.current;
+      busquedaGrandeRef.current = {
+        firma,
+        indice: sem.indice,
+        acumulados: new Map(sem.puntos.map((p) => [p.placeId, p])),
+        excluidos: 0,
+        descartados: 0,
+        detExc: new Set(),
+        detDesc: new Set(),
+      };
+    }
     const previo =
       busquedaGrandeRef.current?.firma === firma
         ? busquedaGrandeRef.current
@@ -2850,6 +3194,25 @@ export default function SeekerApp({
       lotes.push(centros.slice(i, i + tamanoLote));
     }
     let li = previo?.indice ?? 0;
+    if (planner) {
+      await iniciarPlanner(
+        separarPorCategoria
+          ? etiquetasCategorias
+          : separarPorTermino
+            ? nameFilters
+            : [],
+        {
+          mode: "origins",
+          radius: radio,
+          origenes,
+          categories: categoriasApi,
+          nameFilters,
+          excludes,
+          nombre: nombreCapaActual(),
+        },
+        "google"
+      );
+    }
     // backoff automático ante rate limit: el MISMO lote se reintenta
     // tras la espera — lo ya acumulado nunca se re-consulta ni re-paga
     let esperasCuota = 0;
@@ -2927,6 +3290,12 @@ export default function SeekerApp({
         // el avance también se persiste en el navegador: si la cuota
         // diaria topa hoy, mañana se reanuda EXACTAMENTE donde quedó
         persistirAvanceBusqueda();
+        // …y al proyecto (Planner): autosave de puntos + progreso
+        await autosavePlanner(data.pois, {
+          modo: "origins",
+          indice: li + 1,
+          total: lotes.length,
+        });
         li++;
       }
     } catch (e) {
@@ -2944,6 +3313,9 @@ export default function SeekerApp({
         },
         onCerrar: () => setProceso(null),
       });
+      if (plannerRunRef.current) {
+        actualizarRunPlanner(plannerRunRef.current, { status: "interrumpido" });
+      }
       setOcupado(false);
       return;
     }
@@ -2981,6 +3353,7 @@ export default function SeekerApp({
     setProceso(null);
 
     if (interrumpida) {
+      await finalizarPlanner(lista, null, false);
       reportar(
         "ok",
         `Búsqueda interrumpida en el lote ${li + 1} de ${lotes.length} (${lista.length.toLocaleString("es-MX")} POIs hasta ahora) — presiona Continuar para reanudar.`
@@ -3007,6 +3380,7 @@ export default function SeekerApp({
     setAgebsGeo(null);
     setCapaDemografica(false);
     geocercasRef.current = geocercas.length <= 2000 ? geocercas : null;
+    await finalizarPlanner(lista, u, true);
 
     const extras: string[] = [];
     if (excluidosTotal > 0) extras.push(`${excluidosTotal} excluidos`);
@@ -3141,21 +3515,48 @@ export default function SeekerApp({
       setVerLista(null);
       // universos: del servidor en geometrías chicas; en grandes se
       // calculan aquí con la pieza común (subdivisión + lotes exactos)
+      let universosBusqueda: Universos | null = universos ?? null;
       if (!reutilizarUniversos) {
         geocercasRef.current = geocercasPrevistas;
         if (universosEnServidor) {
-          setUniversos(data.universos ?? null);
+          universosBusqueda = data.universos ?? null;
         } else if (data.pois.length > 0) {
           const criterio =
             mode === "zone"
               ? `población dentro de ${centrosActivos.length === 1 ? "la zona" : `las ${centrosActivos.length} zonas`}`
               : `población a ${radio >= 1000 ? `${radio / 1000} km` : `${radio} m`} de ${centrosActivos.length.toLocaleString("es-MX")} ${centrosActivos.length === 1 ? "origen" : "orígenes"}`;
-          setUniversos(await calcularUniversosEscalables(geocercasPrevistas, criterio));
+          universosBusqueda = await calcularUniversosEscalables(
+            geocercasPrevistas,
+            criterio
+          );
         } else {
-          setUniversos(null);
+          universosBusqueda = null;
         }
+        setUniversos(universosBusqueda);
         setAgebsGeo(null);
         setCapaDemografica(false);
+      }
+      // PLANNER: la búsqueda completa se persiste como survey(s)
+      if (planner && data.pois.length > 0) {
+        await iniciarPlanner(
+          separarPorCategoria
+            ? etiquetasCategorias
+            : separarPorTermino
+              ? nameFilters
+              : [],
+          {
+            mode,
+            radius: radio,
+            centers: centrosActivos,
+            origenes: mode === "origins" ? origenes : undefined,
+            categories: categoriasApi,
+            nameFilters,
+            excludes,
+            nombre: nombreCapaActual(),
+          },
+          "google"
+        );
+        await finalizarPlanner(data.pois, universosBusqueda, true);
       }
       setTablaColapsada(false);
       const extras: string[] = [];
@@ -3420,6 +3821,34 @@ export default function SeekerApp({
   return (
     <div className="flex h-screen flex-col gap-3 overflow-hidden bg-fondo p-3">
       <AppHeader usuario={usuario} status={status} onNueva={nuevaBusqueda} />
+
+      {/* contexto de Planner: este buscador guarda al proyecto */}
+      {planner && (
+        <div className="tarjeta flex shrink-0 items-center gap-2 px-4 py-2 font-mono text-[11px]">
+          <span className="shrink-0 rounded-full border border-violeta/50 bg-violeta/10 px-2.5 py-0.5 text-violeta">
+            Planner
+          </span>
+          <span className="shrink-0 text-zinc-200">
+            {planner.nombreCliente ?? "Plan"}
+          </span>
+          <span className="text-zinc-700">·</span>
+          <span className="shrink-0 text-zinc-400">
+            Sección {ETIQUETA_ROL[planner.rol]} — cada levantamiento se guarda
+            automáticamente al plan
+          </span>
+          {notaPlanner && (
+            <span className="truncate text-amber-400" title={notaPlanner}>
+              · {notaPlanner}
+            </span>
+          )}
+          <Link
+            href={`/planner/${planner.proyectoId}`}
+            className="ml-auto shrink-0 rounded-full border border-linea bg-panel2 px-3 py-1 text-zinc-400 transition-colors hover:border-violeta hover:text-violeta"
+          >
+            ← Volver al plan
+          </Link>
+        </div>
+      )}
 
       {/* ---------- barra de resumen de la búsqueda ---------- */}
       <div className="tarjeta flex shrink-0 items-center overflow-x-auto px-2 py-2.5">
@@ -4092,11 +4521,20 @@ export default function SeekerApp({
               {celdas && !progresoCenso && (
                 <div className="mt-3 rounded-md border border-magenta/40 bg-magenta/5 p-3">
                   <p className="font-mono text-[11px] leading-relaxed text-zinc-300">
-                    Serán <span className="text-magenta">{celdas.length} celdas</span> ={" "}
-                    <span className="text-magenta">{celdas.length} llamadas</span> a
-                    Google Places (searchText), en serie con pausa de 250 ms.
+                    Serán <span className="text-magenta">{celdas.length} celdas</span>
+                    {dividirTerminos(marca).length > 1 &&
+                      ` × ${dividirTerminos(marca).length} marcas`}{" "}
+                    ={" "}
+                    <span className="text-magenta">
+                      {celdas.length * Math.max(1, dividirTerminos(marca).length)}{" "}
+                      llamadas
+                    </span>{" "}
+                    a Google Places (searchText), en serie con pausa de 250 ms.
+                    Con varias marcas (separadas por coma) cada una es su capa.
                   </p>
-                  {notaSaldoCeldas(celdas.length)}
+                  {notaSaldoCeldas(
+                    celdas.length * Math.max(1, dividirTerminos(marca).length)
+                  )}
                   <button
                     onClick={ejecutarCenso}
                     disabled={ocupado}
@@ -4811,6 +5249,17 @@ export default function SeekerApp({
                 ⤓ Export plan (PDF){" "}
                 <span className="text-magenta/60">+ Export data · Gravity_Plan_*.pdf</span>
               </button>
+              {!planner && (
+                <button
+                  onClick={() => setModalGuardarPlan(true)}
+                  disabled={ocupado || poisActivos.length === 0}
+                  className="rounded-md border border-violeta bg-violeta/10 px-3 py-2 text-left font-mono text-[11px] font-medium text-violeta transition-colors hover:bg-violeta/20 disabled:opacity-30"
+                  title="Convierte esta búsqueda en un levantamiento de un plan del Planner (elige proyecto y rol)"
+                >
+                  ⤒ Guardar en un plan…{" "}
+                  <span className="text-violeta/60">POI propios o competencia</span>
+                </button>
+              )}
               <button
                 onClick={() => exportarCsv(poisActivos, centrosActivos, universos)}
                 disabled={poisActivos.length === 0}
@@ -5020,6 +5469,31 @@ export default function SeekerApp({
           </div>
         </main>
       </div>
+
+      <GuardarEnPlanModal
+        abierto={modalGuardarPlan}
+        onCerrar={() => setModalGuardarPlan(false)}
+        pois={poisActivos}
+        capas={
+          capas.length > 0
+            ? capas.map((c) => ({ nombre: c.nombre, pois: c.pois }))
+            : null
+        }
+        universos={universos}
+        configuracion={{
+          mode,
+          radius: radio,
+          centers: centrosActivos,
+          origenes: mode === "origins" ? origenes : undefined,
+          categories: categoriasApi,
+          nameFilters,
+          excludes,
+          nombre: nombreCapaActual(),
+        }}
+        onGuardado={(nombreCliente) =>
+          reportar("ok", `Búsqueda guardada como levantamiento en el plan de ${nombreCliente}`)
+        }
+      />
     </div>
   );
 }
