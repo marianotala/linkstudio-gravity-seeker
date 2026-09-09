@@ -2626,3 +2626,123 @@ $$;
 
 revoke execute on function public.admin_consumo_api() from public, anon;
 grant execute on function public.admin_consumo_api() to authenticated;
+
+-- ============================================================
+-- MIGRACIÓN FASE 16 — PLANNER, fundación (F1)
+-- ============================================================
+-- Modo "Planner" ADITIVO sobre Seeker: proyectos por cliente que
+-- organizan levantamientos con rol (POI propio, competencia,
+-- proximidad, OOH), guardan todo automáticamente y al final generan
+-- el plan completo. Esta fase crea SOLO la estructura: las tablas de
+-- historial/censos actuales no se tocan y el modo consulta queda
+-- intacto. RLS: cualquier usuario AUTENTICADO del equipo lee y
+-- escribe (el login ya es interno de Link Studio) — preparado para
+-- afinar por rol en fases posteriores. Validado en vivo: anon ve 0
+-- filas y no puede insertar; borrar un proyecto arrastra en cascada
+-- sus levantamientos, puntos, universos y estado de plan.
+
+-- ---- proyectos (un plan por cliente)
+create table if not exists public.projects (
+  id uuid primary key default gen_random_uuid(),
+  nombre_cliente text not null,
+  titulo text,                       -- título opcional del plan
+  creado_por uuid not null references public.profiles (id) on delete cascade,
+  status text not null default 'activo'
+    check (status in ('activo', 'archivado')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists projects_status_idx on public.projects (status, updated_at desc);
+
+-- ---- levantamientos dentro del proyecto (la lógica llega en F2/F3)
+create table if not exists public.surveys (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects (id) on delete cascade,
+  rol text not null
+    check (rol in ('poi_propio', 'competencia', 'proximidad', 'ooh')),
+  fuente text,                       -- google | denue | ambas | inventario
+  configuracion jsonb not null default '{}'::jsonb, -- modo, términos, categorías, radio, geografía
+  status text not null default 'en_progreso'
+    check (status in ('en_progreso', 'completado', 'interrumpido')),
+  progreso jsonb,                    -- estado de reanudación (celda/lote)
+  created_at timestamptz not null default now()
+);
+create index if not exists surveys_project_idx on public.surveys (project_id, created_at);
+
+-- ---- puntos levantados (POIs/pantallas de cada levantamiento)
+create table if not exists public.survey_points (
+  id bigint generated always as identity primary key,
+  survey_id uuid not null references public.surveys (id) on delete cascade,
+  place_id text not null,
+  nombre text not null,
+  direccion text,
+  lat double precision not null,
+  lng double precision not null,
+  cp text,
+  categoria text,                    -- categoría o término que lo capturó
+  metadata jsonb                     -- fuente, estrato, capa, distancia...
+);
+create index if not exists survey_points_survey_idx on public.survey_points (survey_id);
+
+-- ---- universos demográficos calculados por levantamiento
+create table if not exists public.survey_universes (
+  id uuid primary key default gen_random_uuid(),
+  survey_id uuid not null references public.surveys (id) on delete cascade,
+  resultados jsonb not null,         -- universo, urbano/rural, NSE, edades, zonas
+  created_at timestamptz not null default now()
+);
+create index if not exists survey_universes_survey_idx on public.survey_universes (survey_id);
+
+-- ---- estado del plan (UI + tácticas), uno por proyecto
+create table if not exists public.plan_state (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null unique references public.projects (id) on delete cascade,
+  estado jsonb not null default '{}'::jsonb,
+  tacticas_seleccionadas jsonb,
+  updated_at timestamptz not null default now()
+);
+
+-- ---- updated_at automático
+create or replace function public.tocar_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists projects_tocar_updated on public.projects;
+create trigger projects_tocar_updated
+  before update on public.projects
+  for each row execute function public.tocar_updated_at();
+
+drop trigger if exists plan_state_tocar_updated on public.plan_state;
+create trigger plan_state_tocar_updated
+  before update on public.plan_state
+  for each row execute function public.tocar_updated_at();
+
+-- ---- RLS: equipo completo (autenticados) lee y escribe; anónimos nada
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['projects', 'surveys', 'survey_points', 'survey_universes', 'plan_state']
+  loop
+    execute format('alter table public.%I enable row level security', t);
+    execute format('drop policy if exists "%s: equipo lee" on public.%I', t, t);
+    execute format(
+      'create policy "%s: equipo lee" on public.%I for select to authenticated using (true)', t, t);
+    execute format('drop policy if exists "%s: equipo inserta" on public.%I', t, t);
+    execute format(
+      'create policy "%s: equipo inserta" on public.%I for insert to authenticated with check (true)', t, t);
+    execute format('drop policy if exists "%s: equipo actualiza" on public.%I', t, t);
+    execute format(
+      'create policy "%s: equipo actualiza" on public.%I for update to authenticated using (true)', t, t);
+    execute format('drop policy if exists "%s: equipo borra" on public.%I', t, t);
+    execute format(
+      'create policy "%s: equipo borra" on public.%I for delete to authenticated using (true)', t, t);
+  end loop;
+end;
+$$;

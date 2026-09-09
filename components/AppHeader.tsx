@@ -5,7 +5,9 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
 import GravityMark from "./GravityMark";
+import NuevoPlanModal from "./NuevoPlanModal";
 import { createClient } from "@/lib/supabase/client";
 import type { PerfilUsuario } from "@/lib/types";
 
@@ -21,6 +23,7 @@ interface AppHeaderProps {
 export default function AppHeader({ usuario, status, onNueva }: AppHeaderProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const [modalPlan, setModalPlan] = useState(false);
 
   async function cerrarSesion() {
     const supabase = createClient();
@@ -68,6 +71,14 @@ export default function AppHeader({ usuario, status, onNueva }: AppHeaderProps) 
           <Link href="/ooh" className={navCls(pathname === "/ooh")}>
             OOH
           </Link>
+          <Link
+            href="/planes"
+            className={navCls(
+              pathname === "/planes" || pathname.startsWith("/planner")
+            )}
+          >
+            Planes
+          </Link>
           <Link href="/historial" className={navCls(pathname === "/historial")}>
             Historial
           </Link>
@@ -80,6 +91,15 @@ export default function AppHeader({ usuario, status, onNueva }: AppHeaderProps) 
       </div>
 
       <div className="flex shrink-0 items-center gap-3">
+        {usuario && (
+          <button
+            onClick={() => setModalPlan(true)}
+            className="rounded-full border border-violeta/50 bg-violeta/10 px-3 py-1.5 font-mono text-[11px] text-violeta transition-colors hover:bg-violeta/20"
+            title="Crear un plan por cliente (Planner): organiza levantamientos y genera el plan completo"
+          >
+            + Nuevo plan
+          </button>
+        )}
         {onNueva && (
           <button
             onClick={onNueva}
@@ -117,6 +137,12 @@ export default function AppHeader({ usuario, status, onNueva }: AppHeaderProps) 
           </div>
         )}
       </div>
+
+      <NuevoPlanModal
+        abierto={modalPlan}
+        onCerrar={() => setModalPlan(false)}
+        usuarioId={usuario?.id}
+      />
     </header>
   );
 }

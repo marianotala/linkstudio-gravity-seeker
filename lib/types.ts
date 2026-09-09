@@ -368,6 +368,45 @@ export interface ResumenLotePantallas {
   cargado: string;
 }
 
+// ------------------------------------------------------------------
+// PLANNER — proyectos por cliente con levantamientos por rol (F1)
+// ------------------------------------------------------------------
+
+export type RolLevantamiento =
+  | "poi_propio"
+  | "competencia"
+  | "proximidad"
+  | "ooh";
+
+export type StatusProyecto = "activo" | "archivado";
+
+/** Fila de public.projects (un plan por cliente). */
+export interface Proyecto {
+  id: string;
+  nombre_cliente: string;
+  titulo: string | null;
+  creado_por: string;
+  status: StatusProyecto;
+  created_at: string;
+  updated_at: string;
+  /** Embebido vía FK al listar. */
+  profiles?: { email: string; nombre: string | null } | null;
+  /** Conteo embebido de levantamientos ({ count }). */
+  surveys?: { count: number }[];
+}
+
+/** Fila de public.surveys (levantamiento con rol; lógica en F2/F3). */
+export interface Levantamiento {
+  id: string;
+  project_id: string;
+  rol: RolLevantamiento;
+  fuente: string | null;
+  configuracion: Record<string, unknown>;
+  status: "en_progreso" | "completado" | "interrumpido";
+  progreso: Record<string, unknown> | null;
+  created_at: string;
+}
+
 export interface GeocodeRequest {
   direcciones: string[];
 }
