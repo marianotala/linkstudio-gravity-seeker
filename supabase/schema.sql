@@ -2746,3 +2746,42 @@ begin
   end loop;
 end;
 $$;
+
+-- ============================================================
+-- MIGRACIÓN FASE 17 — PLANNER F4: universos consolidados
+-- ============================================================
+-- El universo TOTAL del proyecto: la unión deduplicada de las
+-- geometrías de los surveys seleccionados (ST_Union vía la maquinaria
+-- de lotes existente — dos surveys sobre Polanco no cuentan a los
+-- polanqueños dos veces) y los TRASLAPES entre roles calculados por
+-- inclusión-exclusión: pob(A∩B) = pob(A) + pob(B) − pob(A∪B), exacto
+-- con las mismas sumas crudas. Validado en vivo (Polanco, círculos de
+-- 2 km traslapados): unión 207,297 < suma simple 275,417; traslape
+-- 68,119 personas. Cada fila guarda qué surveys la componen y cuándo
+-- se calculó (indicador de desactualizado).
+
+create table if not exists public.project_universes (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects (id) on delete cascade,
+  tipo text not null check (tipo in ('consolidado', 'traslape')),
+  survey_ids jsonb not null default '[]'::jsonb,
+  resultados jsonb not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists project_universes_project_idx
+  on public.project_universes (project_id, tipo);
+
+alter table public.project_universes enable row level security;
+
+drop policy if exists "project_universes: equipo lee" on public.project_universes;
+create policy "project_universes: equipo lee"
+  on public.project_universes for select to authenticated using (true);
+drop policy if exists "project_universes: equipo inserta" on public.project_universes;
+create policy "project_universes: equipo inserta"
+  on public.project_universes for insert to authenticated with check (true);
+drop policy if exists "project_universes: equipo actualiza" on public.project_universes;
+create policy "project_universes: equipo actualiza"
+  on public.project_universes for update to authenticated using (true);
+drop policy if exists "project_universes: equipo borra" on public.project_universes;
+create policy "project_universes: equipo borra"
+  on public.project_universes for delete to authenticated using (true);

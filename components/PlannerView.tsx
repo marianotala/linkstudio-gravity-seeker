@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AppHeader from "./AppHeader";
+import ResumenProyecto from "./ResumenProyecto";
 import UniversosPanel from "./UniversosPanel";
 import {
   cargarPuntosCrudosSurvey,
@@ -44,7 +45,7 @@ const PlannerMapa = dynamic(() => import("./PlannerMapa"), {
   ),
 });
 
-type SeccionPlanner = RolLevantamiento | "exportar";
+type SeccionPlanner = RolLevantamiento | "exportar" | "resumen";
 
 interface SurveyFila {
   id: string;
@@ -67,6 +68,15 @@ const SECCIONES: {
   fase: string;
   detalle: string;
 }[] = [
+  {
+    clave: "resumen",
+    nombre: "Resumen del proyecto",
+    descriptor: "Universo consolidado y traslapes",
+    color: "#f7d154",
+    activa: true,
+    fase: "",
+    detalle: "",
+  },
   {
     clave: "poi_propio",
     nombre: "POI (puntos propios)",
@@ -422,7 +432,7 @@ export default function PlannerView({
 
   const activa = SECCIONES.find((x) => x.clave === seccion)!;
   const filasSeccion =
-    activa.activa && seccion !== "exportar"
+    activa.activa && seccion !== "exportar" && seccion !== "resumen"
       ? porRol(seccion as RolLevantamiento)
       : [];
 
@@ -512,7 +522,7 @@ export default function PlannerView({
                     {sec.descriptor}
                   </span>
                 </span>
-                {sec.clave !== "exportar" && (
+                {sec.clave !== "exportar" && sec.clave !== "resumen" && (
                   <span className="shrink-0 rounded-full border border-linea bg-fondo px-2 py-0.5 font-mono text-[10px] text-zinc-500">
                     {porRol(sec.clave as RolLevantamiento).length}
                   </span>
@@ -539,6 +549,8 @@ export default function PlannerView({
                 Volver a Mis planes
               </Link>
             </div>
+          ) : seccion === "resumen" ? (
+            <ResumenProyecto proyectoId={proyectoId} surveys={surveys} />
           ) : !activa.activa ? (
             <div className="m-auto max-w-lg px-6 py-10 text-center">
               <span

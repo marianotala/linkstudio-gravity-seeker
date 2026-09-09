@@ -6,7 +6,14 @@
 // reanudar sin repagar consultas. Todo vía Supabase con RLS de equipo.
 
 import { createClient } from "./supabase/client";
-import type { Poi, RolLevantamiento, Universos } from "./types";
+import type {
+  GeocercaUniverso,
+  Origin,
+  Poi,
+  RolLevantamiento,
+  Universos,
+  Viewport,
+} from "./types";
 
 export interface ContextoPlanner {
   proyectoId: string;
@@ -326,6 +333,86 @@ export async function cargarPuntosSurveys(
     salida.set(id, puntos);
   }
   return salida;
+}
+
+// ------------------------------------------------------------------
+// F4 — geometría de un survey para el universo CONSOLIDADO del
+// proyecto: cada levantamiento aporta sus geocercas y la pieza única
+// de universos calcula sobre la UNIÓN deduplicada (ST_Union por lotes).
+// ------------------------------------------------------------------
+
+/** Buffer alrededor de los puntos censados (censo de marca y
+ * territorial) para el consolidado — el mismo criterio de "población a
+ * 500 m de los puntos" del panel individual. */
+export const RADIO_INFLUENCIA_CONSOLIDADO = 500;
+
+/**
+ * Geocercas de un survey según su modo:
+ * - cp → polígonos reales de los códigos postales
+ * - zone → viewports de las zonas
+ * - origins (búsqueda o carga directa) → círculos radio configurado
+ *   alrededor de los orígenes
+ * - census/territorial → buffers de 500 m alrededor de los puntos
+ * - ooh → círculos del radio de cruce alrededor de las pantallas
+ * Los ids van prefijados con el survey para no chocar entre surveys.
+ */
+export function geocercasDeSurvey(
+  survey: { id: string; rol: RolLevantamiento; configuracion: Record<string, unknown> },
+  puntos: PuntoSurvey[]
+): GeocercaUniverso[] {
+  const cfg = survey.configuracion ?? {};
+  const modo = (cfg.mode as string) ?? "census";
+  const pref = survey.id.slice(0, 8);
+
+  if (modo === "cp") {
+    return ((cfg.cps as string[]) ?? []).map((cp) => ({
+      id: `${pref}:${cp}`,
+      cp,
+    }));
+  }
+  if (modo === "zone") {
+    return (((cfg.centers as Origin[]) ?? []) as Origin[]).map((c, i) =>
+      c.viewport
+        ? { id: `${pref}:z${i}`, viewport: c.viewport as Viewport }
+        : { id: `${pref}:z${i}`, lat: c.lat, lng: c.lng, radio_m: 1000 }
+    );
+  }
+  if (modo === "origins") {
+    const radio = typeof cfg.radius === "number" ? cfg.radius : 1000;
+    const origenes = (cfg.origenes as Origin[]) ?? (cfg.centers as Origin[]) ?? [];
+    if (origenes.length > 0) {
+      return origenes.map((o, i) => ({
+        id: `${pref}:o${i}`,
+        lat: o.lat,
+        lng: o.lng,
+        radio_m: radio,
+      }));
+    }
+    return puntos.map((p, i) => ({
+      id: `${pref}:p${i}`,
+      lat: p.lat,
+      lng: p.lng,
+      radio_m: radio,
+    }));
+  }
+  if (modo === "ooh") {
+    return puntos.map((p, i) => ({
+      id: `${pref}:s${i}`,
+      lat: p.lat,
+      lng: p.lng,
+      radio_m:
+        typeof p.metadata?.radio_m === "number"
+          ? (p.metadata.radio_m as number)
+          : 6000,
+    }));
+  }
+  // census / territorial: buffers alrededor de los puntos censados
+  return puntos.map((p, i) => ({
+    id: `${pref}:c${i}`,
+    lat: p.lat,
+    lng: p.lng,
+    radio_m: RADIO_INFLUENCIA_CONSOLIDADO,
+  }));
 }
 
 /** Carga un run COMPLETO para reanudar/re-correr: el survey pedido,
