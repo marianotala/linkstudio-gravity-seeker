@@ -16,8 +16,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AppHeader from "./AppHeader";
+import ExportarProyecto from "./ExportarProyecto";
 import ResumenProyecto from "./ResumenProyecto";
 import UniversosPanel from "./UniversosPanel";
+import type { TacticaClave } from "@/lib/tacticas";
 import {
   cargarPuntosCrudosSurvey,
   cargarPuntosSurveys,
@@ -116,12 +118,11 @@ const SECCIONES: {
   {
     clave: "exportar",
     nombre: "Exportar",
-    descriptor: "El plan completo",
+    descriptor: "El plan completo (PDF + Excel)",
     color: "#34d399",
-    activa: false,
-    fase: "F5",
-    detalle:
-      "Export plan del proyecto: todos los levantamientos consolidados en un solo PDF con branding Gravity + exports de datos.",
+    activa: true,
+    fase: "",
+    detalle: "",
   },
 ];
 
@@ -142,6 +143,9 @@ export default function PlannerView({
   const [seccion, setSeccion] = useState<SeccionPlanner>("poi_propio");
   /** Visibilidad por survey en el mapa (default: visible). */
   const [visibles, setVisibles] = useState<Record<string, boolean>>({});
+  /** Tácticas marcadas del proyecto (persisten en plan_state; null =
+   * default por capas presentes, calculado en Exportar). */
+  const [tacticasPlan, setTacticasPlan] = useState<TacticaClave[] | null>(null);
   const [puntosCache, setPuntosCache] = useState<Record<string, Poi[]>>({});
   /** Crudos con metadata (cruces OOH: relaciones pantalla→PDV). */
   const [crudosCache, setCrudosCache] = useState<Record<string, PuntoSurvey[]>>({});
@@ -187,9 +191,11 @@ export default function PlannerView({
       const estado = (ps?.estado ?? {}) as {
         seccion?: SeccionPlanner;
         visibles?: Record<string, boolean>;
+        tacticas?: TacticaClave[];
       };
       if (estado.seccion) setSeccion(estado.seccion);
       if (estado.visibles) setVisibles(estado.visibles);
+      if (estado.tacticas) setTacticasPlan(estado.tacticas);
       estadoListoRef.current = true;
     }
     setCargando(false);
@@ -207,12 +213,19 @@ export default function PlannerView({
       await supabase
         .from("plan_state")
         .upsert(
-          { project_id: proyectoId, estado: { seccion, visibles } },
+          {
+            project_id: proyectoId,
+            estado: {
+              seccion,
+              visibles,
+              ...(tacticasPlan ? { tacticas: tacticasPlan } : {}),
+            },
+          },
           { onConflict: "project_id" }
         );
     }, 600);
     return () => clearTimeout(timer);
-  }, [seccion, visibles, proyectoId, cargando]);
+  }, [seccion, visibles, tacticasPlan, proyectoId, cargando]);
 
   const esVisible = (id: string) => visibles[id] !== false;
 
@@ -551,6 +564,17 @@ export default function PlannerView({
             </div>
           ) : seccion === "resumen" ? (
             <ResumenProyecto proyectoId={proyectoId} surveys={surveys} />
+          ) : seccion === "exportar" ? (
+            <ExportarProyecto
+              proyectoId={proyectoId}
+              cliente={proyecto?.nombre_cliente ?? "Cliente"}
+              tituloProyecto={proyecto?.titulo ?? null}
+              usuario={usuario}
+              surveys={surveys}
+              tacticas={tacticasPlan}
+              onTacticas={setTacticasPlan}
+              irAResumen={() => setSeccion("resumen")}
+            />
           ) : !activa.activa ? (
             <div className="m-auto max-w-lg px-6 py-10 text-center">
               <span
