@@ -23,7 +23,9 @@ export interface ContextoPlanner {
 }
 
 export const ETIQUETA_ROL: Record<RolLevantamiento, string> = {
-  poi_propio: "POI propios",
+  // en BD el rol sigue siendo 'poi_propio'; en UI siempre la semántica
+  // correcta: puntos de interés (los del plan, no solo "propios")
+  poi_propio: "Puntos de interés",
   competencia: "Competencia",
   proximidad: "Proximidad",
   ooh: "OOH",

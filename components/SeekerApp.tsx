@@ -20,6 +20,14 @@ import CategoriaBuscador, {
 } from "./CategoriaBuscador";
 import { CATEGORIA_LIBRE, CATEGORIAS, getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import {
+  dividirTerminos,
+  ErrorApi,
+  ESPERAS_CUOTA_S,
+  esTerminoExacto,
+  MAX_ESPERAS_CUOTA,
+  postJson,
+} from "@/lib/busqueda-cliente";
+import {
   ciudadDeDireccion,
   consolidarCentros,
   crearBuscadorCercano,
@@ -73,7 +81,6 @@ import {
 } from "@/lib/exports";
 import type {
   AgebGeo,
-  ApiError,
   CapaBusqueda,
   Censo,
   CensoPoi,
@@ -204,28 +211,6 @@ function etiquetaDeCategoria(key: string, libre: string): string {
   if (key === CATEGORIA_LIBRE)
     return libre ? `Libre: "${libre}"` : "Búsqueda libre";
   return getCategoria(key)?.label ?? key;
-}
-
-/** ¿El término del filtro es de modo exacto ("comillas")? */
-function esTerminoExacto(t: string): boolean {
-  return /^".*"$/.test(t);
-}
-
-/** Divide un texto en términos de filtro (comas), sin duplicados.
- * Los términos con "comillas" (modo exacto) conservan sus comillas y
- * no chocan con su versión sin comillas (son modos distintos). */
-function dividirTerminos(texto: string, existentes: string[] = []): string[] {
-  const clave = (t: string) =>
-    (esTerminoExacto(t) ? '"' : "") + normalizarComparable(t);
-  const vistos = new Set(existentes.map(clave));
-  const salida: string[] = [];
-  for (const t of texto.split(",").map((v) => v.trim()).filter(Boolean)) {
-    const k = clave(t);
-    if (k === '"' || k === "" || vistos.has(k)) continue;
-    vistos.add(k);
-    salida.push(t);
-  }
-  return salida;
 }
 
 /** Deduplica orígenes por coordenada repetida (6 decimales ≈ 11 cm). */
@@ -418,32 +403,6 @@ function Kpi({
     </Tag>
   );
 }
-
-/** Error de la API con código para decidir el manejo: "rate" (backoff
- * automático y se reanuda solo), "cuota_diaria" (Google: se reinicia a
- * medianoche del Pacífico) o "limite_diario" (celdas por usuario). */
-class ErrorApi extends Error {
-  codigo?: string;
-}
-
-async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = new ErrorApi((data as ApiError).error ?? `Error ${res.status}`);
-    err.codigo = (data as { codigo?: string }).codigo;
-    throw err;
-  }
-  return data as T;
-}
-
-/** Esperas del backoff automático ante rate limit de Google (2b). */
-const ESPERAS_CUOTA_S = [30, 60, 120, 240, 300];
-const MAX_ESPERAS_CUOTA = 5;
 
 export default function SeekerApp({
   usuario,

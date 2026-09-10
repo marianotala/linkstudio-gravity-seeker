@@ -24,6 +24,7 @@ import {
   cruzarPantallasPdvs,
   esZmvm,
   etiquetaTipoPantalla,
+  filasCruceSurvey,
   pdvsCubiertos,
 } from "@/lib/ooh";
 import {
@@ -441,32 +442,9 @@ export default function OohView({
     };
   }
 
-  /** Filas crudas del cruce: una por pantalla del plan, con sus PDVs
-   * apoyados (nombre, coordenadas, distancia) en metadata — suficiente
-   * para redibujar las líneas al reabrir el survey. */
+  /** Filas crudas del cruce (pieza compartida en lib/ooh.ts). */
   function filasCruce(plan: CrucePantalla[], listaPdvs: Origin[]) {
-    return plan.map((c) => ({
-      place_id: c.pantalla.clave,
-      nombre: c.pantalla.nombre ?? c.pantalla.clave,
-      direccion: c.pantalla.direccion,
-      lat: c.pantalla.lat,
-      lng: c.pantalla.lng,
-      categoria: c.pantalla.tipo,
-      metadata: {
-        tipo: c.pantalla.tipo,
-        medio: c.pantalla.medio,
-        ciudad: c.pantalla.ciudad,
-        digital: c.pantalla.digital,
-        impresiones: c.pantalla.impresiones,
-        radio_m: c.radioM,
-        pdvs: c.pdvs.map((rel) => ({
-          nombre: etiquetaOrigen(listaPdvs[rel.idx], rel.idx),
-          lat: listaPdvs[rel.idx].lat,
-          lng: listaPdvs[rel.idx].lng,
-          distancia_m: rel.distancia,
-        })),
-      },
-    }));
+    return filasCruceSurvey(plan, listaPdvs, etiquetaOrigen);
   }
 
   /** Guarda el cruce como survey rol "ooh" en un proyecto. */

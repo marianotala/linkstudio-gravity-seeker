@@ -131,6 +131,41 @@ export function pdvsCubiertos(cruces: CrucePantalla[]): Set<number> {
   return s;
 }
 
+/**
+ * Filas CRUDAS del cruce para guardarlo como survey rol "ooh": una por
+ * pantalla del plan, con sus PDVs apoyados (nombre, coordenadas,
+ * distancia) en metadata — suficiente para redibujar las líneas al
+ * reabrir el survey. Compartida por la pestaña OOH y el Planner.
+ */
+export function filasCruceSurvey(
+  plan: CrucePantalla[],
+  listaPdvs: Origin[],
+  etiquetaPdv: (o: Origin, idx: number) => string
+) {
+  return plan.map((c) => ({
+    place_id: c.pantalla.clave,
+    nombre: c.pantalla.nombre ?? c.pantalla.clave,
+    direccion: c.pantalla.direccion,
+    lat: c.pantalla.lat,
+    lng: c.pantalla.lng,
+    categoria: c.pantalla.tipo,
+    metadata: {
+      tipo: c.pantalla.tipo,
+      medio: c.pantalla.medio,
+      ciudad: c.pantalla.ciudad,
+      digital: c.pantalla.digital,
+      impresiones: c.pantalla.impresiones,
+      radio_m: c.radioM,
+      pdvs: c.pdvs.map((rel) => ({
+        nombre: etiquetaPdv(listaPdvs[rel.idx], rel.idx),
+        lat: listaPdvs[rel.idx].lat,
+        lng: listaPdvs[rel.idx].lng,
+        distancia_m: rel.distancia,
+      })),
+    },
+  }));
+}
+
 // ------------------------------------------------------------------
 // Export data: CSV del cruce pantalla ↔ PDV (como el prototipo)
 // ------------------------------------------------------------------

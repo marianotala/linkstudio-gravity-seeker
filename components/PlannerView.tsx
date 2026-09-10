@@ -19,6 +19,15 @@ import AppHeader from "./AppHeader";
 import ExportarProyecto from "./ExportarProyecto";
 import ResumenProyecto from "./ResumenProyecto";
 import UniversosPanel from "./UniversosPanel";
+import {
+  BORRADOR_VACIO,
+  SeccionCompetencia,
+  SeccionOoh,
+  SeccionPois,
+  SeccionProximidad,
+  type BorradorSeccion,
+} from "./PlannerRecolectar";
+import type { PuntoRecolectado } from "./RecolectorPuntos";
 import type { TacticaClave } from "@/lib/tacticas";
 import {
   cargarPuntosCrudosSurvey,
@@ -81,8 +90,8 @@ const SECCIONES: {
   },
   {
     clave: "poi_propio",
-    nombre: "POI (puntos propios)",
-    descriptor: "Los PDVs del cliente",
+    nombre: "POIs (Puntos de interés)",
+    descriptor: "Busca, carga y censa los puntos del plan",
     color: "#2fb9e8",
     activa: true,
     fase: "",
@@ -91,7 +100,7 @@ const SECCIONES: {
   {
     clave: "competencia",
     nombre: "Competencia",
-    descriptor: "Censos de marcas rivales",
+    descriptor: "Qué hay alrededor de tus orígenes",
     color: "#f4368a",
     activa: true,
     fase: "",
@@ -100,7 +109,7 @@ const SECCIONES: {
   {
     clave: "proximidad",
     nombre: "Proximidad",
-    descriptor: "Puntos de afinidad del target",
+    descriptor: "Universos alrededor de puntos de afinidad",
     color: "#9d5cf0",
     activa: true,
     fase: "",
@@ -146,6 +155,12 @@ export default function PlannerView({
   /** Tácticas marcadas del proyecto (persisten en plan_state; null =
    * default por capas presentes, calculado en Exportar). */
   const [tacticasPlan, setTacticasPlan] = useState<TacticaClave[] | null>(null);
+  /** Borradores de recolección por sección (puntos agregados sin
+   * calcular todavía) — persisten en plan_state: cerrar y reabrir el
+   * proyecto no pierde la lista armada. */
+  const [borradores, setBorradores] = useState<
+    Record<string, BorradorSeccion>
+  >({});
   const [puntosCache, setPuntosCache] = useState<Record<string, Poi[]>>({});
   /** Crudos con metadata (cruces OOH: relaciones pantalla→PDV). */
   const [crudosCache, setCrudosCache] = useState<Record<string, PuntoSurvey[]>>({});
@@ -192,10 +207,12 @@ export default function PlannerView({
         seccion?: SeccionPlanner;
         visibles?: Record<string, boolean>;
         tacticas?: TacticaClave[];
+        borradores?: Record<string, BorradorSeccion>;
       };
       if (estado.seccion) setSeccion(estado.seccion);
       if (estado.visibles) setVisibles(estado.visibles);
       if (estado.tacticas) setTacticasPlan(estado.tacticas);
+      if (estado.borradores) setBorradores(estado.borradores);
       estadoListoRef.current = true;
     }
     setCargando(false);
@@ -219,13 +236,23 @@ export default function PlannerView({
               seccion,
               visibles,
               ...(tacticasPlan ? { tacticas: tacticasPlan } : {}),
+              // borradores acotados: listas gigantes se recortan a 3000
+              // puntos por sección para no inflar plan_state
+              borradores: Object.fromEntries(
+                Object.entries(borradores)
+                  .filter(
+                    ([, b]) =>
+                      b.puntos.length > 0 || Object.keys(b.config).length > 0
+                  )
+                  .map(([k, b]) => [k, { ...b, puntos: b.puntos.slice(0, 3000) }])
+              ),
             },
           },
           { onConflict: "project_id" }
         );
     }, 600);
     return () => clearTimeout(timer);
-  }, [seccion, visibles, tacticasPlan, proyectoId, cargando]);
+  }, [seccion, visibles, tacticasPlan, borradores, proyectoId, cargando]);
 
   const esVisible = (id: string) => visibles[id] !== false;
 
@@ -268,7 +295,25 @@ export default function PlannerView({
     return colorSurvey(s.rol, delRol.findIndex((x) => x.id === s.id));
   };
 
-  const capasMapa: CapaProyecto[] = surveys
+  // lo RECOLECTADO (sin calcular todavía) se pinta en vivo en el mapa
+  const capasBorrador: CapaProyecto[] = SECCIONES.filter(
+    (sec) =>
+      sec.clave !== "exportar" &&
+      sec.clave !== "resumen" &&
+      (borradores[sec.clave]?.puntos.length ?? 0) > 0
+  ).map((sec) => ({
+    id: `borrador-${sec.clave}`,
+    nombre: `Recolectando · ${sec.nombre}`,
+    color: sec.color,
+    puntos: (borradores[sec.clave]?.puntos ?? []).map((p) => ({
+      lat: p.lat,
+      lng: p.lng,
+      nombre: p.nombre,
+      direccion: p.direccion,
+    })),
+  }));
+
+  const capasSurveys: CapaProyecto[] = surveys
     .filter(
       (s) =>
         esVisible(s.id) &&
@@ -314,6 +359,8 @@ export default function PlannerView({
       };
     });
 
+  const capasMapa: CapaProyecto[] = [...capasSurveys, ...capasBorrador];
+
   const surveySeleccionado = surveys.find((s) => s.id === seleccionado) ?? null;
   const universoSeleccionado = surveySeleccionado
     ? universoDe(surveySeleccionado)
@@ -333,6 +380,32 @@ export default function PlannerView({
     // capas hermanas del mismo runId se van juntas)
     const supabase = createClient();
     const runId = (s.configuracion?.runId as string) ?? s.id;
+    // levantamiento RECOLECTADO inline (F6): sus puntos regresan al
+    // borrador de la sección para editarlos y volver a Calcular — sin
+    // brincar de vista
+    if (s.fuente === "recoleccion" && s.rol !== "ooh") {
+      const mapa = await cargarPuntosSurveys([s.id]);
+      const puntos: PuntoRecolectado[] = (mapa.get(s.id) ?? []).map((p) => ({
+        ...p,
+        via: "proyecto" as const,
+      }));
+      await supabase
+        .from("surveys")
+        .delete()
+        .eq("project_id", proyectoId)
+        .eq("configuracion->>runId", runId);
+      setBorradores((prev) => ({
+        ...prev,
+        [s.rol]: {
+          puntos,
+          config: { ...(prev[s.rol]?.config ?? {}), ...s.configuracion },
+        },
+      }));
+      setConfirmando(null);
+      setSeccion(s.rol);
+      await cargar();
+      return;
+    }
     try {
       sessionStorage.setItem(
         s.rol === "ooh" ? "seeker:recorrer-ooh" : "seeker:recorrer",
@@ -593,34 +666,72 @@ export default function PlannerView({
             </div>
           ) : (
             <>
-              {/* toolbar + lista de levantamientos de la sección */}
-              <div className="shrink-0 border-b border-linea px-5 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="font-display text-base font-extrabold tracking-tight text-white">
-                      {activa.nombre}
-                    </h2>
-                    <p className="font-mono text-[10px] text-zinc-500">
-                      {filasSeccion.length > 0
-                        ? `${filasSeccion.length} ${filasSeccion.length === 1 ? "levantamiento" : "levantamientos"} · el mapa pinta todos los visibles del proyecto`
-                        : seccion === "proximidad"
-                          ? "Carga la lista de lugares de afinidad (Excel, sin búsqueda) o censa categorías alrededor de una zona"
-                          : seccion === "ooh"
-                            ? "Cruza el inventario de pantallas contra los PDVs del proyecto (o un Excel)"
-                            : "Sin levantamientos todavía — corre el primero con el buscador completo"}
-                    </p>
-                  </div>
-                  <Link
-                    href={
-                      seccion === "ooh"
-                        ? `/planner/${proyectoId}/ooh`
-                        : `/planner/${proyectoId}/levantar/${seccion}`
-                    }
-                    className="shrink-0 rounded-md bg-violeta px-4 py-2 font-display text-xs font-extrabold text-white transition-opacity hover:opacity-90"
-                  >
-                    {seccion === "ooh" ? "+ Nuevo cruce de pantallas" : "+ Nuevo levantamiento"}
-                  </Link>
+              {/* interfaz inline de la sección (recolectar → calcular)
+                  + lista de levantamientos guardados */}
+              <div className="max-h-[62%] shrink-0 overflow-y-auto border-b border-linea px-5 py-3">
+                <div className="mb-3">
+                  <h2 className="font-display text-base font-extrabold tracking-tight text-white">
+                    {activa.nombre}
+                  </h2>
+                  <p className="font-mono text-[10px] text-zinc-500">
+                    {filasSeccion.length > 0
+                      ? `${filasSeccion.length} ${filasSeccion.length === 1 ? "levantamiento guardado" : "levantamientos guardados"} · el mapa pinta lo recolectado y todos los visibles del proyecto`
+                      : activa.descriptor}
+                  </p>
                 </div>
+
+                {seccion === "poi_propio" ? (
+                  <SeccionPois
+                    proyectoId={proyectoId}
+                    color={activa.color}
+                    borrador={borradores.poi_propio ?? BORRADOR_VACIO}
+                    onBorrador={(b) =>
+                      setBorradores((prev) => ({ ...prev, poi_propio: b }))
+                    }
+                    alGuardar={cargar}
+                  />
+                ) : seccion === "proximidad" ? (
+                  <SeccionProximidad
+                    proyectoId={proyectoId}
+                    color={activa.color}
+                    borrador={borradores.proximidad ?? BORRADOR_VACIO}
+                    onBorrador={(b) =>
+                      setBorradores((prev) => ({ ...prev, proximidad: b }))
+                    }
+                    alGuardar={cargar}
+                  />
+                ) : seccion === "competencia" ? (
+                  <SeccionCompetencia
+                    proyectoId={proyectoId}
+                    color={activa.color}
+                    borrador={borradores.competencia ?? BORRADOR_VACIO}
+                    onBorrador={(b) =>
+                      setBorradores((prev) => ({ ...prev, competencia: b }))
+                    }
+                    alGuardar={cargar}
+                  />
+                ) : seccion === "ooh" ? (
+                  <SeccionOoh
+                    proyectoId={proyectoId}
+                    color={activa.color}
+                    borrador={borradores.ooh ?? BORRADOR_VACIO}
+                    onBorrador={(b) =>
+                      setBorradores((prev) => ({ ...prev, ooh: b }))
+                    }
+                    alGuardar={cargar}
+                    surveysFuente={surveys
+                      .filter(
+                        (s) =>
+                          (s.rol === "poi_propio" || s.rol === "proximidad") &&
+                          puntosDe(s) > 0
+                      )
+                      .map((s) => ({
+                        id: s.id,
+                        nombre: nombreDe(s),
+                        puntos: puntosDe(s),
+                      }))}
+                  />
+                ) : null}
 
                 {filasSeccion.length > 0 && (
                   <div className="mt-3 max-h-52 overflow-y-auto rounded-lg border border-linea">
@@ -813,7 +924,7 @@ export default function PlannerView({
                   <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
                     Universo de “{nombreDe(surveySeleccionado)}”
                     <span className="ml-2 normal-case tracking-normal text-zinc-600">
-                      (la consolidación multi-levantamiento llega en F4)
+                      (el consolidado del plan vive en Resumen del proyecto)
                     </span>
                   </p>
                   <UniversosPanel universos={universoSeleccionado} notaTerritorio />
