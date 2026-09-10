@@ -53,6 +53,7 @@ import {
   ETIQUETA_ROL,
   guardarPuntosPlanner,
   guardarUniversosPlanner,
+  guardarUniversosPorCapa,
   reescribirPuntosPlanner,
   type ContextoPlanner,
   type RunPlanner,
@@ -1004,13 +1005,27 @@ export default function SeekerApp({
   async function finalizarPlanner(
     lista: Poi[],
     universosRun: Universos | null,
-    completo: boolean
+    completo: boolean,
+    /** Radio para universos POR CAPA (buffers de los puntos de cada
+     * survey). Con varias capas o rol competencia, cada capa guarda su
+     * universo PROPIO — los orígenes solo definen dónde buscar. */
+    radioCapaM?: number
   ) {
     const run = plannerRunRef.current;
     if (!run) return;
     if (completo) {
       await reescribirPuntosPlanner(run, lista);
-      if (universosRun?.disponible) await guardarUniversosPlanner(run, universosRun);
+      const porCapa =
+        radioCapaM != null &&
+        lista.length > 0 &&
+        (run.surveys.size > 1 || planner?.rol === "competencia");
+      if (porCapa) {
+        await guardarUniversosPorCapa(run, lista, radioCapaM, (t) =>
+          reportar("busy", t)
+        );
+      } else if (universosRun?.disponible) {
+        await guardarUniversosPlanner(run, universosRun);
+      }
       await actualizarRunPlanner(run, { status: "completado", progreso: null });
       setNotaPlanner("");
     } else {
@@ -2695,7 +2710,8 @@ export default function SeekerApp({
     await finalizarPlanner(
       lista,
       universosCenso,
-      !errorFatal && !detenerCensoRef.current
+      !errorFatal && !detenerCensoRef.current,
+      radioInfluencia
     );
     let guardado = false;
     let delta: DeltaCenso | null = null;
@@ -3004,7 +3020,8 @@ export default function SeekerApp({
     await finalizarPlanner(
       lista,
       universosCenso,
-      !errorFatal && !detenerCensoRef.current
+      !errorFatal && !detenerCensoRef.current,
+      radioInfluencia
     );
     let guardado = false;
     let delta: DeltaCenso | null = null;
@@ -3388,7 +3405,7 @@ export default function SeekerApp({
     setAgebsGeo(null);
     setCapaDemografica(false);
     geocercasRef.current = geocercas.length <= 2000 ? geocercas : null;
-    await finalizarPlanner(lista, u, true);
+    await finalizarPlanner(lista, u, true, radio);
 
     const extras: string[] = [];
     if (excluidosTotal > 0) extras.push(`${excluidosTotal} excluidos`);
@@ -3564,7 +3581,12 @@ export default function SeekerApp({
           },
           "google"
         );
-        await finalizarPlanner(data.pois, universosBusqueda, true);
+        await finalizarPlanner(
+          data.pois,
+          universosBusqueda,
+          true,
+          mode === "origins" ? radio : radioInfluencia
+        );
       }
       setTablaColapsada(false);
       const extras: string[] = [];

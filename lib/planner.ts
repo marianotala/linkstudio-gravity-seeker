@@ -6,6 +6,7 @@
 // reanudar sin repagar consultas. Todo vía Supabase con RLS de equipo.
 
 import { createClient } from "./supabase/client";
+import { calcularUniversosCliente } from "./universos-lotes";
 import type {
   GeocercaUniverso,
   Origin,
@@ -225,6 +226,69 @@ export async function guardarUniversosPlanner(
   }
 }
 
+/**
+ * Universos POR CAPA: el universo de cada survey del run se calcula
+ * sobre la unión de buffers de SUS PROPIOS puntos (los 44 de JAC → los
+ * buffers de esos 44; los 69 de BYD → los suyos), con el radio del
+ * análisis. Los orígenes de la búsqueda solo definen DÓNDE buscar, no
+ * el territorio de la capa — por eso cada marca reporta un universo
+ * DISTINTO y proporcional a la cantidad/dispersión de sus puntos.
+ * Nunca lanza: un fallo de universos no debe tirar el guardado.
+ */
+export async function guardarUniversosPorCapa(
+  run: RunPlanner,
+  puntos: Poi[],
+  radioM: number,
+  onEstado?: (texto: string) => void
+): Promise<void> {
+  try {
+    const supabase = createClient();
+    const entradas = Array.from(run.surveys.entries());
+    for (let i = 0; i < entradas.length; i++) {
+      const [etiqueta, surveyId] = entradas[i];
+      const propios =
+        etiqueta === null
+          ? puntos
+          : puntos.filter(
+              (p) =>
+                p.capa === etiqueta ||
+                p.categoria === etiqueta ||
+                p.termino === etiqueta
+            );
+      // recálculos: el universo previo del survey se reemplaza
+      await supabase.from("survey_universes").delete().eq("survey_id", surveyId);
+      if (propios.length === 0) continue;
+      const nombreCapa = etiqueta ?? "la capa";
+      onEstado?.(
+        `Universo de ${nombreCapa} (${i + 1} de ${entradas.length}) · ${propios.length.toLocaleString("es-MX")} puntos…`
+      );
+      const geocercas: GeocercaUniverso[] = propios.map((p, j) => ({
+        id: `${surveyId.slice(0, 8)}:${j}`,
+        lat: p.lat,
+        lng: p.lng,
+        radio_m: radioM,
+      }));
+      const u = await calcularUniversosCliente(
+        geocercas,
+        `población a ${radioM} m de los ${propios.length.toLocaleString("es-MX")} puntos de la capa`,
+        {
+          onProgreso: (lote, total) =>
+            onEstado?.(
+              `Universo de ${nombreCapa} (${i + 1} de ${entradas.length}) · lote ${lote + 1} de ${total}…`
+            ),
+        }
+      );
+      if (!u.disponible) continue;
+      await supabase.from("survey_universes").insert({
+        survey_id: surveyId,
+        resultados: { ...u, porAgeb: undefined, agebsGeo: undefined },
+      });
+    }
+  } catch (e) {
+    console.error("No se pudieron guardar los universos por capa:", e);
+  }
+}
+
 /** Puntos de un survey convertidos de vuelta a Poi (semilla de
  * reanudación y mapa del proyecto). */
 export interface PuntoSurvey {
@@ -381,6 +445,16 @@ export function geocercasDeSurvey(
   }
   if (modo === "origins") {
     const radio = typeof cfg.radius === "number" ? cfg.radius : 1000;
+    // COMPETENCIA: los orígenes de la búsqueda solo definen DÓNDE
+    // buscar; el territorio de la capa son SUS PROPIOS puntos
+    if (survey.rol === "competencia" && puntos.length > 0) {
+      return puntos.map((p, i) => ({
+        id: `${pref}:p${i}`,
+        lat: p.lat,
+        lng: p.lng,
+        radio_m: radio,
+      }));
+    }
     const origenes = (cfg.origenes as Origin[]) ?? (cfg.centers as Origin[]) ?? [];
     if (origenes.length > 0) {
       return origenes.map((o, i) => ({

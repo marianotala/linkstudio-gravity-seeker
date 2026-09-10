@@ -17,8 +17,10 @@ import {
   cargarPuntosSurveys,
   colorSurvey,
   ETIQUETA_ROL,
+  geocercasDeSurvey,
   type PuntoSurvey,
 } from "@/lib/planner";
+import { calcularUniversosCliente } from "@/lib/universos-lotes";
 import { CLAVES_TACTICAS, TACTICAS, type TacticaClave } from "@/lib/tacticas";
 import { createClient } from "@/lib/supabase/client";
 import type {
@@ -271,6 +273,63 @@ export default function ExportarProyecto({
         };
       }
 
+      // demografía POR TÁCTICA: el universo de cada sección del PDF es
+      // la unión de las geometrías de SUS capas (con una sola capa se
+      // reusa su universo guardado; con varias se calcula la unión)
+      const universoRol: Partial<Record<RolLevantamiento, Universos>> = {};
+      const aPuntoSurvey = (p: Poi): PuntoSurvey => ({
+        place_id: p.placeId,
+        nombre: p.nombre,
+        direccion: p.direccion,
+        lat: p.lat,
+        lng: p.lng,
+        cp: p.cp ?? null,
+        categoria: p.categoria ?? null,
+        metadata: null,
+      });
+      for (const rol of ["poi_propio", "competencia", "proximidad"] as const) {
+        const surveysRol = normales.filter((s) => s.rol === rol);
+        if (surveysRol.length === 0) continue;
+        if (surveysRol.length === 1) {
+          const u = universoDe(surveysRol[0]);
+          if (u?.disponible) {
+            universoRol[rol] = u;
+            continue;
+          }
+        }
+        const geocercasRol = surveysRol.flatMap((s) =>
+          geocercasDeSurvey(
+            s,
+            (puntosPorSurvey.get(s.id) ?? []).map(aPuntoSurvey)
+          )
+        );
+        if (geocercasRol.length === 0) continue;
+        setOcupado(`Demografía de ${ETIQUETA_ROL[rol]}…`);
+        const u = await calcularUniversosCliente(
+          geocercasRol,
+          `unión de las ${surveysRol.length} capas de la táctica`,
+          {
+            onProgreso: (lote, total) =>
+              setOcupado(
+                `Demografía de ${ETIQUETA_ROL[rol]} · lote ${lote + 1} de ${total}…`
+              ),
+          }
+        );
+        if (u.disponible) universoRol[rol] = u;
+      }
+      if (oohSurvey && crudosOoh.length > 0) {
+        setOcupado("Demografía del plan OOH…");
+        const u = await calcularUniversosCliente(
+          geocercasDeSurvey(oohSurvey, crudosOoh),
+          "radios de las pantallas del plan",
+          {
+            onProgreso: (lote, total) =>
+              setOcupado(`Demografía del plan OOH · lote ${lote + 1} de ${total}…`),
+          }
+        );
+        if (u.disponible) universoRol.ooh = u;
+      }
+
       setOcupado("Capturando el mapa general…");
       const [
         { generarPlanProyectoPdf, nombreArchivoPlanProyecto },
@@ -378,6 +437,7 @@ export default function ExportarProyecto({
         mapaDataUrl,
         tacticas: tacticasSel,
         fuentes,
+        universoRol,
       });
       descargarBlob(
         nombreArchivoPlanProyecto(cliente, titulo.trim(), fecha),

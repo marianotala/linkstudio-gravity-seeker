@@ -34,8 +34,10 @@ import {
   cargarPuntosSurveys,
   colorSurvey,
   ETIQUETA_ROL,
+  geocercasDeSurvey,
   type PuntoSurvey,
 } from "@/lib/planner";
+import { calcularUniversosCliente } from "@/lib/universos-lotes";
 import { createClient } from "@/lib/supabase/client";
 import type {
   LatLng,
@@ -109,7 +111,7 @@ const SECCIONES: {
   {
     clave: "proximidad",
     nombre: "Proximidad",
-    descriptor: "Universos alrededor de puntos de afinidad",
+    descriptor: "El universo cerca de tus puntos de venta",
     color: "#9d5cf0",
     activa: true,
     fase: "",
@@ -365,6 +367,55 @@ export default function PlannerView({
   const universoSeleccionado = surveySeleccionado
     ? universoDe(surveySeleccionado)
     : null;
+
+  /** Estado del recálculo de universo de un survey (fix: cada capa
+   * sobre la geometría de SUS PROPIOS puntos). */
+  const [recalculando, setRecalculando] = useState<{
+    id: string;
+    texto: string;
+  } | null>(null);
+
+  /** Recalcula el universo de UN levantamiento con la geometría
+   * correcta de su capa (geocercasDeSurvey post-fix: competencia usa
+   * sus propios puntos, no los orígenes de la búsqueda) — la migración
+   * de los surveys existentes afectados. */
+  async function recalcularUniverso(s: SurveyFila) {
+    setError("");
+    setRecalculando({ id: s.id, texto: "cargando puntos…" });
+    try {
+      const crudos = await cargarPuntosCrudosSurvey(s.id);
+      const geocercas = geocercasDeSurvey(s, crudos);
+      if (geocercas.length === 0) {
+        setError("Este levantamiento no tiene geometría para calcular universos");
+        return;
+      }
+      const u = await calcularUniversosCliente(
+        geocercas,
+        `recalculado sobre ${geocercas.length.toLocaleString("es-MX")} geocercas propias de la capa`,
+        {
+          onProgreso: (lote, total) =>
+            setRecalculando({ id: s.id, texto: `lote ${lote + 1} de ${total}…` }),
+        }
+      );
+      if (!u.disponible) {
+        setError(u.mensaje ?? "Universos no disponibles para esta capa");
+        return;
+      }
+      const supabase = createClient();
+      await supabase.from("survey_universes").delete().eq("survey_id", s.id);
+      await supabase.from("survey_universes").insert({
+        survey_id: s.id,
+        resultados: { ...u, porAgeb: undefined, agebsGeo: undefined },
+      });
+      await cargar();
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Error al recalcular el universo"
+      );
+    } finally {
+      setRecalculando(null);
+    }
+  }
 
   async function eliminarSurvey(id: string) {
     const supabase = createClient();
@@ -881,6 +932,16 @@ export default function PlannerView({
                                         </button>
                                       </>
                                     )}
+                                    <button
+                                      onClick={() => recalcularUniverso(s)}
+                                      disabled={recalculando !== null}
+                                      className="rounded border border-linea bg-panel2 px-2 py-0.5 text-[10px] text-zinc-400 hover:border-violeta hover:text-violeta disabled:opacity-50"
+                                      title="Recalcular el universo de ESTA capa sobre la geometría de sus propios puntos (gratis)"
+                                    >
+                                      {recalculando?.id === s.id
+                                        ? `⟳ ${recalculando.texto}`
+                                        : "⟳ Universo"}
+                                    </button>
                                     <button
                                       onClick={() =>
                                         setConfirmando({ accion: "recorrer", id: s.id })

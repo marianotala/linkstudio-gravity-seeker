@@ -3,7 +3,8 @@
 // del cliente. Reutiliza el sistema del deck (plan-pdf.tsx presta
 // tokens y componentes): portada, resumen ejecutivo con el universo
 // CONSOLIDADO deduplicado, mapa general multi-capa, una sección por
-// rol (propios / competencia con el traslape / afinidad / plan OOH),
+// rol (POIs / competencia con el traslape / proximidad / plan OOH),
+// cada una con SU PROPIO bloque demográfico consolidado,
 // inteligencia territorial comparando capas, tácticas con su sustento
 // y metodología consolidada al final.
 
@@ -107,19 +108,22 @@ export interface PlanProyectoDatos {
   mapaDataUrl?: string | null;
   tacticas: TacticaClave[];
   fuentes: string[];
+  /** Universo consolidado POR ROL (unión de las geometrías de las
+   * capas de esa táctica) — el bloque demográfico de cada sección. */
+  universoRol?: Partial<Record<RolLevantamiento, Universos>>;
 }
 
 const ETIQUETA_SECCION_ROL: Record<RolLevantamiento, [string, string]> = {
-  poi_propio: ["Tus puntos", "Los puntos de venta del cliente"],
+  poi_propio: ["POIs", "Los puntos de interés del plan"],
   competencia: ["Competencia", "Dónde está la competencia y cuánta gente comparte territorio"],
-  proximidad: ["Afinidad", "Los lugares que frecuenta tu target"],
+  proximidad: ["Proximidad", "El universo cerca de tus puntos de venta"],
   ooh: ["Plan OOH", "Pantallas que apoyan a los puntos de venta"],
 };
 
 const NOMBRE_ROL: Record<RolLevantamiento, string> = {
-  poi_propio: "Propios",
+  poi_propio: "POIs",
   competencia: "Competencia",
-  proximidad: "Afinidad",
+  proximidad: "Proximidad",
   ooh: "Pantallas",
 };
 
@@ -127,7 +131,7 @@ const ORDEN_ROLES: RolLevantamiento[] = ["poi_propio", "competencia", "proximida
 const FILAS_PROPIOS = 12;
 const FILAS_PANTALLAS = 12;
 const MAX_SIN_COBERTURA = 12;
-const EJEMPLOS_AFINIDAD = 6;
+const EJEMPLOS_PROXIMIDAD = 6;
 const ALTO_MAPA_OOH = Math.round((CONT * 7) / 16);
 
 // ------------------------------------------------------------------
@@ -158,7 +162,7 @@ export function hallazgosProyecto(d: PlanProyectoDatos): string[] {
   const salida: string[] = [];
   const propios = d.capas.filter((c) => c.rol === "poi_propio");
   const competencia = d.capas.filter((c) => c.rol === "competencia");
-  const afinidad = d.capas.filter((c) => c.rol === "proximidad");
+  const proximidad = d.capas.filter((c) => c.rol === "proximidad");
 
   // 1) concentración de la competencia donde la cobertura propia es menor
   const poisComp = competencia.flatMap((c) => c.pois);
@@ -175,14 +179,14 @@ export function hallazgosProyecto(d: PlanProyectoDatos): string[] {
     }
   }
 
-  // 2) NSE del territorio de afinidad vs el de tus puntos
-  const nseAfin = pctNseAlto(afinidad[0]?.universo ?? null);
+  // 2) NSE del territorio de proximidad vs el de tus puntos
+  const nseProx = pctNseAlto(proximidad[0]?.universo ?? null);
   const nseProp = pctNseAlto(propios[0]?.universo ?? null);
-  if (nseAfin !== null && nseProp !== null && Math.abs(nseAfin - nseProp) >= 5) {
+  if (nseProx !== null && nseProp !== null && Math.abs(nseProx - nseProp) >= 5) {
     salida.push(
-      nseAfin > nseProp
-        ? `El NSE del territorio de afinidad supera al de tus puntos: ${nseAfin.toLocaleString("es-MX")}% en niveles AB/C+ contra ${nseProp.toLocaleString("es-MX")}%.`
-        : `Tus puntos están en territorio de mejor NSE que los lugares de afinidad: ${nseProp.toLocaleString("es-MX")}% en AB/C+ contra ${nseAfin.toLocaleString("es-MX")}%.`
+      nseProx > nseProp
+        ? `El NSE del territorio de proximidad supera al de tus puntos: ${nseProx.toLocaleString("es-MX")}% en niveles AB/C+ contra ${nseProp.toLocaleString("es-MX")}%.`
+        : `Tus puntos están en territorio de mejor NSE que el de proximidad: ${nseProp.toLocaleString("es-MX")}% en AB/C+ contra ${nseProx.toLocaleString("es-MX")}%.`
     );
   }
 
@@ -225,7 +229,7 @@ export function sustentoTactica(
     }
     case "proximidad": {
       const n = puntosDe("proximidad");
-      return n > 0 ? `sobre los ${fmt(n)} puntos de afinidad del target` : null;
+      return n > 0 ? `sobre los ${fmt(n)} puntos de proximidad` : null;
     }
     case "pdooh":
       return d.ooh
@@ -263,6 +267,107 @@ function lineaPdvsProyecto(p: PantallaProyecto, maxChars = 62): string {
   return partes.join(" · ") + (resto > 0 ? `  +${resto}` : "");
 }
 
+/** Universo de la SECCIÓN de un rol: el calculado sobre la unión de
+ * sus capas si viene en universoRol; si el rol tiene UNA capa, el
+ * universo propio de esa capa. */
+function universoDeRol(
+  d: PlanProyectoDatos,
+  rol: RolLevantamiento
+): Universos | null {
+  const calculado = d.universoRol?.[rol];
+  if (calculado?.disponible) return calculado;
+  const capasRol = d.capas.filter((c) => c.rol === rol);
+  if (capasRol.length === 1 && capasRol[0].universo?.disponible) {
+    return capasRol[0].universo;
+  }
+  return null;
+}
+
+/** Alto estimado del bloque demográfico de una sección. */
+function altoBloqueDemografico(u: Universos | null): number {
+  if (!u?.disponible || !u.residencial) return 0;
+  return (
+    28 + // padding del panel
+    64 + // fila de cifras
+    (segmentosNse(u) ? 62 : 0) +
+    (segmentosEdades(u) ? 62 : 0) +
+    (u.criterio ? 16 : 0) +
+    16 // margen inferior
+  );
+}
+
+/** Bloque demográfico de UNA sección/táctica: universo de la unión de
+ * las geometrías de esa capa + urbano/rural + NSE + edades — el mismo
+ * formato del resumen general, por sección. */
+function BloqueDemografico({ u }: { u: Universos | null }) {
+  if (!u?.disponible || !u.residencial) return null;
+  const nse = segmentosNse(u);
+  const edades = segmentosEdades(u);
+  const pobRural = u.residencial.pobRural ?? 0;
+  const pob = u.residencial.poblacion || 1;
+  const pctRural = Math.round((100 * pobRural) / pob);
+  return (
+    <View
+      style={{
+        backgroundColor: PANEL,
+        borderRadius: 8,
+        paddingTop: 14,
+        paddingBottom: 14,
+        paddingLeft: 14,
+        paddingRight: 14,
+        marginTop: 2,
+        marginBottom: 16,
+      }}
+    >
+      <View style={{ flexDirection: "row" }}>
+        <Cifra
+          valor={fmt(u.residencial.adultos18)}
+          descriptor="Universo de la táctica · adultos 18+"
+        />
+        <Cifra
+          valor={pobRural > 0 ? `${100 - pctRural}% / ${pctRural}%` : "100%"}
+          descriptor={
+            pobRural > 0 ? "urbano / rural (ITER 2020)" : "población urbana"
+          }
+        />
+        <Cifra valor={fmt(u.agebs ?? 0)} descriptor="Zonas censales" />
+      </View>
+      {nse && (
+        <View style={{ marginTop: 12 }}>
+          <BarraApilada
+            titulo="NSE de la táctica (proxy censal, no AMAI)"
+            segmentos={nse}
+            width={CONT - 28}
+          />
+        </View>
+      )}
+      {edades && (
+        <View style={{ marginTop: 10 }}>
+          <BarraApilada
+            titulo="Edades · % del universo 18+"
+            segmentos={edades}
+            width={CONT - 28}
+          />
+        </View>
+      )}
+      {u.criterio && (
+        <Text style={{ fontFamily: "DMMono", fontSize: 7, color: GRIS_OSCURO, marginTop: 8 }}>
+          {u.criterio}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+/** Separación visual FUERTE entre secciones de táctica. */
+function SeparadorSeccion() {
+  return (
+    <View style={{ marginTop: 2, marginBottom: 22 }}>
+      <Divisor />
+    </View>
+  );
+}
+
 // ------------------------------------------------------------------
 // Altura del lienzo (una sola página vertical; contenido determinista)
 // ------------------------------------------------------------------
@@ -280,27 +385,32 @@ function estimarAltura(d: PlanProyectoDatos, titulo: string): number {
   h += 46; // nota fuente + divisor
   if (d.mapaDataUrl) h += 44 + ALTO_MAPA + 22 + 26; // mapa + leyenda
 
-  // sección por rol
+  // sección por rol/táctica: separador + encabezado + bloque
+  // demográfico propio + contenido
   const propios = d.capas.filter((c) => c.rol === "poi_propio");
   const competencia = d.capas.filter((c) => c.rol === "competencia");
-  const afinidad = d.capas.filter((c) => c.rol === "proximidad");
+  const proximidad = d.capas.filter((c) => c.rol === "proximidad");
   if (propios.length > 0) {
     const filas = Math.min(
       propios.reduce((t, c) => t + c.pois.length, 0),
       FILAS_PROPIOS
     );
-    h += 60 + 20 + 16 + filas * 15.5 + 26;
+    h += 26 + 60 + altoBloqueDemografico(universoDeRol(d, "poi_propio"));
+    h += 20 + 16 + filas * 15.5 + 26;
   }
   if (competencia.length > 0) {
-    h += 60 + competencia.length * 20 + 14;
+    h += 26 + 60 + altoBloqueDemografico(universoDeRol(d, "competencia"));
+    h += competencia.length * 20 + 14;
     if (d.traslapes.some((t) => t.esConquista)) h += 78; // tarjeta estrella
     h += d.traslapes.filter((t) => !t.esConquista).length * 20 + 14;
   }
-  if (afinidad.length > 0) {
-    h += 60 + afinidad.length * 20 + EJEMPLOS_AFINIDAD * 0 + 34; // + línea de ejemplos
+  if (proximidad.length > 0) {
+    h += 26 + 60 + altoBloqueDemografico(universoDeRol(d, "proximidad"));
+    h += proximidad.length * 20 + 34; // filas por capa + línea de ejemplos
   }
   if (d.ooh) {
-    h += 60 + 78; // sección + cifras
+    h += 26 + 60 + 78; // separador + sección + cifras del cruce
+    h += altoBloqueDemografico(universoDeRol(d, "ooh"));
     if (d.ooh.mapaDataUrl) h += ALTO_MAPA_OOH + 18;
     const filas = Math.min(d.ooh.pantallas.length, FILAS_PANTALLAS);
     h += 20 + filas * 15.5 + 22;
@@ -308,12 +418,14 @@ function estimarAltura(d: PlanProyectoDatos, titulo: string): number {
       h += 26 + Math.min(d.ooh.sinCobertura.length, MAX_SIN_COBERTURA) * 13 + 18;
   }
 
-  // inteligencia territorial
-  const conPerfil = d.capas.filter((c) => c.universo?.disponible && c.universo.perfil?.nseDist);
-  if (conPerfil.length >= 2) h += 60 + conPerfil.length * 24 + 20;
-  const conUniverso = d.capas.filter((c) => adultos(c.universo) > 0);
-  if (conUniverso.length > 1) h += 26 + conUniverso.length * 17 + 14;
-  h += hallazgosProyecto(d).length * 54 + 26;
+  // inteligencia territorial: comparativo por capa (filas con aire) +
+  // hallazgos a lo ancho
+  const comparables = d.capas.filter(
+    (c) => c.universo?.disponible && c.universo.perfil?.nseDist
+  );
+  h += 26 + 60; // separador + encabezado
+  if (comparables.length >= 2) h += 18 + comparables.length * 48 + 12;
+  h += hallazgosProyecto(d).length * 52 + 26;
 
   // tácticas + sustentos
   h += 52 + Math.ceil(CLAVES_TACTICAS.length / 2) * (ALTO_PILL + 16) + 30;
@@ -372,19 +484,14 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
 
   const propios = d.capas.filter((c) => c.rol === "poi_propio");
   const competencia = d.capas.filter((c) => c.rol === "competencia");
-  const afinidad = d.capas.filter((c) => c.rol === "proximidad");
+  const proximidad = d.capas.filter((c) => c.rol === "proximidad");
   const poisPropios = propios.flatMap((c) => c.pois);
   const filasPropios = [...poisPropios]
     .sort((a, b) => (a.cp ?? "").localeCompare(b.cp ?? "") || a.nombre.localeCompare(b.nombre))
     .slice(0, FILAS_PROPIOS);
-  const universoPropios = propios.reduce((t, c) => t + adultos(c.universo), 0);
-  const conPerfil = d.capas.filter(
+  const comparables = d.capas.filter(
     (c) => c.universo?.disponible && c.universo.perfil?.nseDist
   );
-  const conUniverso = d.capas
-    .filter((c) => adultos(c.universo) > 0)
-    .sort((a, b) => adultos(b.universo) - adultos(a.universo));
-  const maxUniverso = adultos(conUniverso[0]?.universo ?? null) || 1;
   const filasOoh = d.ooh
     ? [...d.ooh.pantallas].sort((a, b) => b.pdvs.length - a.pdvs.length).slice(0, FILAS_PANTALLAS)
     : [];
@@ -541,23 +648,23 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
           </View>
         )}
 
-        {/* ---------- 4a · tus puntos ---------- */}
+        {/* ---------- 4a · POIs (una sección por táctica, cada una con
+            su propio bloque demográfico) ---------- */}
         {propios.length > 0 && (
           <View style={{ marginBottom: 26 }}>
+            <SeparadorSeccion />
             <Seccion
               etiqueta={ETIQUETA_SECCION_ROL.poi_propio[0]}
               titulo={ETIQUETA_SECCION_ROL.poi_propio[1]}
             />
             <Text style={lectura}>
-              {fmt(poisPropios.length)} puntos propios
-              {universoPropios > 0
-                ? ` con ${fmt(universoPropios)} adultos 18+ en su zona de influencia`
-                : ""}
+              {fmt(poisPropios.length)} puntos de interés
               {cpTop(poisPropios)
                 ? ` · mayor concentración en CP ${cpTop(poisPropios)![0]} (${fmt(cpTop(poisPropios)![1])})`
                 : ""}
               .
             </Text>
+            <BloqueDemografico u={universoDeRol(d, "poi_propio")} />
             <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 4 }}>
               <Text style={[celdaTh, { width: 210 }]}>NOMBRE</Text>
               <Text style={[celdaTh, { flex: 1 }]}>DIRECCIÓN</Text>
@@ -595,10 +702,12 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
         {/* ---------- 4b · competencia (+ el traslape estrella) ---------- */}
         {competencia.length > 0 && (
           <View style={{ marginBottom: 26 }}>
+            <SeparadorSeccion />
             <Seccion
               etiqueta={ETIQUETA_SECCION_ROL.competencia[0]}
               titulo={ETIQUETA_SECCION_ROL.competencia[1]}
             />
+            <BloqueDemografico u={universoDeRol(d, "competencia")} />
             {competencia.map((c) => {
               const top = cpTop(c.pois);
               return (
@@ -656,14 +765,16 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
           </View>
         )}
 
-        {/* ---------- 4c · afinidad ---------- */}
-        {afinidad.length > 0 && (
+        {/* ---------- 4c · proximidad ---------- */}
+        {proximidad.length > 0 && (
           <View style={{ marginBottom: 26 }}>
+            <SeparadorSeccion />
             <Seccion
               etiqueta={ETIQUETA_SECCION_ROL.proximidad[0]}
               titulo={ETIQUETA_SECCION_ROL.proximidad[1]}
             />
-            {afinidad.map((c) => (
+            <BloqueDemografico u={universoDeRol(d, "proximidad")} />
+            {proximidad.map((c) => (
               <View key={c.id} style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
                 <View style={puntoCapa(c.color)} />
                 <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 11, color: BLANCO, width: 190 }}>
@@ -675,15 +786,15 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                 <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, flex: 1 }}>
                   {adultos(c.universo) > 0
                     ? `universo ${fmt(adultos(c.universo))} adultos 18+ en su zona`
-                    : "puntos de afinidad del target"}
+                    : "puntos de venta / lugares de referencia"}
                 </Text>
               </View>
             ))}
             <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, marginTop: 4, lineHeight: 1.5 }}>
               Ejemplos:{" "}
-              {afinidad
+              {proximidad
                 .flatMap((c) => c.pois)
-                .slice(0, EJEMPLOS_AFINIDAD)
+                .slice(0, EJEMPLOS_PROXIMIDAD)
                 .map((p) => p.nombre)
                 .join(" · ")}
               .
@@ -694,10 +805,12 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
         {/* ---------- 4d · plan OOH ---------- */}
         {d.ooh && (
           <View style={{ marginBottom: 26 }}>
+            <SeparadorSeccion />
             <Seccion
               etiqueta={ETIQUETA_SECCION_ROL.ooh[0]}
               titulo={ETIQUETA_SECCION_ROL.ooh[1]}
             />
+            <BloqueDemografico u={universoDeRol(d, "ooh")} />
             <View style={{ flexDirection: "row", marginBottom: 12 }}>
               <Cifra valor={fmt(d.ooh.pantallas.length)} descriptor="Pantallas en el plan" />
               <Cifra
@@ -792,29 +905,65 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
           </View>
         )}
 
-        {/* ---------- 5 · inteligencia territorial ---------- */}
-        {(conPerfil.length >= 2 || conUniverso.length > 1 || listaHallazgos.length > 0) && (
+        {/* ---------- 5 · inteligencia territorial: una fila por capa
+            bien diferenciada (nombre + rol + color) con su universo
+            REAL y sus barras alineadas para comparación vertical ---------- */}
+        {(comparables.length >= 2 || listaHallazgos.length > 0) && (
           <View style={{ marginBottom: 4 }}>
+            <SeparadorSeccion />
             <Seccion
               etiqueta="Inteligencia territorial"
               titulo="Cómo se comparan las capas del proyecto"
             />
-            {conPerfil.length >= 2 && (
+            {comparables.length >= 2 && (
               <View style={{ marginBottom: 16 }}>
-                {conPerfil.map((c) => {
+                <View style={{ flexDirection: "row", marginBottom: 6 }}>
+                  <Text style={[celdaTh, { width: 226 }]}>CAPA · UNIVERSO 18+ PROPIO</Text>
+                  <Text style={[celdaTh, { width: (CONT - 226 - 16 - 20) / 2, marginRight: 20 }]}>
+                    NSE (PROXY CENSAL)
+                  </Text>
+                  <Text style={[celdaTh, { width: (CONT - 226 - 16 - 20) / 2 }]}>
+                    EDADES · % DEL UNIVERSO 18+
+                  </Text>
+                </View>
+                {comparables.map((c) => {
                   const nseCapa = segmentosNse(c.universo);
                   const edadesCapa = segmentosEdades(c.universo);
-                  const wBarra = (CONT - 190 - 24) / 2;
+                  const wBarra = (CONT - 226 - 16 - 20) / 2;
                   return (
-                    <View key={c.id} style={{ flexDirection: "row", alignItems: "center", marginBottom: 7 }}>
-                      <View style={{ width: 190, flexDirection: "row", alignItems: "center" }}>
-                        <View style={puntoCapa(c.color)} />
-                        <Text style={{ fontFamily: "DMMono", fontSize: 8, color: TINTA }}>
-                          {c.nombre.length > 26 ? c.nombre.slice(0, 25) + "…" : c.nombre}
+                    <View
+                      key={c.id}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        backgroundColor: PANEL,
+                        borderLeftWidth: 3,
+                        borderLeftColor: c.color,
+                        borderRadius: 6,
+                        paddingTop: 8,
+                        paddingBottom: 8,
+                        paddingLeft: 10,
+                        paddingRight: 6,
+                        marginBottom: 7,
+                      }}
+                    >
+                      <View style={{ width: 216 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center" }}>
+                          <View style={puntoCapa(c.color)} />
+                          <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: BLANCO }}>
+                            {c.nombre.length > 26 ? c.nombre.slice(0, 25) + "…" : c.nombre}
+                          </Text>
+                        </View>
+                        <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS, marginTop: 3 }}>
+                          {NOMBRE_ROL[c.rol]} ·{" "}
+                          <Text style={{ color: CIAN }}>
+                            {fmt(adultos(c.universo))}
+                          </Text>{" "}
+                          adultos 18+ · {fmt(c.pois.length)} puntos
                         </Text>
                       </View>
-                      <View style={{ width: wBarra, marginRight: 24 }}>
-                        <View style={{ flexDirection: "row", height: 8, borderRadius: 4, overflow: "hidden", backgroundColor: PANEL }}>
+                      <View style={{ width: wBarra, marginRight: 20 }}>
+                        <View style={{ flexDirection: "row", height: 9, borderRadius: 4.5, overflow: "hidden", backgroundColor: FONDO }}>
                           {(nseCapa ?? []).map(
                             (s) =>
                               s.pct > 0 && (
@@ -824,7 +973,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                         </View>
                       </View>
                       <View style={{ width: wBarra }}>
-                        <View style={{ flexDirection: "row", height: 8, borderRadius: 4, overflow: "hidden", backgroundColor: PANEL }}>
+                        <View style={{ flexDirection: "row", height: 9, borderRadius: 4.5, overflow: "hidden", backgroundColor: FONDO }}>
                           {(edadesCapa ?? []).map(
                             (s) =>
                               s.pct > 0 && (
@@ -836,43 +985,9 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                     </View>
                   );
                 })}
-                <View style={{ flexDirection: "row", marginTop: 2 }}>
-                  <Text style={[celdaTh, { width: 190 }]}> </Text>
-                  <Text style={[celdaTh, { width: (CONT - 190 - 24) / 2, marginRight: 24 }]}>
-                    NSE (PROXY CENSAL)
-                  </Text>
-                  <Text style={[celdaTh, { width: (CONT - 190 - 24) / 2 }]}>
-                    EDADES · % DEL UNIVERSO 18+
-                  </Text>
-                </View>
               </View>
             )}
             <View style={{ flexDirection: "row" }}>
-              {conUniverso.length > 1 && (
-                <View style={{ width: 340, marginRight: 28 }}>
-                  <Text style={labelCol}>UNIVERSO 18+ POR LEVANTAMIENTO</Text>
-                  {conUniverso.map((c) => (
-                    <View key={c.id} style={{ flexDirection: "row", alignItems: "center", marginBottom: 5 }}>
-                      <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: TINTA, width: 110 }}>
-                        {c.nombre.slice(0, 17)}
-                      </Text>
-                      <View style={{ flex: 1, height: 8, backgroundColor: PANEL, borderRadius: 4 }}>
-                        <View
-                          style={{
-                            width: `${Math.max(2, (100 * adultos(c.universo)) / maxUniverso)}%`,
-                            height: 8,
-                            backgroundColor: c.color,
-                            borderRadius: 4,
-                          }}
-                        />
-                      </View>
-                      <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: BLANCO, width: 60, textAlign: "right" }}>
-                        {fmt(adultos(c.universo))}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              )}
               {listaHallazgos.length > 0 && (
                 <View style={{ flex: 1 }}>
                   <Text style={labelCol}>HALLAZGOS</Text>

@@ -173,11 +173,14 @@ export default function ResumenProyecto({
     async (s: SurveyResumen): Promise<PuntoSurvey[]> => {
       if (crudosCache[s.id]) return crudosCache[s.id];
       const modo = (s.configuracion?.mode as string) ?? "census";
-      // cp/zone/orígenes-con-config no necesitan puntos para su geometría
+      // cp/zone/orígenes-con-config no necesitan puntos para su
+      // geometría; COMPETENCIA siempre los necesita (su territorio son
+      // SUS puntos, no los orígenes donde se buscó)
       const necesitaPuntos =
         modo === "census" ||
         modo === "territorial" ||
         modo === "ooh" ||
+        s.rol === "competencia" ||
         (modo === "origins" &&
           !((s.configuracion?.origenes as unknown[])?.length ?? 0) &&
           !((s.configuracion?.centers as unknown[])?.length ?? 0));

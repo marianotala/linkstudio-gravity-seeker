@@ -46,6 +46,7 @@ import {
   crearSurveysPlanner,
   guardarPuntosPlanner,
   guardarUniversosPlanner,
+  guardarUniversosPorCapa,
   insertarPuntosCrudos,
   reescribirPuntosPlanner,
   type RunPlanner,
@@ -503,13 +504,14 @@ export function SeccionProximidad({
         proyectoId,
         rol: "proximidad",
         nombre:
-          (cfg.nombre as string)?.trim() || `Afinidad · ${fmt(puntos.length)} puntos`,
+          (cfg.nombre as string)?.trim() ||
+          `Proximidad · ${fmt(puntos.length)} puntos`,
         puntos,
         radioM: radio,
         onEstado: setEstado,
       });
       onBorrador({ puntos: [], config: { radio } });
-      setEstado(`Universos guardados para ${fmt(puntos.length)} puntos de afinidad`);
+      setEstado(`Universos guardados para ${fmt(puntos.length)} puntos`);
       await alGuardar();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al calcular universos");
@@ -521,18 +523,19 @@ export function SeccionProximidad({
   return (
     <div className="rounded-lg border border-linea bg-panel2/40 p-4">
       <p className="mb-2 font-mono text-[10px] leading-relaxed text-zinc-500">
-        Aquí no se buscan POIs: <span style={{ color }}>recolecta</span> los
-        lugares de afinidad del target (buscador o Excel), elige el{" "}
+        PROXIMIDAD: el universo que está CERCA de tus puntos de venta. Aquí
+        no se buscan POIs: <span style={{ color }}>recolecta</span> los
+        puntos (buscador o Excel), elige el{" "}
         <span style={{ color }}>radio</span> y{" "}
         <span style={{ color }}>Calcular universos</span> trae la demografía
-        de esas zonas — gratis, cero consultas a Google.
+        cercana — gratis, cero consultas a Google.
       </p>
       <RecolectorPuntos
         puntos={puntos}
         onCambiar={(p) => onBorrador({ ...borrador, puntos: p })}
         disabled={ocupado}
-        etiquetaPunto="lugar"
-        etiquetaPuntos="lugares"
+        etiquetaPunto="punto"
+        etiquetaPuntos="puntos"
       />
       <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-linea pt-3">
         <input
@@ -689,22 +692,10 @@ export function SeccionCompetencia({
         .sort((a, b) => a.distancia - b.distancia);
       await reescribirPuntosPlanner(elRun, lista);
 
-      // universos de los radios de los orígenes (la geografía del análisis)
-      const geocercas: GeocercaUniverso[] = listaOrigenes.map((o, i) => ({
-        id: o.nombre ?? String(i),
-        lat: o.lat,
-        lng: o.lng,
-        radio_m: radio,
-      }));
-      const u = await calcularUniversosCliente(
-        geocercas,
-        `población a ${radio} m de ${fmt(listaOrigenes.length)} orígenes`,
-        {
-          onProgreso: (lote, total) =>
-            setEstado(`Calculando universos · lote ${lote + 1} de ${total}…`),
-        }
-      );
-      await guardarUniversosPlanner(elRun, u);
+      // universos POR CAPA: cada marca sobre los buffers de SUS PROPIOS
+      // puntos con el radio del análisis (los orígenes solo definen
+      // dónde buscar, no el territorio de la capa)
+      await guardarUniversosPorCapa(elRun, lista, radio, setEstado);
       await actualizarRunPlanner(elRun, {
         status: r.completa ? "completado" : "interrumpido",
         progreso: r.completa ? null : { modo: "origins" },
