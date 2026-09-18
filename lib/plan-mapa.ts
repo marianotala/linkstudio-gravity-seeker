@@ -11,8 +11,8 @@ const VIOLETA = "#9d5cf0";
 const CIAN = "#2fb9e8";
 const NARANJA = "#ff8c42";
 
-const ANCHO = 1440;
-const ALTO = 810;
+const ANCHO_DEFAULT = 1440;
+const ALTO_DEFAULT = 810;
 const TILE = 256;
 
 interface PuntoSimple {
@@ -37,6 +37,10 @@ interface OpcionesMapa {
   lineas?: { a: PuntoSimple; b: PuntoSimple; color?: string }[];
   /** Puntos genéricos (PDVs del cruce OOH): hueco = sin cobertura. */
   puntos?: { lat: number; lng: number; color: string; hueco?: boolean }[];
+  /** Dimensiones del lienzo (default 1440×810 — 16:9). Las láminas por
+   * táctica capturan con el aspecto de su slot para no recortar. */
+  ancho?: number;
+  alto?: number;
 }
 
 const lngAX = (lng: number, z: number) => ((lng + 180) / 360) * 2 ** z;
@@ -56,8 +60,8 @@ function cargarTile(z: number, x: number, y: number): Promise<HTMLImageElement |
 }
 
 /** Oscurecimiento por píxel (respaldo si ctx.filter no existe: Safari). */
-function oscurecerPixeles(ctx: CanvasRenderingContext2D) {
-  const data = ctx.getImageData(0, 0, ANCHO, ALTO);
+function oscurecerPixeles(ctx: CanvasRenderingContext2D, ancho: number, alto: number) {
+  const data = ctx.getImageData(0, 0, ancho, alto);
   const px = data.data;
   for (let i = 0; i < px.length; i += 4) {
     // invert + desaturar + bajar brillo (aproxima el filtro CSS)
@@ -79,6 +83,8 @@ function oscurecerPixeles(ctx: CanvasRenderingContext2D) {
  * omite la página de mapa.
  */
 export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> {
+  const ANCHO = o.ancho ?? ANCHO_DEFAULT;
+  const ALTO = o.alto ?? ALTO_DEFAULT;
   try {
     // 1) bounds del análisis
     const lats: number[] = [];
@@ -169,7 +175,7 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
     if (soportaFiltro) {
       ctx.filter = "none";
     } else {
-      oscurecerPixeles(ctx);
+      oscurecerPixeles(ctx, ANCHO, ALTO);
     }
 
     // 4) overlays con la simbología de la app

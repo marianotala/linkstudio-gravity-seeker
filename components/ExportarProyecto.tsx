@@ -87,6 +87,9 @@ export default function ExportarProyecto({
   onTacticas: (t: TacticaClave[]) => void;
   irAResumen: () => void;
 }) {
+  /** Formato del Export plan: one-pager vertical (WhatsApp/scroll) o
+   * presentación en láminas 16:9 (para proyectar). */
+  const [formato, setFormato] = useState<"onepager" | "slides">("onepager");
   const [consolidado, setConsolidado] = useState<ConsolidadoGuardado | null>(null);
   const [traslapes, setTraslapes] = useState<TraslapeGuardado[]>([]);
   const [cargado, setCargado] = useState(false);
@@ -330,12 +333,14 @@ export default function ExportarProyecto({
         if (u.disponible) universoRol.ooh = u;
       }
 
-      setOcupado("Capturando el mapa general…");
+      setOcupado("Capturando mapas…");
       const [
         { generarPlanProyectoPdf, nombreArchivoPlanProyecto },
+        { generarPresentacionProyecto, nombreArchivoPresentacion },
         { capturarMapaPlan },
       ] = await Promise.all([
         import("@/lib/proyecto-pdf"),
+        import("@/lib/proyecto-slides"),
         import("@/lib/plan-mapa"),
       ]);
 
@@ -360,14 +365,22 @@ export default function ExportarProyecto({
           color: COLOR_OOH,
         }))
       );
-      const mapaDataUrl = await capturarMapaPlan({
-        pois: poisMapa,
-        colorPorCapa,
-        pantallas: pantallasMapa,
-        lineas: lineasMapa,
-      });
+      // el mapa general multi-capa solo vive en el one-pager (las
+      // láminas llevan un mapa POR táctica)
+      const mapaDataUrl =
+        formato === "onepager"
+          ? await capturarMapaPlan({
+              pois: poisMapa,
+              colorPorCapa,
+              pantallas: pantallasMapa,
+              lineas: lineasMapa,
+            })
+          : null;
 
-      // mini-mapa OOH (solo pantallas, líneas y PDVs cubiertos)
+      // mini-mapa OOH (pantallas, líneas y PDVs cubiertos); en formato
+      // presentación se captura con el aspecto del slot de lámina
+      const dimsSlot =
+        formato === "slides" ? { ancho: 1000, alto: 900 } : {};
       if (ooh && crudosOoh.length > 0) {
         setOcupado("Capturando el mapa del plan OOH…");
         ooh.mapaDataUrl = await capturarMapaPlan({
@@ -380,7 +393,29 @@ export default function ExportarProyecto({
               []
             ).map((rel) => ({ lat: rel.lat, lng: rel.lng, color: "#2fb9e8" }))
           ),
+          ...dimsSlot,
         });
+      }
+
+      // formato presentación: un mapa POR TÁCTICA con SOLO sus capas
+      // (zoom automático al encuadre de esa capa)
+      const mapasRol: Partial<Record<RolLevantamiento, string | null>> = {};
+      if (formato === "slides") {
+        for (const rol of ["poi_propio", "competencia", "proximidad"] as const) {
+          const capasRol = capas.filter((c) => c.rol === rol);
+          if (capasRol.length === 0) continue;
+          setOcupado(`Capturando el mapa de ${ETIQUETA_ROL[rol]}…`);
+          const colores: Record<string, string> = {};
+          capasRol.forEach((c) => (colores[c.nombre] = c.color));
+          mapasRol[rol] = await capturarMapaPlan({
+            pois: capasRol.flatMap((c) =>
+              c.pois.map((p) => ({ ...p, capa: c.nombre }))
+            ),
+            colorPorCapa: colores,
+            ...dimsSlot,
+          });
+        }
+        mapasRol.ooh = ooh?.mapaDataUrl ?? null;
       }
 
       // traslapes guardados → etiquetas legibles
@@ -421,9 +456,13 @@ export default function ExportarProyecto({
         0
       );
 
-      setOcupado("Armando el PDF del proyecto…");
+      setOcupado(
+        formato === "slides"
+          ? "Armando las láminas 16:9…"
+          : "Armando el PDF del proyecto…"
+      );
       const fecha = new Date();
-      const blob = await generarPlanProyectoPdf({
+      const datos = {
         cliente,
         titulo: titulo.trim() || null,
         usuario: usuario?.nombre ?? usuario?.email ?? "Seeker",
@@ -438,11 +477,19 @@ export default function ExportarProyecto({
         tacticas: tacticasSel,
         fuentes,
         universoRol,
-      });
-      descargarBlob(
-        nombreArchivoPlanProyecto(cliente, titulo.trim(), fecha),
-        blob
-      );
+        mapasRol,
+      };
+      if (formato === "slides") {
+        descargarBlob(
+          nombreArchivoPresentacion(cliente, titulo.trim(), fecha),
+          await generarPresentacionProyecto(datos)
+        );
+      } else {
+        descargarBlob(
+          nombreArchivoPlanProyecto(cliente, titulo.trim(), fecha),
+          await generarPlanProyectoPdf(datos)
+        );
+      }
     } catch (e) {
       console.error(e);
       setError(
@@ -611,6 +658,37 @@ export default function ExportarProyecto({
           placeholder={`Plan territorial — ${cliente}`}
           className="w-full max-w-xl rounded-md border border-linea bg-panel2 px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-cian focus:outline-none"
         />
+      </div>
+
+      {/* formato del PDF */}
+      <div className="mt-4">
+        <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+          Formato del Export plan
+        </label>
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            onClick={() => setFormato("onepager")}
+            className={`rounded-full border px-3 py-1 font-mono text-[10px] transition-colors ${
+              formato === "onepager"
+                ? "border-cian bg-cian/15 text-cian"
+                : "border-linea bg-panel2 text-zinc-500 hover:text-zinc-300"
+            }`}
+            title="Una sola página vertical larga: para scroll en celular y WhatsApp"
+          >
+            One-pager vertical
+          </button>
+          <button
+            onClick={() => setFormato("slides")}
+            className={`rounded-full border px-3 py-1 font-mono text-[10px] transition-colors ${
+              formato === "slides"
+                ? "border-cian bg-cian/15 text-cian"
+                : "border-linea bg-panel2 text-zinc-500 hover:text-zinc-300"
+            }`}
+            title="Láminas 16:9 para proyectar: portada, resumen, una lámina por táctica (mapa-izquierda / datos-derecha), comparativo, traslapes, tácticas, cierre y metodología"
+          >
+            Presentación (láminas 16:9)
+          </button>
+        </div>
       </div>
 
       {/* qué entra al PDF (la composición del consolidado F4) */}

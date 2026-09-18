@@ -111,6 +111,9 @@ export interface PlanProyectoDatos {
   /** Universo consolidado POR ROL (unión de las geometrías de las
    * capas de esa táctica) — el bloque demográfico de cada sección. */
   universoRol?: Partial<Record<RolLevantamiento, Universos>>;
+  /** Mapa POR TÁCTICA (solo las capas de ese rol) — lo usa el formato
+   * presentación 16:9 en su layout mapa-izquierda / datos-derecha. */
+  mapasRol?: Partial<Record<RolLevantamiento, string | null>>;
 }
 
 const ETIQUETA_SECCION_ROL: Record<RolLevantamiento, [string, string]> = {
@@ -120,7 +123,7 @@ const ETIQUETA_SECCION_ROL: Record<RolLevantamiento, [string, string]> = {
   ooh: ["Plan OOH", "Pantallas que apoyan a los puntos de venta"],
 };
 
-const NOMBRE_ROL: Record<RolLevantamiento, string> = {
+export const NOMBRE_ROL: Record<RolLevantamiento, string> = {
   poi_propio: "POIs",
   competencia: "Competencia",
   proximidad: "Proximidad",
@@ -270,7 +273,7 @@ function lineaPdvsProyecto(p: PantallaProyecto, maxChars = 62): string {
 /** Universo de la SECCIÓN de un rol: el calculado sobre la unión de
  * sus capas si viene en universoRol; si el rol tiene UNA capa, el
  * universo propio de esa capa. */
-function universoDeRol(
+export function universoDeRol(
   d: PlanProyectoDatos,
   rol: RolLevantamiento
 ): Universos | null {
