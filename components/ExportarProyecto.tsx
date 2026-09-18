@@ -18,9 +18,16 @@ import {
   colorSurvey,
   ETIQUETA_ROL,
   geocercasDeSurvey,
+  guardarDetallePuntos,
+  puntoAPoi,
   type PuntoSurvey,
 } from "@/lib/planner";
-import { calcularUniversosCliente } from "@/lib/universos-lotes";
+import {
+  calcularUniversosCliente,
+  calcularUniversosPorGeocerca,
+} from "@/lib/universos-lotes";
+import { clasificarNse } from "@/lib/nse";
+import { ciudadDeDireccion } from "@/lib/geo";
 import { CLAVES_TACTICAS, TACTICAS, type TacticaClave } from "@/lib/tacticas";
 import { createClient } from "@/lib/supabase/client";
 import type {
@@ -32,6 +39,7 @@ import type {
 } from "@/lib/types";
 import type {
   CapaPlanProyecto,
+  FilaDetallePunto,
   OohProyecto,
   TraslapeProyecto,
 } from "@/lib/proyecto-pdf";
@@ -211,7 +219,17 @@ export default function ExportarProyecto({
       const normales = seleccionados.filter((s) => s.rol !== "ooh");
       const oohSurvey = seleccionados.find((s) => s.rol === "ooh") ?? null;
 
-      const puntosPorSurvey = await cargarPuntosSurveys(normales.map((s) => s.id));
+      // crudos: traen el detalle por punto persistido (FASE 18)
+      const crudosPorSurvey = new Map<string, PuntoSurvey[]>();
+      for (const s of normales) {
+        crudosPorSurvey.set(s.id, await cargarPuntosCrudosSurvey(s.id));
+      }
+      const puntosPorSurvey = new Map<string, Poi[]>(
+        Array.from(crudosPorSurvey.entries()).map(([id, crudos]) => [
+          id,
+          crudos.map(puntoAPoi),
+        ])
+      );
       const capas: CapaPlanProyecto[] = normales
         .map((s) => ({
           id: s.id,
@@ -276,20 +294,68 @@ export default function ExportarProyecto({
         };
       }
 
+      // FASE 18 — detalle POR PUNTO (solo presentación): universo 18+ y
+      // NSE del buffer INDIVIDUAL de cada punto, con el radio del
+      // análisis. Se calcula batched (PostGIS propio, costo cero de
+      // APIs) SOLO para los puntos sin dato y se persiste en
+      // survey_points para no recalcular en cada export.
+      const detallePuntos: Record<string, FilaDetallePunto[]> = {};
+      if (formato === "slides") {
+        for (const s of normales) {
+          const crudos = crudosPorSurvey.get(s.id) ?? [];
+          if (crudos.length === 0) continue;
+          const radioIndividual =
+            typeof s.configuracion?.radius === "number"
+              ? (s.configuracion.radius as number)
+              : 500;
+          const sinDato = crudos.filter((p) => p.universo_individual == null);
+          if (sinDato.length > 0) {
+            setOcupado(
+              `Detalle por punto de ${nombreDe(s)} · ${fmt(sinDato.length)} puntos…`
+            );
+            const porId = await calcularUniversosPorGeocerca(
+              sinDato.map((p, i) => ({
+                id: `${i}`,
+                lat: p.lat,
+                lng: p.lng,
+                radio_m: radioIndividual,
+              })),
+              {
+                onProgreso: (lote, total) =>
+                  setOcupado(
+                    `Detalle por punto de ${nombreDe(s)} · lote ${lote + 1} de ${total}…`
+                  ),
+              }
+            );
+            const nuevos = new Map<string, { universo: number; nse: string | null }>();
+            sinDato.forEach((p, i) => {
+              const g = porId.get(`${i}`);
+              if (!g) return;
+              const nivel = clasificarNse(g.nse_proxy);
+              p.universo_individual = Math.round(g.adultos18);
+              p.nse_dominante = nivel?.etiqueta ?? null;
+              nuevos.set(p.place_id, {
+                universo: p.universo_individual,
+                nse: p.nse_dominante,
+              });
+            });
+            if (nuevos.size > 0) await guardarDetallePuntos(s.id, nuevos);
+          }
+          detallePuntos[s.id] = crudos.map((p) => ({
+            nombre: p.nombre,
+            ciudad:
+              ciudadDeDireccion(p.direccion ?? "") ||
+              (p.cp ? `CP ${p.cp}` : "—"),
+            universo: p.universo_individual ?? null,
+            nse: p.nse_dominante ?? null,
+          }));
+        }
+      }
+
       // demografía POR TÁCTICA: el universo de cada sección del PDF es
       // la unión de las geometrías de SUS capas (con una sola capa se
       // reusa su universo guardado; con varias se calcula la unión)
       const universoRol: Partial<Record<RolLevantamiento, Universos>> = {};
-      const aPuntoSurvey = (p: Poi): PuntoSurvey => ({
-        place_id: p.placeId,
-        nombre: p.nombre,
-        direccion: p.direccion,
-        lat: p.lat,
-        lng: p.lng,
-        cp: p.cp ?? null,
-        categoria: p.categoria ?? null,
-        metadata: null,
-      });
       for (const rol of ["poi_propio", "competencia", "proximidad"] as const) {
         const surveysRol = normales.filter((s) => s.rol === rol);
         if (surveysRol.length === 0) continue;
@@ -301,10 +367,7 @@ export default function ExportarProyecto({
           }
         }
         const geocercasRol = surveysRol.flatMap((s) =>
-          geocercasDeSurvey(
-            s,
-            (puntosPorSurvey.get(s.id) ?? []).map(aPuntoSurvey)
-          )
+          geocercasDeSurvey(s, crudosPorSurvey.get(s.id) ?? [])
         );
         if (geocercasRol.length === 0) continue;
         setOcupado(`Demografía de ${ETIQUETA_ROL[rol]}…`);
@@ -478,6 +541,7 @@ export default function ExportarProyecto({
         fuentes,
         universoRol,
         mapasRol,
+        detallePuntos,
       };
       if (formato === "slides") {
         descargarBlob(
@@ -581,25 +645,31 @@ export default function ExportarProyecto({
             nombreHoja(nombreDe(s))
           );
         } else {
-          const puntos =
-            (await cargarPuntosSurveys([s.id])).get(s.id) ?? ([] as Poi[]);
+          // crudos: traen el detalle por punto (FASE 18) si ya se
+          // calculó en un export de presentación
+          const crudos = await cargarPuntosCrudosSurvey(s.id);
           const origenes =
             ((s.configuracion?.origenes as Origin[]) ??
               (s.configuracion?.centers as Origin[]) ??
               []) as Origin[];
-          const filas = puntos.map((p) => ({
-            Nombre: p.nombre,
-            Dirección: p.direccion,
-            Lat: p.lat,
-            Lng: p.lng,
-            CP: p.cp ?? "",
-            Categoría: p.categoria ?? "",
-            Capa: p.capa ?? p.termino ?? "",
-            Rol: ETIQUETA_ROL[s.rol],
-            Fuente: p.fuente,
-            "Distancia (m)": p.distancia || null,
-            Origen: origenes[p.origenIdx]?.nombre ?? "",
-          }));
+          const filas = crudos.map((r) => {
+            const p = puntoAPoi(r);
+            return {
+              Nombre: p.nombre,
+              Dirección: p.direccion,
+              Lat: p.lat,
+              Lng: p.lng,
+              CP: p.cp ?? "",
+              Categoría: p.categoria ?? "",
+              Capa: p.capa ?? p.termino ?? "",
+              Rol: ETIQUETA_ROL[s.rol],
+              Fuente: p.fuente,
+              "Distancia (m)": p.distancia || null,
+              Origen: origenes[p.origenIdx]?.nombre ?? "",
+              "Universo 18+ (radio individual)": r.universo_individual ?? null,
+              "NSE dominante": r.nse_dominante ?? "",
+            };
+          });
           XLSX.utils.book_append_sheet(
             wb,
             XLSX.utils.json_to_sheet(filas),

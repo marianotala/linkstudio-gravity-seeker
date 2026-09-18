@@ -114,6 +114,18 @@ export interface PlanProyectoDatos {
   /** Mapa POR TÁCTICA (solo las capas de ese rol) — lo usa el formato
    * presentación 16:9 en su layout mapa-izquierda / datos-derecha. */
   mapasRol?: Partial<Record<RolLevantamiento, string | null>>;
+  /** FASE 18 — detalle por punto (presentación 16:9): universo 18+ y
+   * NSE dominante del buffer individual de cada punto, por capa (id). */
+  detallePuntos?: Record<string, FilaDetallePunto[]>;
+}
+
+export interface FilaDetallePunto {
+  nombre: string;
+  ciudad: string;
+  /** Adultos 18+ del buffer individual del punto (null = sin dato). */
+  universo: number | null;
+  /** Nivel NSE dominante de su zona (letra; null = sin dato). */
+  nse: string | null;
 }
 
 const ETIQUETA_SECCION_ROL: Record<RolLevantamiento, [string, string]> = {

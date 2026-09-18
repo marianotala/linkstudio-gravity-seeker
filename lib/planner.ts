@@ -299,6 +299,11 @@ export interface PuntoSurvey {
   lng: number;
   cp: string | null;
   categoria: string | null;
+  /** FASE 18 — detalle por punto: adultos 18+ del buffer INDIVIDUAL
+   * del punto (radio del análisis) y NSE dominante de su zona. Se
+   * calculan al primer export y quedan persistidos. */
+  universo_individual?: number | null;
+  nse_dominante?: string | null;
   metadata: {
     fuente?: string;
     estrato?: string | null;
@@ -366,7 +371,7 @@ export async function cargarPuntosCrudosSurvey(
   for (let desde = 0; ; desde += 1000) {
     const { data, error } = await supabase
       .from("survey_points")
-      .select("place_id, nombre, direccion, lat, lng, cp, categoria, metadata")
+      .select("place_id, nombre, direccion, lat, lng, cp, categoria, metadata, universo_individual, nse_dominante")
       .eq("survey_id", surveyId)
       .order("id")
       .range(desde, desde + 999);
@@ -375,6 +380,39 @@ export async function cargarPuntosCrudosSurvey(
     if (!data || data.length < 1000) break;
   }
   return filas;
+}
+
+/**
+ * FASE 18 — persiste el detalle por punto (universo 18+ del buffer
+ * individual + NSE dominante) en survey_points, para no recalcular en
+ * cada export. Updates por place_id en tandas concurrentes acotadas.
+ * Nunca lanza: sin detalle guardado, el export lo recalcula.
+ */
+export async function guardarDetallePuntos(
+  surveyId: string,
+  detalles: Map<string, { universo: number; nse: string | null }>
+): Promise<void> {
+  try {
+    const supabase = createClient();
+    const entradas = Array.from(detalles.entries());
+    const TANDA = 12;
+    for (let i = 0; i < entradas.length; i += TANDA) {
+      await Promise.all(
+        entradas.slice(i, i + TANDA).map(([placeId, d]) =>
+          supabase
+            .from("survey_points")
+            .update({
+              universo_individual: d.universo,
+              nse_dominante: d.nse,
+            })
+            .eq("survey_id", surveyId)
+            .eq("place_id", placeId)
+        )
+      );
+    }
+  } catch (e) {
+    console.error("No se pudo guardar el detalle por punto:", e);
+  }
 }
 
 /** Carga TODOS los puntos de una lista de surveys (paginado 1000). */

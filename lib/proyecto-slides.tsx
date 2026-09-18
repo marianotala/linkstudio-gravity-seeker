@@ -49,6 +49,7 @@ import {
   universoDeRol,
   sustentoTactica,
   type CapaPlanProyecto,
+  type FilaDetallePunto,
   type PlanProyectoDatos,
 } from "./proyecto-pdf";
 import { TACTICAS, type TacticaClave } from "./tacticas";
@@ -68,9 +69,17 @@ const DER_X = 24; // separación mapa→datos
 const DER_W = SLIDE_W - M * 2 - MAPA_SLOT_W - DER_X; // ≈390
 
 const MAX_MARCAS_LAMINA = 4; // más capas → segunda lámina con desglose
-const MAX_FILAS_DESGLOSE = 9;
-const MAX_TOP_PUNTOS = 5;
+const MAX_FILAS_DESGLOSE = 8;
 const MAX_FILAS_COMPARATIVO = 6;
+
+// detalle por punto (FASE 18): capacidades de la plantilla — se
+// densifica agregando contenido, NUNCA encogiendo la tipografía por
+// debajo de lo legible proyectado (mono 6.5pt = mínimo)
+const FILAS_DETALLE_DER = 20; // filas por columna en la derecha (2 col)
+const COLS_DETALLE_DER = 2;
+const FILAS_DETALLE_CONT = 32; // filas por columna en continuación (3 col)
+const COLS_DETALLE_CONT = 3;
+const FILAS_OOH_DER = 11; // pantallas listadas en la lámina OOH
 
 /** Título de lámina por táctica: NOMBRE GRAVITY, no el rol técnico. */
 const TITULO_TACTICA: Record<RolLevantamiento, [string, string]> = {
@@ -90,7 +99,7 @@ const adultos = (u: Universos | null | undefined) =>
 /** Encabezado de lámina estilo deck (etiqueta magenta + título). */
 function TituloLamina({ etiqueta, titulo }: { etiqueta: string; titulo: string }) {
   return (
-    <View style={{ marginBottom: 14 }}>
+    <View style={{ marginBottom: 8 }}>
       <View style={{ flexDirection: "row", alignItems: "center" }}>
         <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 9, letterSpacing: 2.6, color: MAGENTA }}>
           {etiqueta.toUpperCase()}
@@ -101,8 +110,107 @@ function TituloLamina({ etiqueta, titulo }: { etiqueta: string; titulo: string }
           ))}
         </View>
       </View>
-      <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 24, color: BLANCO, marginTop: 6 }}>
+      <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 24, color: BLANCO, marginTop: 4 }}>
         {titulo}
+      </Text>
+    </View>
+  );
+}
+
+/** Comparación de NSE por marca: mini barras apiladas alineadas, una
+ * por capa — el insight comparativo que llena el espacio del desglose. */
+function MiniNsePorMarca({
+  capas,
+  ancho,
+}: {
+  capas: CapaPlanProyecto[];
+  ancho: number;
+}) {
+  const conNse = capas.filter((c) => segmentosNse(c.universo));
+  if (conNse.length < 2) return null;
+  return (
+    <View style={{ marginTop: 8, width: ancho }}>
+      <Text
+        style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 6.5, letterSpacing: 1.2, color: GRIS_OSCURO, marginBottom: 4 }}
+      >
+        NSE POR MARCA (PROXY CENSAL) — MISMA ESCALA
+      </Text>
+      {conNse.map((c) => (
+        <View key={c.id} style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+          <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: c.color, marginRight: 4 }} />
+          <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: TINTA, width: 84 }}>
+            {c.nombre.length > 14 ? c.nombre.slice(0, 13) + "…" : c.nombre}
+          </Text>
+          <View style={{ flex: 1, flexDirection: "row", height: 7, borderRadius: 3.5, overflow: "hidden", backgroundColor: FONDO }}>
+            {(segmentosNse(c.universo) ?? []).map(
+              (s) =>
+                s.pct > 0 && (
+                  <View key={s.etiqueta} style={{ width: `${s.pct}%`, backgroundColor: s.color }} />
+                )
+            )}
+          </View>
+        </View>
+      ))}
+      <Text style={{ fontFamily: "DMMono", fontSize: 6, color: GRIS_OSCURO }}>
+        ← DE · D+ · C- · C · C+ · AB → (violeta = niveles altos)
+      </Text>
+    </View>
+  );
+}
+
+/** Item del detalle por punto: fila de datos o encabezado de marca. */
+interface ItemDetalle {
+  tipo: "header" | "fila";
+  texto?: string;
+  color?: string;
+  /** nombre · ciudad · universo 18+ · NSE. */
+  cols?: [string, string, string, string];
+}
+
+const filaDetalleACols = (f: FilaDetallePunto): [string, string, string, string] => [
+  f.nombre,
+  f.ciudad,
+  f.universo != null ? fmt(f.universo) : "—",
+  f.nse ?? "—",
+];
+
+/** Fila compacta del detalle (mono 6.5 — el piso de legibilidad). */
+function FilaDetalle({
+  item,
+  anchoNombre,
+  conCiudad,
+}: {
+  item: ItemDetalle;
+  anchoNombre: number;
+  conCiudad: boolean;
+}) {
+  if (item.tipo === "header") {
+    return (
+      <View style={{ flexDirection: "row", alignItems: "center", marginTop: 3, marginBottom: 1.5 }}>
+        <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: item.color ?? MAGENTA, marginRight: 4 }} />
+        <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 7.5, color: BLANCO }}>
+          {item.texto}
+        </Text>
+      </View>
+    );
+  }
+  const [nombre, ciudad, uni, nse] = item.cols!;
+  const maxN = Math.floor(anchoNombre / 3.6);
+  return (
+    <View style={{ flexDirection: "row", paddingTop: 1, paddingBottom: 1 }}>
+      <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: TINTA, width: anchoNombre }}>
+        {nombre.length > maxN ? nombre.slice(0, maxN - 1) + "…" : nombre}
+      </Text>
+      {conCiudad && (
+        <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS, width: 58 }}>
+          {ciudad.length > 11 ? ciudad.slice(0, 10) + "…" : ciudad}
+        </Text>
+      )}
+      <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: CIAN, width: 46, textAlign: "right" }}>
+        {uni}
+      </Text>
+      <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS, width: 22, textAlign: "right" }}>
+        {nse}
       </Text>
     </View>
   );
@@ -294,22 +402,94 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
     });
   if (d.ooh) conteosRol.push(`${NOMBRE_ROL.ooh}: ${fmt(d.ooh.pantallas.length)}`);
 
-  // ---- plan de láminas de táctica (con split de capas numerosas)
+  // ---- detalle por punto de un rol (FASE 18): filas con universo y
+  //      NSE del buffer individual; en Conquista agrupado por marca
+  const filasDeCapa = (c: CapaPlanProyecto): FilaDetallePunto[] =>
+    d.detallePuntos?.[c.id] ??
+    c.pois.map((p) => ({
+      nombre: p.nombre,
+      ciudad: p.cp ? `CP ${p.cp}` : "—",
+      universo: null,
+      nse: null,
+    }));
+
+  function detalleDeRol(rol: RolLevantamiento): ItemDetalle[] {
+    if (rol === "ooh") {
+      if (!d.ooh) return [];
+      return [...d.ooh.pantallas]
+        .sort((a, b) => b.pdvs.length - a.pdvs.length)
+        .map((p) => ({
+          tipo: "fila" as const,
+          cols: [
+            p.nombre,
+            `${p.pdvs.length} PDV${p.pdvs.length === 1 ? "" : "s"}`,
+            p.pdvs.length > 0
+              ? `${(Math.min(...p.pdvs.map((r) => r.distancia_m)) / 1000).toLocaleString("es-MX", { maximumFractionDigits: 1 })} km`
+              : "—",
+            "",
+          ] as [string, string, string, string],
+        }));
+    }
+    const capasRol = d.capas.filter((c) => c.rol === rol);
+    return capasRol.flatMap((c) => [
+      ...(capasRol.length > 1
+        ? [
+            {
+              tipo: "header" as const,
+              texto: `${c.nombre} · ${fmt(c.pois.length)}`,
+              color: c.color,
+            },
+          ]
+        : []),
+      ...filasDeCapa(c).map((f) => ({
+        tipo: "fila" as const,
+        cols: filaDetalleACols(f),
+      })),
+    ]);
+  }
+
+  // ---- plan de láminas de táctica: principal (+ desglose con muchas
+  //      capas) + láminas de continuación con el detalle por punto que
+  //      no cupo — nunca tipografía ilegible
   interface LaminaTactica {
     rol: RolLevantamiento;
-    /** "desglose": segunda lámina de una táctica con muchas capas. */
-    variante: "principal" | "desglose";
+    variante: "principal" | "desglose" | "detalle";
+    items?: ItemDetalle[];
+    pagina?: number;
   }
+  const CAP_CONT = FILAS_DETALLE_CONT * COLS_DETALLE_CONT;
   const laminasTactica: LaminaTactica[] = [];
-  for (const rol of ["poi_propio", "competencia", "proximidad"] as const) {
+  const detalleDer: Partial<Record<RolLevantamiento, ItemDetalle[]>> = {};
+  const detalleTotales: Partial<Record<RolLevantamiento, number>> = {};
+  for (const rol of ["poi_propio", "competencia", "proximidad", "ooh"] as const) {
     const capasRol = d.capas.filter((c) => c.rol === rol);
-    if (capasRol.length === 0) continue;
+    if (rol === "ooh" ? !d.ooh : capasRol.length === 0) continue;
     laminasTactica.push({ rol, variante: "principal" });
+    const multi = rol !== "ooh" && capasRol.length > 1;
     if (capasRol.length > MAX_MARCAS_LAMINA) {
       laminasTactica.push({ rol, variante: "desglose" });
     }
+    const items = detalleDeRol(rol);
+    // la columna derecha de la lámina principal se LLENA con el inicio
+    // del detalle (capa única / pantallas); multi-capa usa las mini
+    // barras de NSE por marca y su detalle completo va a continuación
+    const capacidadDer = multi
+      ? 0
+      : rol === "ooh"
+        ? FILAS_OOH_DER
+        : FILAS_DETALLE_DER * COLS_DETALLE_DER;
+    detalleDer[rol] = items.slice(0, capacidadDer);
+    detalleTotales[rol] = items.filter((x) => x.tipo === "fila").length;
+    const restantes = items.slice(capacidadDer);
+    for (let i = 0, pagina = 2; i < restantes.length; i += CAP_CONT, pagina++) {
+      laminasTactica.push({
+        rol,
+        variante: "detalle",
+        items: restantes.slice(i, i + CAP_CONT),
+        pagina,
+      });
+    }
   }
-  if (d.ooh) laminasTactica.push({ rol: "ooh", variante: "principal" });
 
   // ---- folio total
   const totalLaminas =
@@ -388,6 +568,9 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
               +{capasRol.length - MAX_FILAS_DESGLOSE} capas más en el Export data (Excel).
             </Text>
           )}
+          {/* el espacio restante se llena con el insight comparativo:
+              NSE por marca en mini barras alineadas */}
+          <MiniNsePorMarca capas={capasRol.slice(0, MAX_FILAS_DESGLOSE)} ancho={DER_W} />
         </View>
       );
     }
@@ -398,14 +581,13 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
         ? capasRol.map((c) => `${c.nombre} ${fmt(c.pois.length)}`).join(" · ")
         : null;
 
-    // mini-tabla top puntos SOLO si el espacio da respiración: una capa
-    // y sin desglose de marcas (nunca se encoge la tipografía)
-    const topPuntos =
-      rol !== "ooh" && capasRol.length === 1 && !desgloseMarcas
-        ? [...capasRol[0].pois]
-            .sort((a, b) => (a.cp ?? "").localeCompare(b.cp ?? ""))
-            .slice(0, MAX_TOP_PUNTOS)
-        : [];
+    // el espacio restante de la columna derecha se LLENA de arriba a
+    // abajo con el siguiente bloque disponible: detalle por punto
+    // (capa única / pantallas) o NSE por marca (multi-capa)
+    const itemsDer = detalleDer[rol] ?? [];
+    const totalFilas = detalleTotales[rol] ?? 0;
+    const filasDer = itemsDer.filter((x) => x.tipo === "fila").length;
+    const multiCapa = rol !== "ooh" && capasRol.length > 1;
 
     return (
       <View style={{ width: DER_W, marginLeft: DER_X }}>
@@ -413,7 +595,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
 
         {/* cifras clave */}
         {rol === "ooh" && d.ooh ? (
-          <View style={{ flexDirection: "row", marginBottom: 12 }}>
+          <View style={{ flexDirection: "row", marginBottom: 7 }}>
             <CifraLamina valor={fmt(d.ooh.pantallas.length)} descriptor="Pantallas" />
             <CifraLamina
               valor={`${fmt(d.ooh.cubiertos)}/${fmt(d.ooh.totalPdvs)}`}
@@ -429,7 +611,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
             />
           </View>
         ) : (
-          <View style={{ flexDirection: "row", marginBottom: 12 }}>
+          <View style={{ flexDirection: "row", marginBottom: 7 }}>
             <CifraLamina valor={fmt(puntosRol)} descriptor="Puntos censados" />
             <CifraLamina
               valor={uRol ? fmt(adultos(uRol)) : "—"}
@@ -458,7 +640,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
               paddingBottom: 7,
               paddingLeft: 10,
               paddingRight: 10,
-              marginBottom: 12,
+              marginBottom: 8,
             }}
           >
             <Text style={[celdaTh, { marginBottom: 3 }]}>DESGLOSE POR MARCA</Text>
@@ -470,7 +652,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
           </View>
         )}
         {rol === "ooh" && d.ooh && (
-          <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, marginBottom: 12 }}>
+          <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, marginBottom: 7 }}>
             Radio de cruce {d.ooh.radioTexto} ·{" "}
             {fmt(Math.max(0, d.ooh.totalPdvs - d.ooh.cubiertos))} PDVs sin
             cobertura
@@ -481,34 +663,85 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
 
         {/* demografía de la capa */}
         {nse && (
-          <View style={{ marginBottom: 10 }}>
+          <View style={{ marginBottom: 6 }}>
             <BarraApilada titulo="NSE (proxy censal, no AMAI)" segmentos={nse} width={DER_W} />
           </View>
         )}
         {edades && (
-          <View style={{ marginBottom: 10 }}>
+          <View style={{ marginBottom: 6 }}>
             <BarraApilada titulo="Edades · % del universo 18+" segmentos={edades} width={DER_W} />
           </View>
         )}
 
-        {/* mini-tabla top puntos (solo con respiración) */}
-        {topPuntos.length > 0 && (
-          <View style={{ marginTop: 2 }}>
-            <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 3, marginBottom: 3 }}>
-              <Text style={[celdaTh, { flex: 1 }]}>PUNTO</Text>
-              <Text style={[celdaTh, { width: 54, textAlign: "right" }]}>CP</Text>
-            </View>
-            {topPuntos.map((p) => (
-              <View key={p.placeId} style={{ flexDirection: "row", paddingTop: 2, paddingBottom: 2 }}>
-                <Text style={[celdaTd, { flex: 1, color: TINTA }]}>
-                  {p.nombre.length > 42 ? p.nombre.slice(0, 41) + "…" : p.nombre}
-                </Text>
-                <Text style={[celdaTd, { width: 54, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
-                  {p.cp ?? "—"}
-                </Text>
+        {/* relleno de la columna: NSE por marca (multi-capa) o el
+            detalle por punto (capa única / pantallas OOH) */}
+        {multiCapa ? (
+          <MiniNsePorMarca capas={capasRol.slice(0, 6)} ancho={DER_W} />
+        ) : rol === "ooh" ? (
+          itemsDer.length > 0 && (
+            <View style={{ marginTop: 2 }}>
+              <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 2, marginBottom: 2 }}>
+                <Text style={[celdaTh, { width: DER_W - 58 - 46 - 22 }]}>PANTALLA</Text>
+                <Text style={[celdaTh, { width: 58 }]}>CUBRE</Text>
+                <Text style={[celdaTh, { width: 46, textAlign: "right" }]}>DIST. MÍN</Text>
+                <Text style={{ width: 22 }} />
               </View>
-            ))}
-          </View>
+              {itemsDer.map((it, i) => (
+                <FilaDetalle
+                  key={i}
+                  item={it}
+                  anchoNombre={DER_W - 58 - 46 - 22}
+                  conCiudad
+                />
+              ))}
+              {totalFilas > filasDer && (
+                <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS_OSCURO, marginTop: 2 }}>
+                  +{fmt(totalFilas - filasDer)} pantallas más en la lámina de detalle.
+                </Text>
+              )}
+            </View>
+          )
+        ) : (
+          itemsDer.length > 0 && (
+            <View style={{ marginTop: 2 }}>
+              <View style={{ flexDirection: "row" }}>
+                {Array.from({ length: COLS_DETALLE_DER }, (_, col) => {
+                  const anchoCol = (DER_W - 10) / COLS_DETALLE_DER;
+                  const anchoNombre = anchoCol - 46 - 22;
+                  const filasCol = itemsDer.slice(
+                    col * FILAS_DETALLE_DER,
+                    (col + 1) * FILAS_DETALLE_DER
+                  );
+                  if (filasCol.length === 0) return null;
+                  return (
+                    <View
+                      key={col}
+                      style={{ width: anchoCol, marginRight: col === 0 ? 10 : 0 }}
+                    >
+                      <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 2, marginBottom: 2 }}>
+                        <Text style={[celdaTh, { width: anchoNombre }]}>PUNTO</Text>
+                        <Text style={[celdaTh, { width: 46, textAlign: "right" }]}>UNIV. 18+</Text>
+                        <Text style={[celdaTh, { width: 22, textAlign: "right" }]}>NSE</Text>
+                      </View>
+                      {filasCol.map((it, i) => (
+                        <FilaDetalle
+                          key={i}
+                          item={it}
+                          anchoNombre={anchoNombre}
+                          conCiudad={false}
+                        />
+                      ))}
+                    </View>
+                  );
+                })}
+              </View>
+              {totalFilas > filasDer && (
+                <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS_OSCURO, marginTop: 2 }}>
+                  +{fmt(totalFilas - filasDer)} puntos más en la lámina de detalle (universo y NSE de su radio individual).
+                </Text>
+              )}
+            </View>
+          )
         )}
       </View>
     );
@@ -617,27 +850,87 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
         </Text>
       </Lamina>
 
-      {/* ============ L3+ · UNA LÁMINA POR TÁCTICA ============ */}
-      {laminasTactica.map((lam) => (
-        <Lamina
-          key={`${lam.rol}-${lam.variante}`}
-          cliente={d.cliente}
-          n={n()}
-          total={totalLaminas}
-        >
-          <View style={{ flexDirection: "row" }}>
-            <MapaTactica
-              dataUrl={
-                lam.rol === "ooh"
-                  ? (d.mapasRol?.ooh ?? d.ooh?.mapaDataUrl)
-                  : d.mapasRol?.[lam.rol]
-              }
-              leyenda={leyendaDe(lam.rol)}
+      {/* ============ L3+ · UNA LÁMINA POR TÁCTICA (+ desglose +
+          láminas de continuación con el detalle por punto) ============ */}
+      {laminasTactica.map((lam) =>
+        lam.variante === "detalle" ? (
+          <Lamina
+            key={`${lam.rol}-detalle-${lam.pagina}`}
+            cliente={d.cliente}
+            n={n()}
+            total={totalLaminas}
+          >
+            <TituloLamina
+              etiqueta={TITULO_TACTICA[lam.rol][0]}
+              titulo={`${TITULO_TACTICA[lam.rol][1]} · detalle (${lam.pagina})`}
             />
-            <DatosTactica rol={lam.rol} variante={lam.variante} />
-          </View>
-        </Lamina>
-      ))}
+            <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS_OSCURO, marginTop: -4, marginBottom: 6 }}>
+              {lam.rol === "ooh"
+                ? "CADA PANTALLA CON LOS PDVS QUE CUBRE Y SU DISTANCIA MÍNIMA"
+                : "CADA PUNTO CON EL UNIVERSO 18+ Y EL NSE DOMINANTE DE SU RADIO INDIVIDUAL"}
+            </Text>
+            <View style={{ flexDirection: "row" }}>
+              {Array.from({ length: COLS_DETALLE_CONT }, (_, col) => {
+                const anchoCol =
+                  (SLIDE_W - M * 2 - (COLS_DETALLE_CONT - 1) * 18) /
+                  COLS_DETALLE_CONT;
+                const anchoNombre = anchoCol - 58 - 46 - 22;
+                const filasCol = (lam.items ?? []).slice(
+                  col * FILAS_DETALLE_CONT,
+                  (col + 1) * FILAS_DETALLE_CONT
+                );
+                if (filasCol.length === 0) return null;
+                return (
+                  <View
+                    key={col}
+                    style={{
+                      width: anchoCol,
+                      marginRight: col < COLS_DETALLE_CONT - 1 ? 18 : 0,
+                    }}
+                  >
+                    <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 2, marginBottom: 2 }}>
+                      <Text style={[celdaTh, { width: anchoNombre }]}>
+                        {lam.rol === "ooh" ? "PANTALLA" : "PUNTO"}
+                      </Text>
+                      <Text style={[celdaTh, { width: 58 }]}>
+                        {lam.rol === "ooh" ? "CUBRE" : "CIUDAD"}
+                      </Text>
+                      <Text style={[celdaTh, { width: 46, textAlign: "right" }]}>
+                        {lam.rol === "ooh" ? "DIST. MÍN" : "UNIV. 18+"}
+                      </Text>
+                      <Text style={[celdaTh, { width: 22, textAlign: "right" }]}>
+                        {lam.rol === "ooh" ? "" : "NSE"}
+                      </Text>
+                    </View>
+                    {filasCol.map((it, i) => (
+                      <FilaDetalle key={i} item={it} anchoNombre={anchoNombre} conCiudad />
+                    ))}
+                  </View>
+                );
+              })}
+            </View>
+          </Lamina>
+        ) : (
+          <Lamina
+            key={`${lam.rol}-${lam.variante}`}
+            cliente={d.cliente}
+            n={n()}
+            total={totalLaminas}
+          >
+            <View style={{ flexDirection: "row" }}>
+              <MapaTactica
+                dataUrl={
+                  lam.rol === "ooh"
+                    ? (d.mapasRol?.ooh ?? d.ooh?.mapaDataUrl)
+                    : d.mapasRol?.[lam.rol]
+                }
+                leyenda={leyendaDe(lam.rol)}
+              />
+              <DatosTactica rol={lam.rol} variante={lam.variante} />
+            </View>
+          </Lamina>
+        )
+      )}
 
       {/* ============ Ln · COMPARATIVO DE CAPAS ============ */}
       {comparables.length >= 2 && (

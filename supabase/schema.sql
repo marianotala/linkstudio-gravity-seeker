@@ -2785,3 +2785,16 @@ create policy "project_universes: equipo actualiza"
 drop policy if exists "project_universes: equipo borra" on public.project_universes;
 create policy "project_universes: equipo borra"
   on public.project_universes for delete to authenticated using (true);
+
+-- ==================================================================
+-- FASE 18 — DETALLE POR PUNTO (universo y NSE del buffer individual)
+-- Aplicada en vivo como migración fase18_detalle_por_punto.
+-- universo_individual: adultos 18+ del buffer del punto con el radio
+-- del análisis; nse_dominante: nivel NSE (proxy censal) de su zona.
+-- Se calculan batched con por_geocerca del RPC calcular_universos y
+-- se persisten para no recalcular en cada export.
+-- ==================================================================
+
+alter table public.survey_points
+  add column if not exists universo_individual integer,
+  add column if not exists nse_dominante text;

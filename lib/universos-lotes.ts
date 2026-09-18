@@ -8,7 +8,7 @@
 // Corre en el CLIENTE (sin server-only) para orquestar los lotes con
 // progreso y reintentos desde la UI.
 
-import type { GeocercaUniverso, Universos } from "./types";
+import type { GeocercaUniverso, Universos, UniversoPorGeocerca } from "./types";
 import { ETIQUETA_FUENTE_UNIVERSOS } from "./universos-etiquetas";
 
 /** Geocercas por lote: cada unión queda local y el GIST sí filtra. */
@@ -364,6 +364,48 @@ export async function calcularUniversosCliente(
       ? ` · ${fallidos.length} de ${lotes.length} lotes fallaron (${fallidos.slice(0, 5).join(", ")}${fallidos.length > 5 ? "…" : ""}) y quedaron fuera del total`
       : "";
   return agregarUniversosCrudos(crudos, `${criterio}${nota}`);
+}
+
+/**
+ * Universos POR GEOCERCA INDIVIDUAL (detalle por punto): pide el RPC
+ * COMPLETO en pasadas batched acotadas por conteo y área — cada lote
+ * conserva su desglose por_geocerca (población, adultos 18+ y NSE del
+ * buffer de CADA punto por separado). PostGIS propio: costo cero de
+ * APIs. Regresa un mapa id → detalle.
+ */
+export async function calcularUniversosPorGeocerca(
+  geocercas: GeocercaUniverso[],
+  opciones: OpcionesUniversosCliente = {}
+): Promise<Map<string, UniversoPorGeocerca>> {
+  const salida = new Map<string, UniversoPorGeocerca>();
+  if (geocercas.length === 0) return salida;
+  // el detalle exige el RPC completo (por_geocerca): lotes chicos por
+  // conteo Y por área (radios de 5 km llenan 300 km² con ~3 buffers)
+  const lotes = agruparGeocercasEnLotes(
+    geocercas,
+    UMBRAL_UNIVERSOS_LOTES,
+    MAX_AREA_SENCILLO_KM2
+  );
+  for (let i = 0; i < lotes.length; i++) {
+    if (opciones.cancelado?.()) break;
+    opciones.onProgreso?.(i, lotes.length);
+    let logrado = false;
+    for (let intento = 0; intento < 3 && !logrado; intento++) {
+      try {
+        const { universos } = await postUniversos<{ universos: Universos }>({
+          geocercas: lotes[i],
+        });
+        for (const g of universos?.porGeocerca ?? []) {
+          salida.set(g.id, g);
+        }
+        logrado = true;
+      } catch {
+        await new Promise((r) => setTimeout(r, 800 * (intento + 1)));
+      }
+    }
+    // un lote fallido no tira el detalle: esos puntos quedan sin dato
+  }
+  return salida;
 }
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
