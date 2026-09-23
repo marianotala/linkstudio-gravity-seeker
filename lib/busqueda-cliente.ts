@@ -124,7 +124,31 @@ export async function geocodificarDirecciones(
   return { origenes: listos, fallidas };
 }
 
-const LOTE_CENTROS = 150;
+/**
+ * CHUNKS CORTOS: cada request a /api/search debe terminar holgadamente
+ * bajo el timeout de la plataforma (Vercel). El costo dominante es el
+ * pacing de Google (GOOGLE_MAX_QPS) por consulta — y "solo por nombre"
+ * pagina hasta 3 páginas por consulta — así que el chunk se dimensiona
+ * por CONSULTAS, no por centros: ~16 consultas ≈ 5-20 s por request.
+ * El cliente orquesta el loop; el avance se persiste POR CHUNK.
+ */
+export const CONSULTAS_POR_CHUNK = 16;
+
+/** Centros por chunk para que cada request quede corta. */
+export function centrosPorChunk(consultasPorCentro: number): number {
+  return Math.max(1, Math.floor(CONSULTAS_POR_CHUNK / Math.max(1, consultasPorCentro)));
+}
+
+/** ¿El error NO se arregla reintentando? (cuota diaria de Google,
+ * límite de celdas del usuario, sesión) — abortar, no reintentar. */
+export function esErrorFatalBusqueda(e: unknown): boolean {
+  if (!(e instanceof ErrorApi)) return false;
+  if (e.codigo === "cuota_diaria" || e.codigo === "limite_diario") return true;
+  return /no autorizado|inicia sesión|api key|clave/i.test(e.message);
+}
+
+/** Esperas de reintento por chunk ante fallas TRANSITORIAS (504/red). */
+export const ESPERAS_TRANSITORIAS_S = [2, 5, 10];
 
 export interface OpcionesBusquedaLotes {
   /** Centros YA consolidados (consolidarCentros de lib/geo). */
@@ -133,9 +157,15 @@ export interface OpcionesBusquedaLotes {
   categorias: SeleccionCategoria[];
   nameFilters: string[];
   excludes: string[];
+  /** Reanudación: chunk 0-based desde el que continuar (los previos ya
+   * están pagados y persistidos). */
+  desdeLote?: number;
+  /** Reanudación: POIs ya acumulados de los chunks previos (no se
+   * re-consultan ni se re-pagan). */
+  semilla?: Poi[];
   /** Progreso legible ("lote 2 de 5 · esperando cuota…"). */
   onEstado?: (texto: string) => void;
-  /** POIs NUEVOS de cada lote (para autosave incremental). */
+  /** POIs NUEVOS de cada chunk (para autosave incremental POR CHUNK). */
   onLote?: (nuevos: Poi[], lote: number, total: number) => Promise<void> | void;
   detenerRef?: { current: boolean };
 }
@@ -146,25 +176,31 @@ export interface ResultadoBusquedaLotes {
   descartados: number;
   /** false = detenida/cuota: el avance regresa igual (POIs acumulados). */
   completa: boolean;
+  /** Chunk 0-based donde quedó (para reanudar con desdeLote). */
+  loteFinal: number;
+  totalLotes: number;
+  /** Chunks (1-based) saltados tras agotar reintentos transitorios. */
+  chunksFallidos: number[];
   /** Mensaje del error que interrumpió (cuota diaria / límite), si hubo. */
   interrupcion?: string;
 }
 
 /**
- * Búsqueda de POIs por lotes alrededor de centros, con el MISMO manejo
- * de cuota del modo consulta: rate limit → backoff automático con
- * cuenta regresiva (el mismo lote se reintenta; lo acumulado nunca se
- * re-paga); cuota diaria o límite de celdas → regresa lo acumulado con
- * `completa: false` y el mensaje. Dedupe por place_id entre lotes.
+ * Búsqueda de POIs por chunks CORTOS alrededor de centros — el cliente
+ * orquesta, el servidor procesa ~16 consultas por request:
+ * - rate limit de Google → backoff automático con cuenta regresiva (el
+ *   mismo chunk se reintenta; lo acumulado nunca se re-paga);
+ * - falla TRANSITORIA (504 / red) → reintentos con backoff y, si el
+ *   chunk sigue fallando, se salta y la corrida CONTINÚA;
+ * - cuota diaria o límite de celdas → regresa lo acumulado con
+ *   `completa: false` + `loteFinal` para reanudar después.
+ * Dedupe por place_id entre chunks.
  */
 export async function buscarPorLotes(
   o: OpcionesBusquedaLotes
 ): Promise<ResultadoBusquedaLotes> {
   const consultasCentro = consultasPorCentroDe(o.categorias, o.nameFilters);
-  const tamanoLote =
-    consultasCentro > 1
-      ? Math.max(25, Math.floor(120 / consultasCentro))
-      : LOTE_CENTROS;
+  const tamanoLote = centrosPorChunk(consultasCentro);
   const lotes: Origin[][] = [];
   for (let i = 0; i < o.centros.length; i += tamanoLote) {
     lotes.push(o.centros.slice(i, i + tamanoLote));
@@ -185,17 +221,21 @@ export async function buscarPorLotes(
     persist: false,
   };
 
-  const acumulados = new Map<string, Poi>();
+  const acumulados = new Map<string, Poi>(
+    (o.semilla ?? []).map((p) => [p.placeId, p])
+  );
   let excluidos = 0;
   let descartados = 0;
   let esperasCuota = 0;
+  let reintentosTransitorios = 0;
+  const chunksFallidos: number[] = [];
   let interrupcion: string | undefined;
 
-  let li = 0;
+  let li = Math.min(Math.max(0, o.desdeLote ?? 0), lotes.length);
   for (; li < lotes.length; ) {
     if (o.detenerRef?.current) break;
     o.onEstado?.(
-      `lote ${li + 1} de ${lotes.length} · ${acumulados.size.toLocaleString("es-MX")} POIs`
+      `chunk ${li + 1} de ${lotes.length} · ${acumulados.size.toLocaleString("es-MX")} POIs`
     );
     let data: SearchResponse;
     try {
@@ -204,6 +244,7 @@ export async function buscarPorLotes(
         centers: lotes[li],
       } satisfies SearchRequest);
     } catch (e) {
+      // 1) rate limit de Google: backoff largo, mismo chunk
       if (
         e instanceof ErrorApi &&
         e.codigo === "rate" &&
@@ -219,12 +260,31 @@ export async function buscarPorLotes(
           );
           await new Promise((r) => setTimeout(r, 1000));
         }
-        continue; // reintenta el MISMO lote
+        continue; // reintenta el MISMO chunk
       }
-      interrupcion = e instanceof Error ? e.message : "Error al buscar";
-      break;
+      // 2) fatal (cuota diaria / límite de celdas): abortar con avance
+      if (esErrorFatalBusqueda(e)) {
+        interrupcion = e instanceof Error ? e.message : "Error al buscar";
+        break;
+      }
+      // 3) transitorio (504 / red): backoff corto y mismo chunk; si se
+      //    agotan los reintentos, se SALTA y la corrida continúa
+      if (reintentosTransitorios < ESPERAS_TRANSITORIAS_S.length) {
+        const espera = ESPERAS_TRANSITORIAS_S[reintentosTransitorios];
+        reintentosTransitorios++;
+        o.onEstado?.(
+          `chunk ${li + 1} falló (${e instanceof Error ? e.message.slice(0, 60) : "red"}) — reintento ${reintentosTransitorios} de ${ESPERAS_TRANSITORIAS_S.length} en ${espera}s`
+        );
+        await new Promise((r) => setTimeout(r, espera * 1000));
+        continue;
+      }
+      chunksFallidos.push(li + 1);
+      reintentosTransitorios = 0;
+      li++;
+      continue;
     }
     esperasCuota = 0;
+    reintentosTransitorios = 0;
     excluidos += data.excluidos;
     descartados += data.descartadosPorNombre;
     const nuevos: Poi[] = [];
@@ -234,6 +294,8 @@ export async function buscarPorLotes(
         nuevos.push(p);
       }
     }
+    // persistencia POR CHUNK: lo consultado a Google se paga una vez y
+    // se guarda SIEMPRE — un timeout nunca vuelve a dejar 0 puntos
     await o.onLote?.(nuevos, li + 1, lotes.length);
     li++;
   }
@@ -242,7 +304,10 @@ export async function buscarPorLotes(
     pois: Array.from(acumulados.values()),
     excluidos,
     descartados,
-    completa: li >= lotes.length,
+    completa: li >= lotes.length && !interrupcion,
+    loteFinal: li,
+    totalLotes: lotes.length,
+    chunksFallidos,
     interrupcion,
   };
 }

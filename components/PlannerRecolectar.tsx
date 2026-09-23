@@ -617,6 +617,34 @@ export function SeccionCompetencia({
   );
   const consultas = centros.length * consultasPorCentroDe(categorias, terminos);
 
+  /** Firma de la corrida: misma config = mismo plan de chunks (la
+   * reanudación solo aplica si nada cambió). */
+  const etiquetasRun =
+    separarEnCapas && categorias.length >= 2
+      ? etiquetasDe(categorias)
+      : separarEnCapas && terminos.length >= 2
+        ? terminos
+        : [];
+  const firmaRun = JSON.stringify([
+    origenes.length,
+    radio,
+    categoriasParaApi(categorias),
+    terminos,
+    exclusiones,
+    etiquetasRun,
+  ]);
+  /** Corrida interrumpida REANUDABLE (persistida en el borrador del
+   * proyecto: cerrar el navegador no la pierde). */
+  interface RunActivo {
+    runId: string;
+    surveys: [string | null, string][];
+    indice: number;
+    total: number;
+    firma: string;
+  }
+  const runActivo = cfg.runActivo as RunActivo | undefined;
+  const reanudable = !!runActivo && runActivo.firma === firmaRun;
+
   async function calcular() {
     if (origenes.length === 0) {
       setError("Primero recolecta los orígenes (paso 1)");
@@ -626,60 +654,111 @@ export function SeccionCompetencia({
       setError("Elige qué buscar alrededor: una categoría o términos de marca");
       return;
     }
-    if (consultas > UMBRAL_CONFIRMAR_CONSULTAS && !confirmando) {
+    if (!reanudable && consultas > UMBRAL_CONFIRMAR_CONSULTAS && !confirmando) {
       setConfirmando(true);
       return;
     }
     setConfirmando(false);
     setError("");
     setOcupado(true);
+    // copia local de la config: el marcador de reanudación se persiste
+    // POR CHUNK vía onBorrador (plan_state) sin closures viejos
+    const cfgLocal: Record<string, unknown> = { ...cfg };
     let run: RunPlanner | null = null;
     try {
-      const etiquetas =
-        separarEnCapas && categorias.length >= 2
-          ? etiquetasDe(categorias)
-          : separarEnCapas && terminos.length >= 2
-            ? terminos
-            : [];
+      const etiquetas = etiquetasRun;
       const listaOrigenes: Origin[] = origenes.map((p) => ({
         lat: p.lat,
         lng: p.lng,
         nombre: p.nombre,
         direccion: p.direccion || undefined,
       }));
-      run = await crearSurveysPlanner(
-        { proyectoId, rol: "competencia" },
-        etiquetas,
-        {
-          mode: "origins",
-          radius: radio,
-          origenes: listaOrigenes,
-          categories: categoriasParaApi(categorias),
-          nameFilters: terminos,
-          excludes: exclusiones,
-          nombre:
-            (cfg.nombre as string)?.trim() ||
-            (terminos.length > 0
-              ? terminos.join(" · ")
-              : etiquetasDe(categorias).join(" · ")),
-        },
-        "recoleccion"
-      );
+
+      // REANUDAR: reconstruir el run guardado y sembrar lo ya pagado
+      let semilla: Poi[] = [];
+      let desdeLote = 0;
+      if (reanudable && runActivo) {
+        const surveys = new Map<string | null, string>(runActivo.surveys);
+        run = { runId: runActivo.runId, surveys, guardados: new Set() };
+        setEstado(
+          `Reanudando desde el chunk ${runActivo.indice + 1} de ${runActivo.total} — cargando lo ya guardado…`
+        );
+        const porSurvey = await cargarPuntosSurveys(Array.from(surveys.values()));
+        porSurvey.forEach((puntosSurvey) => {
+          for (const p of puntosSurvey) {
+            if (!run!.guardados.has(p.placeId)) {
+              run!.guardados.add(p.placeId);
+              semilla.push(p);
+            }
+          }
+        });
+        desdeLote = runActivo.indice;
+      } else {
+        run = await crearSurveysPlanner(
+          { proyectoId, rol: "competencia" },
+          etiquetas,
+          {
+            mode: "origins",
+            radius: radio,
+            origenes: listaOrigenes,
+            categories: categoriasParaApi(categorias),
+            nameFilters: terminos,
+            excludes: exclusiones,
+            nombre:
+              (cfg.nombre as string)?.trim() ||
+              (terminos.length > 0
+                ? terminos.join(" · ")
+                : etiquetasDe(categorias).join(" · ")),
+          },
+          "recoleccion"
+        );
+      }
       const elRun = run;
+      const marcarAvance = (indice: number, total: number) => {
+        cfgLocal.runActivo = {
+          runId: elRun.runId,
+          surveys: Array.from(elRun.surveys.entries()),
+          indice,
+          total,
+          firma: firmaRun,
+        } satisfies RunActivo;
+        onBorrador({ ...borrador, config: { ...cfgLocal } });
+      };
       const r = await buscarPorLotes({
         centros,
         radius: radio,
         categorias,
         nameFilters: terminos,
         excludes: exclusiones,
+        desdeLote,
+        semilla,
         onEstado: (t) => setEstado(`Buscando competencia · ${t}`),
         onLote: async (nuevos, lote, total) => {
+          // granularidad POR CHUNK: puntos + progreso + marcador de
+          // reanudación — un timeout nunca vuelve a dejar 0 puntos
           await guardarPuntosPlanner(elRun, nuevos);
           await actualizarRunPlanner(elRun, {
             progreso: { modo: "origins", indice: lote, total },
           });
+          marcarAvance(lote, total);
         },
       });
+      if (!r.completa) {
+        // quedó a medias (cuota/detenido): el marcador ya apunta al
+        // chunk siguiente — Continuar retoma sin repagar
+        marcarAvance(r.loteFinal, r.totalLotes);
+        await actualizarRunPlanner(elRun, { status: "interrumpido" });
+        setEstado(
+          `${fmt(r.pois.length)} puntos guardados hasta el chunk ${r.loteFinal} de ${r.totalLotes}`
+        );
+        setError(
+          r.interrupcion
+            ? `Interrumpido: ${r.interrupcion} — el avance quedó guardado; "Continuar" retoma donde iba sin repagar`
+            : "Búsqueda interrumpida — el avance quedó guardado; \"Continuar\" retoma donde iba"
+        );
+        await alGuardar();
+        return;
+      }
       // reasignación: cada POI a su origen más cercano de la lista COMPLETA
       setEstado("Asignando cada punto a su origen más cercano…");
       const buscador = crearBuscadorCercano(listaOrigenes, Math.max(radio * 1.5, 500));
@@ -696,29 +775,26 @@ export function SeccionCompetencia({
       // puntos con el radio del análisis (los orígenes solo definen
       // dónde buscar, no el territorio de la capa)
       await guardarUniversosPorCapa(elRun, lista, radio, setEstado);
-      await actualizarRunPlanner(elRun, {
-        status: r.completa ? "completado" : "interrumpido",
-        progreso: r.completa ? null : { modo: "origins" },
-      });
+      await actualizarRunPlanner(elRun, { status: "completado", progreso: null });
 
       const notas = [
         `${fmt(lista.length)} puntos de competencia`,
         ...(r.excluidos > 0 ? [`${fmt(r.excluidos)} excluidos`] : []),
         ...(r.descartados > 0 ? [`${fmt(r.descartados)} descartados por nombre`] : []),
         ...(etiquetas.length > 1 ? [`${etiquetas.length} capas`] : []),
+        ...(r.chunksFallidos.length > 0
+          ? [
+              `${r.chunksFallidos.length} chunks fallaron tras reintentos (${r.chunksFallidos.slice(0, 4).join(", ")}${r.chunksFallidos.length > 4 ? "…" : ""}) y quedaron fuera`,
+            ]
+          : []),
       ];
       setEstado(notas.join(" · "));
-      if (!r.completa) {
-        setError(
-          r.interrupcion
-            ? `Interrumpido: ${r.interrupcion} — el avance quedó guardado; vuelve a Calcular para continuar`
-            : "Búsqueda interrumpida — el avance quedó guardado"
-        );
-      } else {
-        // el borrador de orígenes se conserva (sirve para otra marca);
-        // solo se limpian los términos ya censados
-        setCfg({ terminos: [], categorias: [] });
-      }
+      // corrida terminada: se limpia el marcador y lo ya censado
+      delete cfgLocal.runActivo;
+      onBorrador({
+        ...borrador,
+        config: { ...cfgLocal, terminos: [], categorias: [] },
+      });
       await alGuardar();
     } catch (e) {
       if (run) {
@@ -823,7 +899,9 @@ export function SeccionCompetencia({
         >
           {confirmando
             ? `Confirmar ~${fmt(consultas)} consultas`
-            : "Calcular"}
+            : reanudable && runActivo
+              ? `Continuar (chunk ${runActivo.indice + 1} de ${runActivo.total})`
+              : "Calcular"}
         </button>
         {origenes.length > 0 && (
           <span className="font-mono text-[10px] text-zinc-500">

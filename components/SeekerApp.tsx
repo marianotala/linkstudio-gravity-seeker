@@ -20,9 +20,13 @@ import CategoriaBuscador, {
 } from "./CategoriaBuscador";
 import { CATEGORIA_LIBRE, CATEGORIAS, getCategoria, SOLO_NOMBRE } from "@/lib/categories";
 import {
+  centrosPorChunk,
+  CONSULTAS_POR_CHUNK,
   dividirTerminos,
   ErrorApi,
   ESPERAS_CUOTA_S,
+  ESPERAS_TRANSITORIAS_S,
+  esErrorFatalBusqueda,
   esTerminoExacto,
   MAX_ESPERAS_CUOTA,
   postJson,
@@ -192,7 +196,6 @@ const PALETA_CAPAS = [
 // Escalamiento del modo por orígenes (listas de hasta 10,000 PDVs):
 // procesamiento y búsqueda POR LOTES con confirmación de costo.
 const LOTE_GEOCODE = 500;
-const LOTE_CENTROS_BUSQUEDA = 150;
 /** Tope de consultas a Google por búsqueda (costo). Configurable.
  * Default 10,000: una lista de 10 mil PDVs dispersos = 10 mil
  * consultas nearby, el caso de uso máximo soportado. */
@@ -3207,13 +3210,12 @@ export default function SeekerApp({
     let descartadosTotal = previo?.descartados ?? 0;
     const detExc = previo?.detExc ?? new Set<string>();
     const detDesc = previo?.detDesc ?? new Set<string>();
-    // tamaño de lote adaptativo: "solo por nombre" pagina hasta 60
-    // resultados por centro (y multiplica por término), así que los
-    // lotes se encogen para no rozar el timeout del endpoint (60 s)
-    const tamanoLote =
-      consultasPorCentro > 1
-        ? Math.max(25, Math.floor(120 / consultasPorCentro))
-        : LOTE_CENTROS_BUSQUEDA;
+    // CHUNKS CORTOS: cada request a /api/search se dimensiona por
+    // CONSULTAS (~16), no por centros — con multi-término/paginación
+    // una request grande excedía el timeout de la plataforma (504) y
+    // moría antes de persistir avance. El cliente orquesta el loop y
+    // el avance se guarda POR CHUNK.
+    const tamanoLote = centrosPorChunk(consultasPorCentro);
     const lotes: Origin[][] = [];
     for (let i = 0; i < centros.length; i += tamanoLote) {
       lotes.push(centros.slice(i, i + tamanoLote));
@@ -3241,6 +3243,9 @@ export default function SeekerApp({
     // backoff automático ante rate limit: el MISMO lote se reintenta
     // tras la espera — lo ya acumulado nunca se re-consulta ni re-paga
     let esperasCuota = 0;
+    // fallas TRANSITORIAS (504/red): reintentos con backoff del mismo
+    // chunk — un chunk fallido no tira la corrida
+    let reintentosTransitorios = 0;
 
     try {
       for (; li < lotes.length; ) {
@@ -3289,9 +3294,31 @@ export default function SeekerApp({
             if (!seguir) break;
             continue; // reintenta el MISMO lote
           }
+          // falla TRANSITORIA (504/red): backoff corto y MISMO chunk —
+          // lo ya guardado no se toca y la corrida continúa sola
+          if (
+            !esErrorFatalBusqueda(e) &&
+            reintentosTransitorios < ESPERAS_TRANSITORIAS_S.length
+          ) {
+            const espera = ESPERAS_TRANSITORIAS_S[reintentosTransitorios];
+            reintentosTransitorios++;
+            setProceso({
+              etapa: "Buscando POIs",
+              detalle: `el chunk ${li + 1} falló — reintento ${reintentosTransitorios} de ${ESPERAS_TRANSITORIAS_S.length} en ${espera}s`,
+              actual: li,
+              total: lotes.length,
+              onDetener: () => {
+                detenerOrigenesRef.current = true;
+              },
+            });
+            await new Promise((r) => setTimeout(r, espera * 1000));
+            if (detenerOrigenesRef.current) break;
+            continue;
+          }
           throw e;
         }
         esperasCuota = 0;
+        reintentosTransitorios = 0;
         excluidosTotal += data.excluidos;
         descartadosTotal += data.descartadosPorNombre;
         (data.detalleExcluidos ?? []).forEach((n) => {
@@ -3444,10 +3471,15 @@ export default function SeekerApp({
       return;
     }
 
-    // Guardarraíl de costo (orígenes grandes): consolidar traslapes,
-    // estimar consultas y CONFIRMAR antes de gastar; luego correr por
-    // lotes con progreso y reanudación.
-    if (mode === "origins" && centrosActivos.length > UMBRAL_ORIGENES_GRANDES) {
+    // Guardarraíl de costo Y de timeout (orígenes): si la corrida
+    // excede lo que cabe en UNA request corta (~16 consultas), va por
+    // el camino de CHUNKS con estimación, confirmación, progreso y
+    // reanudación — nunca una sola request larga que muera en 504.
+    if (
+      mode === "origins" &&
+      (centrosActivos.length > UMBRAL_ORIGENES_GRANDES ||
+        centrosActivos.length * consultasPorCentro > CONSULTAS_POR_CHUNK)
+    ) {
       if (planOrigenes && !planOrigenes.excedeTope) {
         await ejecutarBusquedaOrigenes(planOrigenes.centros);
         return;

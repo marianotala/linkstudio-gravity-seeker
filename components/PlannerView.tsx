@@ -905,15 +905,25 @@ export default function PlannerView({
                                     className="inline-flex gap-1"
                                     onClick={(e) => e.stopPropagation()}
                                   >
-                                    {s.rol !== "ooh" && s.status !== "completado" && (
-                                      <Link
-                                        href={`/planner/${proyectoId}/levantar/${s.rol}?reanudar=${s.id}`}
-                                        className="rounded border border-amber-400/60 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-400 hover:bg-amber-400/20"
-                                        title="Continúa exactamente donde quedó, sin repagar consultas"
-                                      >
-                                        Reanudar
-                                      </Link>
-                                    )}
+                                    {s.rol !== "ooh" &&
+                                      s.status !== "completado" &&
+                                      (s.fuente === "recoleccion" ? (
+                                        <button
+                                          onClick={() => setSeccion(s.rol)}
+                                          className="rounded border border-amber-400/60 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-400 hover:bg-amber-400/20"
+                                          title='Corrida interrumpida: el botón "Continuar" de la sección retoma desde el chunk siguiente, sin repagar consultas'
+                                        >
+                                          Reanudar
+                                        </button>
+                                      ) : (
+                                        <Link
+                                          href={`/planner/${proyectoId}/levantar/${s.rol}?reanudar=${s.id}`}
+                                          className="rounded border border-amber-400/60 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-400 hover:bg-amber-400/20"
+                                          title="Continúa exactamente donde quedó, sin repagar consultas"
+                                        >
+                                          Reanudar
+                                        </Link>
+                                      ))}
                                     {s.rol === "proximidad" && (
                                       <>
                                         <button

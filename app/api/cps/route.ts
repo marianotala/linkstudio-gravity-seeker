@@ -5,6 +5,9 @@ import type { CpPoligono } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Red de seguridad de plataforma: el diseño NO depende de esto — cada
+// request procesa un chunk corto que cabe holgado en el limite base.
+export const maxDuration = 60;
 
 // Operaciones sobre códigos postales (tabla cp_poligonos, cargada
 // por entidad desde /admin):

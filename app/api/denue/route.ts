@@ -7,6 +7,9 @@ import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Red de seguridad de plataforma: el diseño NO depende de esto — cada
+// request procesa un chunk corto que cabe holgado en el limite base.
+export const maxDuration = 60;
 
 // Una llamada = una consulta Buscar de DENUE (una celda del censo
 // territorial). Cuenta contra la cuota diaria de celdas.
