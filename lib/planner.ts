@@ -148,6 +148,9 @@ export async function guardarPuntosPlanner(
           capa: p.capa ?? null,
           distancia_m: p.distancia,
           origen_idx: p.origenIdx,
+          // giro de Google: materia prima de la depuración por
+          // coherencia de tipos y de futuros análisis
+          types: (p.types ?? []).slice(0, 8),
         },
       }))
     );
@@ -324,7 +327,7 @@ export function puntoAPoi(r: PuntoSurvey): Poi {
     direccion: r.direccion ?? "",
     lat: r.lat,
     lng: r.lng,
-    types: [],
+    types: (r.metadata?.types as string[] | undefined) ?? [],
     distancia: r.metadata?.distancia_m ?? 0,
     origenIdx: r.metadata?.origen_idx ?? 0,
     fuente: (r.metadata?.fuente as Poi["fuente"]) ?? "google",

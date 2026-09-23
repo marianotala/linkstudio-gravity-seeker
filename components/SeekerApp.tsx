@@ -51,6 +51,13 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { DIAS_AMARILLO, frescuraCenso } from "@/lib/censos";
 import {
+  costoEstimadoIA,
+  depurarConIA,
+  perfilDeGiro,
+  sospechososPorTipo,
+  type Sospechoso,
+} from "@/lib/depuracion";
+import {
   actualizarRunPlanner,
   cargarRunParaReanudar,
   crearSurveysPlanner,
@@ -726,6 +733,19 @@ export default function SeekerApp({
    * sesión de análisis activa (re-exportar no la pierde). */
   const [tacticasPlan, setTacticasPlan] = useState<TacticaClave[] | null>(null);
 
+  // ---- depuración inteligente de censos (coherencia de giro): la
+  //      heurística/IA PROPONE en una lista de revisión; el humano
+  //      DISPONE — nada se borra automático
+  const [sospechosos, setSospechosos] = useState<Sospechoso[] | null>(null);
+  /** checked = "sí pertenece a la marca" (los no_pertenece van
+   * pre-desmarcados; los dudosos marcados para ojo humano). */
+  const [checksDepuracion, setChecksDepuracion] = useState<Record<string, boolean>>({});
+  const [depurandoIA, setDepurandoIA] = useState(false);
+  const [depurados, setDepurados] = useState(0);
+  /** Último run del Planner COMPLETADO (para depurar también lo ya
+   * persistido al confirmar). */
+  const ultimoRunDepRef = useRef<{ run: RunPlanner; radioCapaM?: number } | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const centrosActivos = useMemo<Origin[]>(
@@ -1031,6 +1051,8 @@ export default function SeekerApp({
         await guardarUniversosPlanner(run, universosRun);
       }
       await actualizarRunPlanner(run, { status: "completado", progreso: null });
+      // el run queda a la mano para la depuración post-censo
+      ultimoRunDepRef.current = { run, radioCapaM };
       setNotaPlanner("");
     } else {
       await guardarPuntosPlanner(run, lista);
@@ -2225,6 +2247,8 @@ export default function SeekerApp({
       }
 
       setPois(lista);
+      // capa 1 de depuración: solo si el censo territorial es de marca
+      if (nameFilters.length > 0) evaluarCoherencia(lista);
       // al AGREGAR capa el universo del territorio no cambia: se reusa
       const reutilizarUniversos =
         agregarCapaRef.current && (universos?.disponible ?? false);
@@ -2384,6 +2408,10 @@ export default function SeekerApp({
     setDeltaInfo(null);
     setFechaCensoUsado(null);
     setEstratoFiltro("");
+    setSospechosos(null);
+    setChecksDepuracion({});
+    setDepurados(0);
+    ultimoRunDepRef.current = null;
     setPois([]);
     setContadores({ excluidos: 0, descartadosPorNombre: 0 });
     setDetalles({ excluidos: [], descartados: [] });
@@ -2694,6 +2722,8 @@ export default function SeekerApp({
       (a, b) => a.distancia - b.distancia
     );
     setPois(lista);
+    // capa 1 de depuración: todo censo es de marca → coherencia de giro
+    evaluarCoherencia(lista);
     // multi-marca: una capa por término, con su color y conteo
     if (terminosMarca.length >= 2) {
       registrarCapasPor(terminosMarca, lista, (p) => p.termino);
@@ -3386,6 +3416,9 @@ export default function SeekerApp({
       .sort((a, b) => a.distancia - b.distancia);
 
     setPois(lista);
+    // capa 1 de depuración: solo censos de marca (con filtro por nombre)
+    // y solo al TERMINAR la corrida completa
+    if (!interrumpida && nameFilters.length > 0) evaluarCoherencia(lista);
     if (separarPorCategoria) {
       registrarCapasPor(etiquetasCategorias, lista, (p) => p.categoria);
     } else if (separarPorTermino) {
@@ -3542,6 +3575,8 @@ export default function SeekerApp({
       };
       const data = await postJson<SearchResponse>("/api/search", body);
       setPois(data.pois);
+      // capa 1 de depuración: solo si la búsqueda es de marca
+      if (nameFilters.length > 0) evaluarCoherencia(data.pois);
       // "separar en capas": una capa por categoría o por término
       const multiCapas = separarEnCapasActivo;
       // en modo zona la búsqueda se acumula como capa (misma geografía);
@@ -3697,6 +3732,141 @@ export default function SeekerApp({
     );
   }
 
+  // ---- DEPURACIÓN INTELIGENTE DE CENSOS ----------------------------
+  /** Término de marca del censo activo (para el prompt de la IA). */
+  const marcaCenso =
+    mode === "census" && marca.trim()
+      ? marca.trim()
+      : nameFilters.length > 0
+        ? nameFilters.join(", ")
+        : "";
+  /** ¿El análisis activo es un censo de MARCA? (ahí aplica la
+   * coherencia de giro; en categorías puras no hay marca que cuidar). */
+  const esCensoDeMarca = marcaCenso.length > 0;
+
+  /** CAPA 1 (automática, sin costo): corre al terminar todo censo de
+   * marca — perfil de giro por types y sospechosos a revisión. */
+  function evaluarCoherencia(lista: Poi[]) {
+    const s = sospechososPorTipo(lista);
+    setSospechosos(s.length > 0 ? s : null);
+    setChecksDepuracion(
+      Object.fromEntries(s.map((x) => [x.placeId, x.veredicto === "dudoso"]))
+    );
+  }
+
+  /** CAPA 2 (bajo demanda): juicio de pertenencia con Claude — el
+   * resultado alimenta la MISMA lista de revisión. */
+  async function correrDepuracionIA() {
+    if (pois.length === 0) return;
+    setDepurandoIA(true);
+    setOcupado(true);
+    try {
+      const { etiqueta } = perfilDeGiro(pois);
+      const res = await depurarConIA(
+        pois,
+        marcaCenso || "la marca censada",
+        etiqueta,
+        (t) => reportar("busy", t)
+      );
+      // la IA complementa/sobreescribe a la capa de tipos por placeId
+      const porId = new Map((sospechosos ?? []).map((s) => [s.placeId, s]));
+      for (const s of res) porId.set(s.placeId, s);
+      const lista = Array.from(porId.values());
+      setSospechosos(lista.length > 0 ? lista : null);
+      setChecksDepuracion(
+        Object.fromEntries(lista.map((x) => [x.placeId, x.veredicto === "dudoso"]))
+      );
+      reportar(
+        "ok",
+        res.length === 0
+          ? "La IA no encontró intrusos: todo el censo pertenece a la marca"
+          : `La IA marcó ${res.length} ${res.length === 1 ? "punto" : "puntos"} — revisa la lista y confirma`
+      );
+    } catch (e) {
+      reportar(
+        "error",
+        e instanceof Error ? e.message : "La depuración con IA falló"
+      );
+    } finally {
+      setDepurandoIA(false);
+      setOcupado(false);
+    }
+  }
+
+  /** Confirmación del usuario: los NO marcados se excluyen de pois,
+   * capas, universos (recalculados gratis), exports y del levantamiento
+   * ya persistido en el Planner. */
+  async function confirmarDepuracion() {
+    if (!sospechosos) return;
+    const excluidos = sospechosos.filter((s) => !checksDepuracion[s.placeId]);
+    const excluir = new Set(excluidos.map((s) => s.placeId));
+    setSospechosos(null);
+    setChecksDepuracion({});
+    if (excluir.size === 0) {
+      reportar("ok", "Revisión confirmada — todos los puntos se conservan");
+      return;
+    }
+    const listaNueva = pois.filter((p) => !excluir.has(p.placeId));
+    setPois(listaNueva);
+    setCapas((prev) =>
+      prev.map((c) => ({
+        ...c,
+        pois: c.pois.filter((p) => !excluir.has(p.placeId)),
+      }))
+    );
+    setDepurados((d) => d + excluir.size);
+    setContadores((prev) => ({
+      ...prev,
+      descartadosPorNombre: prev.descartadosPorNombre + excluir.size,
+    }));
+    setDetalles((prev) => ({
+      ...prev,
+      descartados: [
+        ...prev.descartados,
+        ...excluidos.map((s) => `${s.nombre} — depurado: ${s.razon}`),
+      ],
+    }));
+    // universos de censo (buffers por punto): recalcular sin los
+    // intrusos — gratis, PostGIS propio
+    if ((mode === "census" || mode === "territorial") && universos?.disponible) {
+      const u = await calcularUniversosDeCenso(listaNueva);
+      setUniversos(u);
+    }
+    // PLANNER: el levantamiento persistido también se depura
+    const runDep = ultimoRunDepRef.current;
+    if (planner && runDep) {
+      try {
+        const supabase = createClient();
+        const ids = Array.from(excluir);
+        const surveyIds = Array.from(runDep.run.surveys.values());
+        for (let i = 0; i < ids.length; i += 100) {
+          await supabase
+            .from("survey_points")
+            .delete()
+            .in("survey_id", surveyIds)
+            .in("place_id", ids.slice(i, i + 100));
+        }
+        if (
+          runDep.radioCapaM != null &&
+          (runDep.run.surveys.size > 1 || planner.rol === "competencia")
+        ) {
+          await guardarUniversosPorCapa(
+            runDep.run,
+            listaNueva,
+            runDep.radioCapaM,
+            (t) => reportar("busy", t)
+          );
+        }
+      } catch (e) {
+        console.error("No se pudo depurar el levantamiento persistido:", e);
+      }
+    }
+    reportar(
+      "ok",
+      `Censo depurado: ${excluir.size} ${excluir.size === 1 ? "punto excluido" : "puntos excluidos"} por coherencia de giro`
+    );
+  }
+
   // ---- Export plan (PDF): documento comercial con branding Gravity a
   //      partir del análisis ACTIVO, más el Export data en el mismo
   //      clic. La generación es 100% client-side (@react-pdf/renderer,
@@ -3769,6 +3939,11 @@ export default function SeekerApp({
           : []),
         ...(mode === "cp"
           ? ["Catálogo Nacional de Códigos Postales, Correos de México — polígonos y colonias"]
+          : []),
+        ...(depurados > 0
+          ? [
+              `Censo depurado por coherencia de giro (${depurados} ${depurados === 1 ? "punto excluido" : "puntos excluidos"} tras revisión)`,
+            ]
           : []),
       ];
 
@@ -5553,6 +5728,102 @@ export default function SeekerApp({
                   </button>
                 ))}
               </div>
+            )}
+            {/* DEPURACIÓN INTELIGENTE: lista de revisión de sospechosos.
+                La heurística/IA PROPONE, el usuario DISPONE — palomeado =
+                "sí pertenece a la marca" (se conserva); desmarcado se
+                excluye al confirmar. Nada se borra en silencio. */}
+            {sospechosos && (
+              <div className="absolute right-3 top-3 z-[1100] flex max-h-[72%] w-[400px] max-w-[calc(100%-24px)] flex-col overflow-hidden rounded-lg border border-magenta/50 bg-fondo/95 shadow-2xl backdrop-blur">
+                <div className="border-b border-linea px-4 py-3">
+                  <p className="font-mono text-[11px] font-semibold uppercase tracking-wider text-magenta">
+                    Depuración del censo ·{" "}
+                    {sospechosos.length.toLocaleString("es-MX")}{" "}
+                    {sospechosos.length === 1 ? "sospechoso" : "sospechosos"}
+                  </p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">
+                    Puntos con giro incompatible con el censo. Palomea los
+                    que SÍ pertenecen a la marca; los desmarcados se
+                    excluyen del análisis y los exports al confirmar.
+                  </p>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1">
+                  {sospechosos.map((s) => (
+                    <label
+                      key={s.placeId}
+                      className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 transition-colors hover:bg-panel2"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checksDepuracion[s.placeId] ?? false}
+                        onChange={(e) =>
+                          setChecksDepuracion((prev) => ({
+                            ...prev,
+                            [s.placeId]: e.target.checked,
+                          }))
+                        }
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#2fb9e8]"
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate font-mono text-xs text-zinc-200">
+                          {s.nombre}
+                        </span>
+                        <span className="block truncate text-[10px] text-zinc-500">
+                          {s.direccion}
+                        </span>
+                        <span className="mt-0.5 block text-[10px] leading-snug text-magenta/90">
+                          {s.razon}
+                          <span className="ml-1.5 rounded border border-linea px-1 py-px font-mono text-[9px] uppercase text-zinc-500">
+                            {s.fuente === "ia" ? "IA" : "tipos"}
+                          </span>
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 border-t border-linea px-3 py-2.5">
+                  <button
+                    onClick={confirmarDepuracion}
+                    disabled={ocupado}
+                    className="rounded-md border border-magenta bg-magenta/10 px-3 py-1.5 font-mono text-[11px] font-medium text-magenta transition-colors hover:bg-magenta/20 disabled:opacity-40"
+                  >
+                    Confirmar depuración
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSospechosos(null);
+                      setChecksDepuracion({});
+                    }}
+                    className="rounded-md border border-linea bg-panel2 px-3 py-1.5 font-mono text-[11px] text-zinc-400 transition-colors hover:border-zinc-600"
+                  >
+                    Conservar todos
+                  </button>
+                  <button
+                    onClick={correrDepuracionIA}
+                    disabled={depurandoIA || ocupado}
+                    title="Juicio de pertenencia punto por punto con Claude (modelo económico) — la decisión sigue siendo tuya"
+                    className="ml-auto rounded-md border border-violeta/60 bg-violeta/10 px-3 py-1.5 font-mono text-[11px] text-violeta transition-colors hover:bg-violeta/20 disabled:opacity-40"
+                  >
+                    {depurandoIA
+                      ? "Depurando…"
+                      : `Depurar con IA (~$${costoEstimadoIA(pois.length).toFixed(2)})`}
+                  </button>
+                </div>
+              </div>
+            )}
+            {/* censo de marca sin sospechosos automáticos: la capa 2
+                (IA) queda disponible bajo demanda */}
+            {!sospechosos && esCensoDeMarca && pois.length > 0 && (
+              <button
+                onClick={correrDepuracionIA}
+                disabled={depurandoIA || ocupado}
+                title="Revisa con IA si cada punto pertenece realmente a la marca censada (falsos positivos de otro giro)"
+                className="absolute right-3 top-3 z-[1050] rounded-md border border-violeta/60 bg-fondo/90 px-3 py-1.5 font-mono text-[11px] text-violeta backdrop-blur transition-colors hover:bg-violeta/20 disabled:opacity-40"
+              >
+                {depurandoIA
+                  ? "Depurando…"
+                  : `Depurar con IA (~$${costoEstimadoIA(pois.length).toFixed(2)})`}
+              </button>
             )}
             <ResultsTable
               pois={poisActivos}
