@@ -162,9 +162,17 @@ export default function ExportarProyecto({
     const guardados = consolidado.survey_ids.map((x) => x.id).sort().join(",");
     const actuales = seleccionados.map((s) => s.id).sort().join(",");
     if (guardados !== actuales) return true;
-    return seleccionados.some(
-      (s) => new Date(s.created_at) > new Date(consolidado.created_at)
-    );
+    // el último cambio real de un survey: su creación o, si su censo
+    // fue DEPURADO después (puntos excluidos), esa depuración
+    return seleccionados.some((s) => {
+      const dep = s.configuracion?.depurado_en
+        ? new Date(s.configuracion.depurado_en as string).getTime()
+        : 0;
+      return (
+        Math.max(new Date(s.created_at).getTime(), dep) >
+        new Date(consolidado.created_at).getTime()
+      );
+    });
   }, [consolidado, seleccionados]);
 
   // tácticas: default por las capas presentes en el proyecto, hasta que
@@ -512,6 +520,20 @@ export default function ExportarProyecto({
         ...(seleccionados.some((s) => (s.configuracion?.mode as string) === "cp")
           ? ["Catálogo Nacional de Códigos Postales, Correos de México — polígonos"]
           : []),
+        ...(() => {
+          // depuración inteligente: si algún levantamiento fue depurado
+          // (falsos positivos de otro giro excluidos tras revisión), el
+          // PDF lo declara en la metodología
+          const depurados = seleccionados.reduce(
+            (t, s) => t + (Number(s.configuracion?.depurados) || 0),
+            0
+          );
+          return depurados > 0
+            ? [
+                `Censo depurado por coherencia de giro (${depurados.toLocaleString("es-MX")} ${depurados === 1 ? "punto excluido" : "puntos excluidos"} tras revisión)`,
+              ]
+            : [];
+        })(),
       ];
 
       const sumaSimple = seleccionados.reduce(

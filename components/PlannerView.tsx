@@ -407,6 +407,15 @@ export default function PlannerView({
         survey_id: s.id,
         resultados: { ...u, porAgeb: undefined, agebsGeo: undefined },
       });
+      // el universo ya corresponde al censo depurado: se quita la marca
+      if (s.configuracion?.universos_desactualizados) {
+        const cfgLimpia = { ...s.configuracion };
+        delete cfgLimpia.universos_desactualizados;
+        await supabase
+          .from("surveys")
+          .update({ configuracion: cfgLimpia })
+          .eq("id", s.id);
+      }
       await cargar();
     } catch (e) {
       setError(
@@ -903,6 +912,16 @@ export default function PlannerView({
                                 {u?.disponible
                                   ? fmt(u.residencial!.adultos18)
                                   : "—"}
+                                {Boolean(
+                                  s.configuracion?.universos_desactualizados
+                                ) && (
+                                  <span
+                                    className="ml-1 cursor-help text-amber-400"
+                                    title="Universo desactualizado: el censo fue depurado después del último cálculo — recalcula con ⟳ Universo"
+                                  >
+                                    ⚠
+                                  </span>
+                                )}
                               </td>
                               <td className="px-3 py-2">{chipStatus(s)}</td>
                               <td className="px-3 py-2 text-right">
@@ -985,7 +1004,11 @@ export default function PlannerView({
                                     <button
                                       onClick={() => recalcularUniverso(s)}
                                       disabled={recalculando !== null}
-                                      className="rounded border border-linea bg-panel2 px-2 py-0.5 text-[10px] text-zinc-400 hover:border-violeta hover:text-violeta disabled:opacity-50"
+                                      className={`rounded px-2 py-0.5 text-[10px] disabled:opacity-50 ${
+                                        s.configuracion?.universos_desactualizados
+                                          ? "border border-amber-400/60 bg-amber-400/10 text-amber-400 hover:bg-amber-400/20"
+                                          : "border border-linea bg-panel2 text-zinc-400 hover:border-violeta hover:text-violeta"
+                                      }`}
                                       title="Recalcular el universo de ESTA capa sobre la geometría de sus propios puntos (gratis)"
                                     >
                                       {recalculando?.id === s.id

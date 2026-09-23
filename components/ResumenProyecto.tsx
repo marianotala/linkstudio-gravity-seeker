@@ -157,15 +157,25 @@ export default function ResumenProyecto({
   const sel = seleccion ?? {};
   const seleccionados = surveys.filter((s) => sel[s.id] && puntosDe(s) > 0);
 
-  /** ¿El consolidado guardado ya no corresponde a la selección o hay
-   * surveys más nuevos que el cálculo? */
+  /** Último cambio real de un survey: su creación o, si su censo fue
+   * DEPURADO después (puntos excluidos), la fecha de esa depuración. */
+  const ultimoCambio = (s: SurveyResumen) => {
+    const creado = new Date(s.created_at).getTime();
+    const dep = s.configuracion?.depurado_en
+      ? new Date(s.configuracion.depurado_en as string).getTime()
+      : 0;
+    return Math.max(creado, dep);
+  };
+
+  /** ¿El consolidado guardado ya no corresponde a la selección, hay
+   * surveys más nuevos que el cálculo o alguno fue depurado después? */
   const desactualizado = (() => {
     if (!consolidado) return false;
     const guardados = consolidado.survey_ids.map((x) => x.id).sort().join(",");
     const actuales = seleccionados.map((s) => s.id).sort().join(",");
     if (guardados !== actuales) return true;
     return seleccionados.some(
-      (s) => new Date(s.created_at) > new Date(consolidado.created_at)
+      (s) => ultimoCambio(s) > new Date(consolidado.created_at).getTime()
     );
   })();
 
@@ -490,6 +500,14 @@ export default function ResumenProyecto({
                       {universoDe(s)?.disponible
                         ? fmt(universoDe(s)!.residencial!.adultos18)
                         : "—"}
+                      {Boolean(s.configuracion?.universos_desactualizados) && (
+                        <span
+                          className="ml-1 cursor-help text-amber-400"
+                          title="Universo desactualizado: el censo fue depurado después del último cálculo — recalcúlalo en su sección (⟳ Universo)"
+                        >
+                          ⚠
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}

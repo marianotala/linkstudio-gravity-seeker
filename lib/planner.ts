@@ -292,6 +292,92 @@ export async function guardarUniversosPorCapa(
   }
 }
 
+/**
+ * DEPURACIÓN de un run YA PERSISTIDO: borra los puntos excluidos de
+ * survey_points y marca cada survey afectado en su configuración con
+ * `depurados` (acumulado), `depurado_en` (vuelve desactualizado al
+ * consolidado del proyecto) y `universos_desactualizados` (badge ⚠ y
+ * botón ⟳ Universo en ámbar) — ningún número viejo pasa por bueno.
+ * Si el flujo recalcula los universos ahí mismo, que limpie la marca
+ * con marcarUniversosActualizados.
+ */
+export async function depurarRunPersistido(
+  run: RunPlanner,
+  excluidos: Poi[]
+): Promise<void> {
+  const supabase = createClient();
+  const surveyIds = Array.from(run.surveys.values());
+  const ids = excluidos.map((p) => p.placeId);
+  for (let i = 0; i < ids.length; i += 100) {
+    const { error } = await supabase
+      .from("survey_points")
+      .delete()
+      .in("survey_id", surveyIds)
+      .in("place_id", ids.slice(i, i + 100));
+    if (error) {
+      throw new Error(`No se pudieron excluir los puntos: ${error.message}`);
+    }
+  }
+  // conteo por survey con la misma regla de asignación del guardado
+  // (capa/categoría/término → survey de esa etiqueta; si no, el primero)
+  const porSurvey = new Map<string, number>();
+  for (const p of excluidos) {
+    const etiqueta = [p.capa, p.categoria, p.termino].find(
+      (c) => c && run.surveys.has(c)
+    );
+    const id = etiqueta ? run.surveys.get(etiqueta)! : surveyIds[0];
+    porSurvey.set(id, (porSurvey.get(id) ?? 0) + 1);
+  }
+  const { data } = await supabase
+    .from("surveys")
+    .select("id, configuracion")
+    .in("id", surveyIds);
+  const ahora = new Date().toISOString();
+  for (const s of (data ?? []) as {
+    id: string;
+    configuracion: Record<string, unknown> | null;
+  }[]) {
+    const n = porSurvey.get(s.id) ?? 0;
+    if (n === 0) continue;
+    await supabase
+      .from("surveys")
+      .update({
+        configuracion: {
+          ...(s.configuracion ?? {}),
+          depurados: (Number(s.configuracion?.depurados) || 0) + n,
+          depurado_en: ahora,
+          universos_desactualizados: true,
+        },
+      })
+      .eq("id", s.id);
+  }
+}
+
+/** Quita la marca `universos_desactualizados` de los surveys cuyos
+ * universos acaban de recalcularse. Nunca lanza. */
+export async function marcarUniversosActualizados(
+  surveyIds: string[]
+): Promise<void> {
+  try {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("surveys")
+      .select("id, configuracion")
+      .in("id", surveyIds);
+    for (const s of (data ?? []) as {
+      id: string;
+      configuracion: Record<string, unknown> | null;
+    }[]) {
+      if (!s.configuracion?.universos_desactualizados) continue;
+      const cfg = { ...s.configuracion };
+      delete cfg.universos_desactualizados;
+      await supabase.from("surveys").update({ configuracion: cfg }).eq("id", s.id);
+    }
+  } catch (e) {
+    console.error("No se pudo limpiar la marca de universos:", e);
+  }
+}
+
 /** Puntos de un survey convertidos de vuelta a Poi (semilla de
  * reanudación y mapa del proyecto). */
 export interface PuntoSurvey {

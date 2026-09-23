@@ -9,12 +9,13 @@
 // /api/search), calcularUniversosCliente (universos por lotes),
 // cruzarPantallasPdvs (cruce OOH local) y la persistencia del Planner.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import CategoriaBuscador, {
   etiquetaSeleccion,
   type SeleccionCategoria,
 } from "./CategoriaBuscador";
 import BuscadorLugar from "./BuscadorLugar";
+import PanelDepuracion from "./DepuracionCenso";
 import RecolectorPuntos, {
   origenARecolectado,
   sumarPuntos,
@@ -27,6 +28,12 @@ import {
   dividirTerminos,
 } from "@/lib/busqueda-cliente";
 import { CATEGORIA_LIBRE } from "@/lib/categories";
+import {
+  depurarConIA,
+  perfilDeGiro,
+  sospechososPorTipo,
+  type Sospechoso,
+} from "@/lib/depuracion";
 import {
   consolidarCentros,
   crearBuscadorCercano,
@@ -44,6 +51,7 @@ import {
   actualizarRunPlanner,
   cargarPuntosSurveys,
   crearSurveysPlanner,
+  depurarRunPersistido,
   guardarPuntosPlanner,
   guardarUniversosPlanner,
   guardarUniversosPorCapa,
@@ -259,6 +267,84 @@ export function SeccionPois({
   const [error, setError] = useState("");
   const [ocupado, setOcupado] = useState(false);
 
+  // depuración inteligente del censo de marca (aquí opera sobre el
+  // BORRADOR: la revisión pasa ANTES de Calcular/persistir el survey)
+  const [sospechosos, setSospechosos] = useState<Sospechoso[] | null>(null);
+  const [checksDep, setChecksDep] = useState<Record<string, boolean>>({});
+  const [depurandoIA, setDepurandoIA] = useState(false);
+  const ctxDepRef = useRef<{ lista: Poi[]; marca: string } | null>(null);
+
+  function evaluarCoherencia(lista: Poi[], marca: string) {
+    ctxDepRef.current = { lista, marca };
+    const s = sospechososPorTipo(lista);
+    setSospechosos(s.length > 0 ? s : null);
+    setChecksDep(
+      Object.fromEntries(s.map((x) => [x.placeId, x.veredicto === "dudoso"]))
+    );
+  }
+
+  async function correrDepuracionIA() {
+    const ctx = ctxDepRef.current;
+    if (!ctx || ctx.lista.length === 0) return;
+    setDepurandoIA(true);
+    setError("");
+    try {
+      const res = await depurarConIA(
+        ctx.lista,
+        ctx.marca,
+        perfilDeGiro(ctx.lista).etiqueta,
+        setEstado
+      );
+      const porId = new Map((sospechosos ?? []).map((s) => [s.placeId, s]));
+      for (const s of res) porId.set(s.placeId, s);
+      const lista = Array.from(porId.values());
+      setSospechosos(lista.length > 0 ? lista : null);
+      setChecksDep(
+        Object.fromEntries(lista.map((x) => [x.placeId, x.veredicto === "dudoso"]))
+      );
+      setEstado(
+        res.length === 0
+          ? "La IA no encontró intrusos: todo el censo pertenece a la marca"
+          : `La IA marcó ${res.length} ${res.length === 1 ? "punto" : "puntos"} — revisa la lista y confirma`
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "La depuración con IA falló");
+    } finally {
+      setDepurandoIA(false);
+    }
+  }
+
+  /** Los NO palomeados salen del borrador — todavía no hay survey, así
+   * que los universos se calcularán ya depurados al dar Calcular. */
+  function confirmarDepuracion() {
+    if (!sospechosos) return;
+    const excluir = new Set(
+      sospechosos.filter((s) => !checksDep[s.placeId]).map((s) => s.placeId)
+    );
+    setSospechosos(null);
+    setChecksDep({});
+    if (excluir.size === 0) {
+      setEstado("Revisión confirmada — todos los puntos se conservan");
+      return;
+    }
+    onBorrador({
+      puntos: puntos.filter((p) => !excluir.has(p.placeId)),
+      config: {
+        ...cfg,
+        depurados: (Number(cfg.depurados) || 0) + excluir.size,
+      },
+    });
+    if (ctxDepRef.current) {
+      ctxDepRef.current = {
+        ...ctxDepRef.current,
+        lista: ctxDepRef.current.lista.filter((p) => !excluir.has(p.placeId)),
+      };
+    }
+    setEstado(
+      `Censo depurado: ${fmt(excluir.size)} ${excluir.size === 1 ? "punto excluido" : "puntos excluidos"} por coherencia de giro`
+    );
+  }
+
   const consultasCenso = centro
     ? consultasPorCentroDe(categorias, terminos)
     : 0;
@@ -290,6 +376,11 @@ export function SeccionPois({
       }));
       const { lista, duplicados } = sumarPuntos(puntos, nuevos);
       setPuntos(lista);
+      // capa 1 de depuración: solo si el censo es de MARCA — la
+      // revisión aparece ANTES de Calcular (dar por bueno el survey)
+      if (terminos.length > 0) {
+        evaluarCoherencia(nuevos, terminos.join(", "));
+      }
       const notas = [
         `${fmt(nuevos.length - duplicados)} POIs sumados a la lista`,
         ...(duplicados > 0 ? [`${fmt(duplicados)} ya estaban`] : []),
@@ -319,6 +410,10 @@ export function SeccionPois({
           `Puntos de interés · ${fmt(puntos.length)}`,
         puntos,
         radioM: radioInfluencia,
+        configExtra:
+          (Number(cfg.depurados) || 0) > 0
+            ? { depurados: Number(cfg.depurados) }
+            : undefined,
         onEstado: setEstado,
       });
       onBorrador({ puntos: [], config: { radioInfluencia } });
@@ -439,6 +534,24 @@ export function SeccionPois({
         )}
       </div>
 
+      {/* revisión de la depuración: gate ANTES de dar por bueno el survey */}
+      {sospechosos && (
+        <PanelDepuracion
+          sospechosos={sospechosos}
+          checks={checksDep}
+          onCheck={(id, v) => setChecksDep((prev) => ({ ...prev, [id]: v }))}
+          onConfirmar={confirmarDepuracion}
+          onConservar={() => {
+            setSospechosos(null);
+            setChecksDep({});
+          }}
+          onDepurarIA={correrDepuracionIA}
+          depurandoIA={depurandoIA}
+          ocupado={ocupado}
+          nPois={ctxDepRef.current?.lista.length ?? puntos.length}
+        />
+      )}
+
       {/* calcular */}
       <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-linea pt-3">
         <input
@@ -463,13 +576,33 @@ export function SeccionPois({
         </select>
         <button
           onClick={calcular}
-          disabled={ocupado || puntos.length === 0}
+          disabled={ocupado || puntos.length === 0 || sospechosos !== null}
           className="rounded-md px-5 py-2 font-display text-xs font-extrabold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
           style={{ backgroundColor: color }}
-          title="Universos del conjunto + guardado del levantamiento (gratis: 0 consultas a Google)"
+          title={
+            sospechosos !== null
+              ? "Primero resuelve la depuración del censo (confirma o conserva todos)"
+              : "Universos del conjunto + guardado del levantamiento (gratis: 0 consultas a Google)"
+          }
         >
           Calcular ({fmt(puntos.length)} puntos)
         </button>
+        {sospechosos !== null && (
+          <span className="font-mono text-[10px] text-amber-400">
+            resuelve la depuración del censo antes de calcular
+          </span>
+        )}
+        {/* capa 2 bajo demanda cuando la capa 1 no marcó nada */}
+        {!sospechosos && ctxDepRef.current && ctxDepRef.current.lista.length > 0 && (
+          <button
+            onClick={correrDepuracionIA}
+            disabled={depurandoIA || ocupado}
+            title="Revisa con IA si cada punto del censo pertenece realmente a la marca (falsos positivos de otro giro)"
+            className="rounded-md border border-violeta/60 bg-violeta/10 px-3 py-1.5 font-mono text-[11px] text-violeta transition-colors hover:bg-violeta/20 disabled:opacity-40"
+          >
+            {depurandoIA ? "Depurando…" : "Depurar con IA"}
+          </button>
+        )}
       </div>
       {estado && <p className="mt-2 font-mono text-[11px] text-cian">⟳ {estado}</p>}
       {error && <p className="mt-2 font-mono text-[11px] text-magenta">{error}</p>}
@@ -605,6 +738,83 @@ export function SeccionCompetencia({
   const [error, setError] = useState("");
   const [ocupado, setOcupado] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
+
+  // depuración inteligente: aquí el survey YA está persistido al
+  // terminar la corrida — la revisión aparece antes de darlo por bueno
+  // y confirmar borra los intrusos de survey_points y marca universos
+  // de la capa + consolidado como desactualizados
+  const [sospechosos, setSospechosos] = useState<Sospechoso[] | null>(null);
+  const [checksDep, setChecksDep] = useState<Record<string, boolean>>({});
+  const [depurandoIA, setDepurandoIA] = useState(false);
+  const ctxDepRef = useRef<{
+    run: RunPlanner;
+    lista: Poi[];
+    marca: string;
+  } | null>(null);
+
+  async function correrDepuracionIA() {
+    const ctx = ctxDepRef.current;
+    if (!ctx || ctx.lista.length === 0) return;
+    setDepurandoIA(true);
+    setError("");
+    try {
+      const res = await depurarConIA(
+        ctx.lista,
+        ctx.marca,
+        perfilDeGiro(ctx.lista).etiqueta,
+        setEstado
+      );
+      const porId = new Map((sospechosos ?? []).map((s) => [s.placeId, s]));
+      for (const s of res) porId.set(s.placeId, s);
+      const lista = Array.from(porId.values());
+      setSospechosos(lista.length > 0 ? lista : null);
+      setChecksDep(
+        Object.fromEntries(lista.map((x) => [x.placeId, x.veredicto === "dudoso"]))
+      );
+      setEstado(
+        res.length === 0
+          ? "La IA no encontró intrusos: todo el levantamiento pertenece a las marcas"
+          : `La IA marcó ${res.length} ${res.length === 1 ? "punto" : "puntos"} — revisa la lista y confirma`
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "La depuración con IA falló");
+    } finally {
+      setDepurandoIA(false);
+    }
+  }
+
+  /** Confirmación: los NO palomeados se borran del levantamiento
+   * persistido; los universos de la capa y el consolidado del proyecto
+   * quedan MARCADOS como desactualizados para recalcular. */
+  async function confirmarDepuracion() {
+    const ctx = ctxDepRef.current;
+    if (!ctx || !sospechosos) return;
+    const noPertenecen = new Set(
+      sospechosos.filter((s) => !checksDep[s.placeId]).map((s) => s.placeId)
+    );
+    const excluidos = ctx.lista.filter((p) => noPertenecen.has(p.placeId));
+    setSospechosos(null);
+    setChecksDep({});
+    if (excluidos.length === 0) {
+      setEstado("Revisión confirmada — todos los puntos se conservan");
+      return;
+    }
+    setOcupado(true);
+    setError("");
+    try {
+      setEstado("Excluyendo los intrusos del levantamiento…");
+      await depurarRunPersistido(ctx.run, excluidos);
+      ctx.lista = ctx.lista.filter((p) => !noPertenecen.has(p.placeId));
+      setEstado(
+        `Censo depurado: ${fmt(excluidos.length)} ${excluidos.length === 1 ? "punto excluido" : "puntos excluidos"} — los universos de la capa quedaron desactualizados: recalcúlalos con ⟳ Universo y con "Recalcular consolidado" en el Resumen`
+      );
+      await alGuardar();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo aplicar la depuración");
+    } finally {
+      setOcupado(false);
+    }
+  }
 
   // estimador de costo en vivo (con orígenes consolidados por traslape)
   const centros = useMemo(
@@ -789,6 +999,22 @@ export function SeccionCompetencia({
           : []),
       ];
       setEstado(notas.join(" · "));
+      // capa 1 de depuración: solo si la corrida buscó MARCAS — la
+      // revisión aparece al terminar, antes de dar por bueno el survey
+      if (terminos.length > 0) {
+        ctxDepRef.current = { run: elRun, lista, marca: terminos.join(", ") };
+        const sosp = sospechososPorTipo(lista);
+        setSospechosos(sosp.length > 0 ? sosp : null);
+        setChecksDep(
+          Object.fromEntries(
+            sosp.map((x) => [x.placeId, x.veredicto === "dudoso"])
+          )
+        );
+      } else {
+        ctxDepRef.current = null;
+        setSospechosos(null);
+        setChecksDep({});
+      }
       // corrida terminada: se limpia el marcador y lo ya censado
       delete cfgLocal.runActivo;
       onBorrador({
@@ -920,7 +1146,36 @@ export function SeccionCompetencia({
             cancelar
           </button>
         )}
+        {/* capa 2 bajo demanda cuando la capa 1 no marcó nada */}
+        {!sospechosos && ctxDepRef.current && ctxDepRef.current.lista.length > 0 && (
+          <button
+            onClick={correrDepuracionIA}
+            disabled={depurandoIA || ocupado}
+            title="Revisa con IA si cada punto pertenece realmente a las marcas censadas (falsos positivos de otro giro)"
+            className="rounded-md border border-violeta/60 bg-violeta/10 px-3 py-1.5 font-mono text-[11px] text-violeta transition-colors hover:bg-violeta/20 disabled:opacity-40"
+          >
+            {depurandoIA ? "Depurando…" : "Depurar con IA"}
+          </button>
+        )}
       </div>
+
+      {/* revisión de la depuración del levantamiento recién corrido */}
+      {sospechosos && (
+        <PanelDepuracion
+          sospechosos={sospechosos}
+          checks={checksDep}
+          onCheck={(id, v) => setChecksDep((prev) => ({ ...prev, [id]: v }))}
+          onConfirmar={confirmarDepuracion}
+          onConservar={() => {
+            setSospechosos(null);
+            setChecksDep({});
+          }}
+          onDepurarIA={correrDepuracionIA}
+          depurandoIA={depurandoIA}
+          ocupado={ocupado}
+          nPois={ctxDepRef.current?.lista.length ?? 0}
+        />
+      )}
       {estado && <p className="mt-2 font-mono text-[11px] text-cian">⟳ {estado}</p>}
       {error && <p className="mt-2 font-mono text-[11px] text-magenta">{error}</p>}
     </div>

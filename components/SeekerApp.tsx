@@ -61,10 +61,12 @@ import {
   actualizarRunPlanner,
   cargarRunParaReanudar,
   crearSurveysPlanner,
+  depurarRunPersistido,
   ETIQUETA_ROL,
   guardarPuntosPlanner,
   guardarUniversosPlanner,
   guardarUniversosPorCapa,
+  marcarUniversosActualizados,
   reescribirPuntosPlanner,
   type ContextoPlanner,
   type RunPlanner,
@@ -3828,25 +3830,26 @@ export default function SeekerApp({
     }));
     // universos de censo (buffers por punto): recalcular sin los
     // intrusos — gratis, PostGIS propio
+    let universosCensoNuevos: Universos | null = null;
     if ((mode === "census" || mode === "territorial") && universos?.disponible) {
       const u = await calcularUniversosDeCenso(listaNueva);
       setUniversos(u);
+      if (u?.disponible) universosCensoNuevos = u;
     }
-    // PLANNER: el levantamiento persistido también se depura
+    // PLANNER: el levantamiento persistido también se depura — borra
+    // los intrusos y marca depurados/depurado_en (el consolidado del
+    // proyecto queda desactualizado) + universos_desactualizados; si
+    // aquí mismo se recalculan y persisten, la marca se limpia
     const runDep = ultimoRunDepRef.current;
     if (planner && runDep) {
       try {
-        const supabase = createClient();
-        const ids = Array.from(excluir);
-        const surveyIds = Array.from(runDep.run.surveys.values());
-        for (let i = 0; i < ids.length; i += 100) {
-          await supabase
-            .from("survey_points")
-            .delete()
-            .in("survey_id", surveyIds)
-            .in("place_id", ids.slice(i, i + 100));
-        }
-        if (
+        const excluidosPois = pois.filter((p) => excluir.has(p.placeId));
+        await depurarRunPersistido(runDep.run, excluidosPois);
+        let universosFrescos = false;
+        if (universosCensoNuevos) {
+          await guardarUniversosPlanner(runDep.run, universosCensoNuevos);
+          universosFrescos = true;
+        } else if (
           runDep.radioCapaM != null &&
           (runDep.run.surveys.size > 1 || planner.rol === "competencia")
         ) {
@@ -3855,6 +3858,12 @@ export default function SeekerApp({
             listaNueva,
             runDep.radioCapaM,
             (t) => reportar("busy", t)
+          );
+          universosFrescos = true;
+        }
+        if (universosFrescos) {
+          await marcarUniversosActualizados(
+            Array.from(runDep.run.surveys.values())
           );
         }
       } catch (e) {
