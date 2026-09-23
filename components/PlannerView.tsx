@@ -482,7 +482,13 @@ export default function PlannerView({
   /** Export rápido de un survey (Proximidad): coordenadas + nombre en
    * CSV y GeoJSON, listos para alimentar DSPs. */
   function descargarTexto(nombre: string, contenido: string, mime: string) {
-    const blob = new Blob([contenido], { type: mime });
+    // CSV con BOM UTF-8: Excel detecta el encoding y los acentos no se
+    // rompen al abrir con doble clic (los GeoJSON van sin BOM)
+    const cuerpo =
+      mime.startsWith("text/csv") && !contenido.startsWith("﻿")
+        ? "﻿" + contenido
+        : contenido;
+    const blob = new Blob([cuerpo], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -511,6 +517,33 @@ export default function PlannerView({
         .slice(0, 50) || "levantamiento"
     );
   }
+  /** Export data del levantamiento como Excel NATIVO (.xlsx) — cero
+   * ambigüedad de encoding; el CSV con BOM queda como alternativa. */
+  async function exportarXlsxSurvey(s: SurveyFila) {
+    const pts = await puntosParaExport(s);
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+    const filas = pts.map((p) => ({
+      nombre: p.nombre,
+      direccion: p.direccion ?? "",
+      lat: p.lat,
+      lng: p.lng,
+      cp: p.cp ?? "",
+      categoria: p.categoria ?? "",
+    }));
+    const hoja = XLSX.utils.json_to_sheet(filas);
+    hoja["!cols"] = [
+      { wch: 32 },
+      { wch: 42 },
+      { wch: 11 },
+      { wch: 11 },
+      { wch: 8 },
+      { wch: 22 },
+    ];
+    XLSX.utils.book_append_sheet(wb, hoja, "Puntos");
+    XLSX.writeFile(wb, `seeker_${nombreArchivo(s)}.xlsx`);
+  }
+
   async function exportarCsvSurvey(s: SurveyFila) {
     const pts = await puntosParaExport(s);
     const filas = [
@@ -927,9 +960,16 @@ export default function PlannerView({
                                     {s.rol === "proximidad" && (
                                       <>
                                         <button
+                                          onClick={() => exportarXlsxSurvey(s)}
+                                          className="rounded border border-linea bg-panel2 px-2 py-0.5 text-[10px] text-zinc-400 hover:border-emerald-400 hover:text-emerald-400"
+                                          title="Excel nativo (.xlsx): acentos siempre correctos"
+                                        >
+                                          XLSX
+                                        </button>
+                                        <button
                                           onClick={() => exportarCsvSurvey(s)}
                                           className="rounded border border-linea bg-panel2 px-2 py-0.5 text-[10px] text-zinc-400 hover:border-emerald-400 hover:text-emerald-400"
-                                          title="Coordenadas + nombre en CSV, listo para DSPs"
+                                          title="CSV UTF-8 con BOM, listo para DSPs"
                                         >
                                           CSV
                                         </button>

@@ -72,7 +72,13 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 }
 
 function descargarArchivo(nombre: string, contenido: string, mime: string) {
-  const blob = new Blob([contenido], { type: mime });
+  // CSV con BOM UTF-8: Excel detecta el encoding y los acentos no se
+  // rompen al abrir con doble clic (los GeoJSON van sin BOM)
+  const cuerpo =
+    mime.startsWith("text/csv") && !contenido.startsWith("﻿")
+      ? "﻿" + contenido
+      : contenido;
+  const blob = new Blob([cuerpo], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -588,6 +594,55 @@ export default function OohView({
     reportar("ok", "Export data (CSV del cruce) descargado");
   }
 
+  /** Export data del cruce como Excel NATIVO (.xlsx) — el formato
+   * principal: cero ambigüedad de encoding. Hoja "Cruce" (una fila por
+   * relación pantalla↔PDV) + hoja "Sin cobertura". */
+  async function exportarCruceXlsx() {
+    if (!cruces) {
+      reportar("error", "Ejecuta el cruce primero");
+      return;
+    }
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+    const filas = crucesPlan.flatMap((c) =>
+      c.pdvs.map((rel) => ({
+        pantalla_clave: c.pantalla.clave,
+        pantalla_nombre: c.pantalla.nombre ?? "",
+        tipo: etiquetaTipoPantalla(c.pantalla.tipo),
+        medio: c.pantalla.medio ?? "",
+        ciudad: c.pantalla.ciudad ?? "",
+        digital:
+          c.pantalla.digital === null ? "" : c.pantalla.digital ? "digital" : "estatica",
+        impresiones_mensuales: c.pantalla.impresiones ?? "",
+        pantalla_lat: c.pantalla.lat,
+        pantalla_lng: c.pantalla.lng,
+        radio_m: c.radioM,
+        pdv_nombre: etiquetaOrigen(pdvs[rel.idx], rel.idx),
+        pdv_lat: pdvs[rel.idx].lat,
+        pdv_lng: pdvs[rel.idx].lng,
+        distancia_m: rel.distancia,
+      }))
+    );
+    const hoja = XLSX.utils.json_to_sheet(filas);
+    hoja["!cols"] = Object.keys(filas[0] ?? { a: 1 }).map((k) => ({
+      wch: Math.min(38, Math.max(10, k.length + 4)),
+    }));
+    XLSX.utils.book_append_sheet(wb, hoja, "Cruce");
+    if (sinCobertura.length > 0) {
+      const hojaSin = XLSX.utils.json_to_sheet(
+        sinCobertura.map(({ o, i }) => ({
+          pdv_nombre: etiquetaOrigen(o, i),
+          pdv_lat: o.lat,
+          pdv_lng: o.lng,
+        }))
+      );
+      hojaSin["!cols"] = [{ wch: 34 }, { wch: 12 }, { wch: 12 }];
+      XLSX.utils.book_append_sheet(wb, hojaSin, "Sin cobertura");
+    }
+    XLSX.writeFile(wb, "seeker_ooh_cruce.xlsx");
+    reportar("ok", "Export data (.xlsx del cruce) descargado");
+  }
+
   async function exportarPlanOoh() {
     if (crucesPlan.length === 0) {
       reportar("error", "Ejecuta el cruce primero");
@@ -671,10 +726,10 @@ export default function OohView({
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      // dos entregables, un clic: el Export data acompaña al plan
-      exportarCruceCsv();
+      // dos entregables, un clic: el Export data (Excel nativo) acompaña
+      await exportarCruceXlsx();
       setProceso(null);
-      reportar("ok", "Export plan (PDF) + Export data (CSV) descargados");
+      reportar("ok", "Export plan (PDF) + Export data (.xlsx) descargados");
     } catch (e) {
       console.error(e);
       setProceso({
@@ -1036,11 +1091,12 @@ export default function OohView({
               />
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <button
-                  onClick={exportarCruceCsv}
+                  onClick={exportarCruceXlsx}
                   disabled={ocupado || crucesPlan.length === 0}
                   className="rounded-md border border-linea bg-panel2 px-3 py-2 font-mono text-xs text-zinc-300 transition-colors hover:border-cian hover:text-cian disabled:opacity-40"
+                  title="Excel nativo (acentos siempre correctos) · hoja Cruce + hoja Sin cobertura"
                 >
-                  Export data (CSV)
+                  Export data (.xlsx)
                 </button>
                 <button
                   onClick={exportarPlanOoh}
@@ -1048,6 +1104,14 @@ export default function OohView({
                   className="rounded-md bg-magenta px-3 py-2 font-display text-xs font-extrabold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
                 >
                   Export plan (PDF)
+                </button>
+                <button
+                  onClick={exportarCruceCsv}
+                  disabled={ocupado || crucesPlan.length === 0}
+                  className="col-span-2 rounded-md border border-linea bg-panel2 px-3 py-1.5 font-mono text-[11px] text-zinc-400 transition-colors hover:border-cian hover:text-cian disabled:opacity-40"
+                  title="Texto plano UTF-8 con BOM, para sistemas que pidan CSV"
+                >
+                  CSV (UTF-8)
                 </button>
               </div>
               {!planner && (

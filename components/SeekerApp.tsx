@@ -83,6 +83,7 @@ import {
   exportarGeoJsonPuntos,
   exportarGeoJsonGeocercas,
   exportarGeoJsonRadiosOrigen,
+  exportarXlsxData,
 } from "@/lib/exports";
 import type {
   AgebGeo,
@@ -3818,11 +3819,17 @@ export default function SeekerApp({
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      // dos entregables, un clic: el Export data acompaña al plan
+      // dos entregables, un clic: el Export data (Excel nativo — cero
+      // ambigüedad de encoding) acompaña al plan
       if (poisPlan.length > 0) {
-        exportarCsv(poisPlan, centrosActivos, universos);
+        await exportarXlsxData(
+          poisPlan,
+          centrosActivos,
+          universos,
+          capas.length > 1 ? capas : undefined
+        );
       }
-      reportar("ok", "Export plan (PDF) + Export data (CSV) descargados");
+      reportar("ok", "Export plan (PDF) + Export data (.xlsx) descargados");
     } catch (e) {
       console.error(e);
       const mensaje =
@@ -5334,11 +5341,28 @@ export default function SeekerApp({
                 </button>
               )}
               <button
+                onClick={() =>
+                  exportarXlsxData(
+                    poisActivos,
+                    centrosActivos,
+                    universos,
+                    capas.length > 1 ? capas : undefined
+                  )
+                }
+                disabled={poisActivos.length === 0}
+                className="rounded-md border border-linea bg-panel2 px-3 py-2 text-left font-mono text-[11px] text-zinc-300 transition-colors hover:border-cian hover:text-cian disabled:opacity-30"
+                title="Excel nativo: acentos siempre correctos, columnas auto-anchas y una hoja por capa"
+              >
+                ↓ Excel de POIs (.xlsx){" "}
+                <span className="text-zinc-600">seeker_pois.xlsx</span>
+              </button>
+              <button
                 onClick={() => exportarCsv(poisActivos, centrosActivos, universos)}
                 disabled={poisActivos.length === 0}
                 className="rounded-md border border-linea bg-panel2 px-3 py-2 text-left font-mono text-[11px] text-zinc-300 transition-colors hover:border-cian hover:text-cian disabled:opacity-30"
+                title="Texto plano UTF-8 con BOM (Excel, Sheets y Numbers lo abren con acentos correctos)"
               >
-                ↓ CSV de POIs <span className="text-zinc-600">seeker_pois.csv</span>
+                ↓ CSV (UTF-8) <span className="text-zinc-600">seeker_pois.csv</span>
               </button>
               <button
                 onClick={() => exportarGeoJsonPuntos(poisActivos)}

@@ -31,8 +31,19 @@ function propsUniversos(universos: Universos | null | undefined) {
   };
 }
 
+/** BOM UTF-8: la señal que Excel (Windows y Mac) necesita para
+ * detectar UTF-8 al abrir un CSV con doble clic — sin él interpreta
+ * MacRoman/Latin-1 y los acentos salen rotos ("C√°rdenas"). */
+export const BOM_UTF8 = "﻿";
+
 function descargar(nombre: string, contenido: string, mime: string) {
-  const blob = new Blob([contenido], { type: mime });
+  // TODO CSV de la plataforma sale con BOM (los GeoJSON no: algunos
+  // parsers de DSPs no toleran BOM en JSON)
+  const cuerpo =
+    mime.startsWith("text/csv") && !contenido.startsWith(BOM_UTF8)
+      ? BOM_UTF8 + contenido
+      : contenido;
+  const blob = new Blob([cuerpo], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -41,6 +52,11 @@ function descargar(nombre: string, contenido: string, mime: string) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+/** Descarga un CSV con BOM UTF-8 (pieza compartida de la plataforma). */
+export function descargarCsvUtf8(nombre: string, contenido: string) {
+  descargar(nombre, contenido, "text/csv;charset=utf-8");
 }
 
 function csvCampo(v: string | number): string {
@@ -102,6 +118,96 @@ export function exportarCsv(
     ...filasUniversos(universos),
   ];
   descargar("seeker_pois.csv", filas.join("\n"), "text/csv;charset=utf-8");
+}
+
+/** Fila del Export data como objeto (comparten CSV y XLSX). */
+function filaDeDatos(p: Poi, origenes: Origin[]) {
+  const origen = origenes[p.origenIdx];
+  return {
+    nombre: p.nombre,
+    direccion: p.direccion,
+    ciudad: ciudadDeDireccion(p.direccion),
+    codigo_postal: p.cp ?? "",
+    capa: p.capa ?? "",
+    termino_marca: p.termino ?? "",
+    categoria: p.categoria ?? "",
+    lat: p.lat,
+    lng: p.lng,
+    fuente: p.fuente,
+    estrato: p.estrato ?? "",
+    origen_nombre: origen ? etiquetaOrigen(origen, p.origenIdx) : "",
+    origen_lat: origen?.lat ?? "",
+    origen_lng: origen?.lng ?? "",
+    distancia_m: p.distancia,
+    place_id: p.placeId,
+  };
+}
+
+/** Anchos de columna (wch) a partir del contenido, acotados. */
+function anchosDeColumnas(filas: Record<string, unknown>[]): { wch: number }[] {
+  if (filas.length === 0) return [];
+  return Object.keys(filas[0]).map((k) => {
+    const max = filas
+      .slice(0, 200)
+      .reduce((m, f) => Math.max(m, String(f[k] ?? "").length), k.length);
+    return { wch: Math.min(42, Math.max(8, max + 2)) };
+  });
+}
+
+/**
+ * 1b) EXPORT DATA COMO EXCEL NATIVO (.xlsx) — el formato principal:
+ * cero ambigüedad de encoding (los acentos jamás se rompen),
+ * encabezados propios, columnas auto-anchas, una hoja POR CAPA en
+ * exports multi-capa y hoja de universos. El CSV con BOM queda como
+ * alternativa para sistemas que pidan texto plano.
+ */
+export async function exportarXlsxData(
+  pois: Poi[],
+  origenes: Origin[] = [],
+  universos?: Universos | null,
+  capas?: { nombre: string; pois: Poi[] }[] | null
+) {
+  const XLSX = await import("xlsx");
+  const wb = XLSX.utils.book_new();
+  const usados = new Set<string>();
+  const nombreHoja = (base: string) => {
+    const limpio = base.replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 28) || "Hoja";
+    let nombre = limpio;
+    let n = 2;
+    while (usados.has(nombre)) nombre = `${limpio.slice(0, 25)} ${n++}`;
+    usados.add(nombre);
+    return nombre;
+  };
+  const agregarHoja = (nombre: string, lista: Poi[]) => {
+    const filas = lista.map((p) => filaDeDatos(p, origenes));
+    const hoja = XLSX.utils.json_to_sheet(filas);
+    hoja["!cols"] = anchosDeColumnas(filas);
+    XLSX.utils.book_append_sheet(wb, hoja, nombreHoja(nombre));
+  };
+  if (capas && capas.length > 1) {
+    for (const c of capas) agregarHoja(c.nombre, c.pois);
+  } else {
+    agregarHoja("POIs", pois);
+  }
+  if (universos?.disponible) {
+    const resumen = [
+      { dato: "universo_residencial", valor: universos.residencial!.poblacion },
+      { dato: "adultos_18_mas", valor: universos.residencial!.adultos18 },
+      {
+        dato: "nse_proxy_promedio (proxy censal; no NSE AMAI)",
+        valor: universos.perfil!.nseProxy ?? "",
+      },
+      { dato: "pct_18a24", valor: universos.perfil!.pct18a24 ?? "" },
+      { dato: "pct_60ymas", valor: universos.perfil!.pct60ymas ?? "" },
+      { dato: "viviendas", valor: universos.residencial!.viviendas },
+      { dato: "agebs_intersectados", valor: universos.agebs ?? "" },
+      { dato: "fuente", valor: universos.fuente ?? "" },
+    ];
+    const hoja = XLSX.utils.json_to_sheet(resumen);
+    hoja["!cols"] = [{ wch: 44 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, hoja, nombreHoja("Universos"));
+  }
+  XLSX.writeFile(wb, "seeker_pois.xlsx");
 }
 
 /** 2) GeoJSON de puntos (un Point por POI). */
