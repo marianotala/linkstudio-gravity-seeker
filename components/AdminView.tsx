@@ -5,6 +5,7 @@
 // sube por lotes vía RPC admin_upsert_agebs (RLS: solo rol admin).
 
 import { useEffect, useRef, useState } from "react";
+import AdminCostos from "./AdminCostos";
 import AppHeader from "./AppHeader";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -1076,22 +1077,25 @@ export default function AdminView({
             )}
           </div>
 
-          {/* consumo de la API + tope diario de celdas */}
+          {/* blindaje de costos: solicitudes + gasto MXN + configuración */}
+          <AdminCostos />
+
+          {/* consumo de la API + tope diario de consultas */}
           <div className="tarjeta glow-cian px-6 py-6">
             <h2 className="font-display text-xl font-extrabold tracking-tight text-white">
               Consumo de la API y tope diario
             </h2>
             <p className="mt-1 font-mono text-[11px] leading-relaxed text-zinc-500">
-              Cada celda de censo/lote es una consulta a Google. El tope
-              diario por usuario protege la cuota — edítalo aquí con datos
-              reales del consumo (los admin no tienen límite). Los usuarios
-              ven su saldo antes de ejecutar y, al toparlo, el avance queda
-              guardado y se reanuda al día siguiente.
+              El tope diario por usuario ahora cuenta CONSULTAS PAGADAS a
+              Google (las servidas del caché no suman) — edítalo con datos
+              reales del gasto de arriba (los admin no tienen límite). Al
+              toparlo, el avance queda guardado y se reanuda al día
+              siguiente; una corrida aprobada lo puede exceder.
             </p>
 
             <div className="mt-3 flex items-center gap-2">
               <label className="font-mono text-[11px] text-zinc-400">
-                Tope de celdas/día por usuario
+                Tope de consultas/día por usuario
               </label>
               <input
                 type="number"

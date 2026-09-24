@@ -15,6 +15,7 @@ import CategoriaBuscador, {
   type SeleccionCategoria,
 } from "./CategoriaBuscador";
 import BuscadorLugar from "./BuscadorLugar";
+import { useAprobacionCorrida } from "./AprobacionCorrida";
 import PanelDepuracion from "./DepuracionCenso";
 import RecolectorPuntos, {
   origenARecolectado,
@@ -738,6 +739,8 @@ export function SeccionCompetencia({
   const [error, setError] = useState("");
   const [ocupado, setOcupado] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
+  // gate de corridas grandes (umbral configurable en /admin)
+  const { gate: gateCorrida, panel: panelAprobacion } = useAprobacionCorrida();
 
   // depuración inteligente: aquí el survey YA está persistido al
   // terminar la corrida — la revisión aparece antes de darlo por bueno
@@ -851,6 +854,8 @@ export function SeccionCompetencia({
     indice: number;
     total: number;
     firma: string;
+    /** Solicitud aprobada que autorizó esta corrida (reanudar la reusa). */
+    solicitudId?: string;
   }
   const runActivo = cfg.runActivo as RunActivo | undefined;
   const reanudable = !!runActivo && runActivo.firma === firmaRun;
@@ -864,11 +869,44 @@ export function SeccionCompetencia({
       setError("Elige qué buscar alrededor: una categoría o términos de marca");
       return;
     }
-    if (!reanudable && consultas > UMBRAL_CONFIRMAR_CONSULTAS && !confirmando) {
+    // reanudar lo ya pagado/aprobado no vuelve a pasar por el gate
+    if (reanudable && runActivo) {
+      await correr(runActivo.solicitudId);
+      return;
+    }
+    if (consultas > UMBRAL_CONFIRMAR_CONSULTAS && !confirmando) {
       setConfirmando(true);
       return;
     }
     setConfirmando(false);
+    setError("");
+    // GATE de corridas grandes: bajo el umbral corre igual que siempre;
+    // sobre el umbral, admin confirma reforzado y no-admin queda en
+    // espera de aprobación (al aprobarse en /admin arranca sola aquí)
+    await gateCorrida(
+      {
+        consultas,
+        origen: "planner_competencia",
+        titulo: `Competencia · ${
+          (cfg.nombre as string)?.trim() ||
+          (terminos.length > 0 ? terminos.join(", ") : etiquetasDe(categorias).join(", "))
+        } · ${fmt(origenes.length)} orígenes`,
+        proyectoId,
+        configuracion: {
+          proyectoId,
+          firmaRun,
+          radio,
+          categorias: categoriasParaApi(categorias),
+          terminos,
+          exclusiones,
+          origenes: origenes.length,
+        },
+      },
+      (solicitudId) => correr(solicitudId)
+    );
+  }
+
+  async function correr(solicitudId?: string) {
     setError("");
     setOcupado(true);
     // copia local de la config: el marcador de reanudación se persiste
@@ -931,6 +969,7 @@ export function SeccionCompetencia({
           indice,
           total,
           firma: firmaRun,
+          solicitudId,
         } satisfies RunActivo;
         onBorrador({ ...borrador, config: { ...cfgLocal } });
       };
@@ -942,6 +981,8 @@ export function SeccionCompetencia({
         excludes: exclusiones,
         desdeLote,
         semilla,
+        contexto: `planner:competencia · ${terminos.length > 0 ? terminos.join(", ") : etiquetasDe(categorias).join(", ")}`,
+        solicitudId,
         onEstado: (t) => setEstado(`Buscando competencia · ${t}`),
         onLote: async (nuevos, lote, total) => {
           // granularidad POR CHUNK: puntos + progreso + marcador de
@@ -992,6 +1033,10 @@ export function SeccionCompetencia({
         ...(r.excluidos > 0 ? [`${fmt(r.excluidos)} excluidos`] : []),
         ...(r.descartados > 0 ? [`${fmt(r.descartados)} descartados por nombre`] : []),
         ...(etiquetas.length > 1 ? [`${etiquetas.length} capas`] : []),
+        `costo ~$${r.consumo.costoMxn.toLocaleString("es-MX", { minimumFractionDigits: 2 })} MXN`,
+        ...(r.consumo.deCache > 0
+          ? [`${fmt(r.consumo.deCache)} consultas del caché ($0)`]
+          : []),
         ...(r.chunksFallidos.length > 0
           ? [
               `${r.chunksFallidos.length} chunks fallaron tras reintentos (${r.chunksFallidos.slice(0, 4).join(", ")}${r.chunksFallidos.length > 4 ? "…" : ""}) y quedaron fuera`,
@@ -1158,6 +1203,9 @@ export function SeccionCompetencia({
           </button>
         )}
       </div>
+
+      {/* gate de corridas grandes: confirmación de admin / en espera */}
+      {panelAprobacion}
 
       {/* revisión de la depuración del levantamiento recién corrido */}
       {sospechosos && (

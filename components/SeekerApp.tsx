@@ -13,6 +13,7 @@ import ResultsTable from "./ResultsTable";
 import UniversosPanel from "./UniversosPanel";
 import OverlayProgreso, { type ProcesoLargo } from "./OverlayProgreso";
 import BuscadorLugar from "./BuscadorLugar";
+import { useAprobacionCorrida } from "./AprobacionCorrida";
 import GuardarEnPlanModal from "./GuardarEnPlanModal";
 import CategoriaBuscador, {
   etiquetaSeleccion,
@@ -747,6 +748,15 @@ export default function SeekerApp({
   /** Último run del Planner COMPLETADO (para depurar también lo ya
    * persistido al confirmar). */
   const ultimoRunDepRef = useRef<{ run: RunPlanner; radioCapaM?: number } | null>(null);
+
+  // ---- BLINDAJE DE COSTOS: gate de corridas grandes (umbral en
+  //      /admin). Bajo el umbral el flujo es el de siempre; sobre él,
+  //      el admin confirma reforzado y el no-admin queda en espera de
+  //      aprobación (al aprobarse, la corrida arranca sola aquí).
+  const { gate: gateCorrida, panel: panelAprobacion } = useAprobacionCorrida();
+  /** Solicitud aprobada que autoriza la corrida activa (va en el body
+   * de cada request para poder exceder los límites del día). */
+  const solicitudCorridaRef = useRef<string | undefined>(undefined);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -2040,6 +2050,42 @@ export default function SeekerApp({
   // Paso 2: ejecutar el censo de POIs sobre la cobertura confirmada.
   // `soloPrimerosCps` limita a los primeros k CPs de la lista (opción
   // "por partes" cuando la cobertura completa excede el tope).
+  /** GATE del censo por CP: sobre el umbral pide aprobación (o
+   * confirmación reforzada si eres admin); reanudar no re-pasa el gate. */
+  async function lanzarCensoCp(soloPrimerosCps?: number) {
+    if (!coberturaCp) return;
+    if (planner && semillaPlannerRef.current?.modo === "cp") {
+      await ejecutarCensoCp(soloPrimerosCps);
+      return;
+    }
+    const k = soloPrimerosCps ?? cpsGeo.length;
+    const celdasGate = coberturaCp.celdas.filter((c) => c.cpIdx < k).length;
+    const consultas =
+      sinCategoria && separarPorTermino
+        ? celdasGate * Math.max(1, nameFilters.length)
+        : celdasGate * consultasPorCentro;
+    await gateCorrida(
+      {
+        consultas,
+        origen: "censo_cp",
+        titulo: `Censo por CP · ${k.toLocaleString("es-MX")} CPs · ${celdasGate.toLocaleString("es-MX")} celdas`,
+        proyectoId: planner?.proyectoId,
+        configuracion: {
+          modo: "cp",
+          cps: cpsGeo.slice(0, k).map((c) => c.codigo_postal),
+          categorias: categoriasApi,
+          nameFilters,
+          excludes,
+          factor: coberturaCp.factor,
+        },
+      },
+      async (solicitudId) => {
+        solicitudCorridaRef.current = solicitudId;
+        await ejecutarCensoCp(soloPrimerosCps);
+      }
+    );
+  }
+
   async function ejecutarCensoCp(soloPrimerosCps?: number) {
     if (!coberturaCp) return;
     const k = soloPrimerosCps ?? cpsGeo.length;
@@ -2121,6 +2167,8 @@ export default function SeekerApp({
               nameFilters: pasada.filtros,
               excludes,
               persist: false,
+              contexto: `censo CP: ${nameFilters.length > 0 ? nameFilters.join(", ") : etiquetasCategorias.join(", ") || "categorías"}`,
+              solicitudId: solicitudCorridaRef.current,
             } satisfies SearchRequest);
             fallosSeguidos = 0;
             esperasCuota = 0;
@@ -2414,6 +2462,7 @@ export default function SeekerApp({
     setChecksDepuracion({});
     setDepurados(0);
     ultimoRunDepRef.current = null;
+    solicitudCorridaRef.current = undefined;
     setPois([]);
     setContadores({ excluidos: 0, descartadosPorNombre: 0 });
     setDetalles({ excluidos: [], descartados: [] });
@@ -2575,6 +2624,44 @@ export default function SeekerApp({
   }
 
   // ---- censo de marca: 2) ejecutar celda por celda con throttle
+  /** GATE del censo de marca: sobre el umbral pide aprobación (o
+   * confirmación reforzada si eres admin); reanudar no re-pasa el gate. */
+  async function lanzarCenso() {
+    if (!celdas || celdas.length === 0 || !zona) return;
+    const terminosMarca = dividirTerminos(marca.trim());
+    const reanuda =
+      planner &&
+      semillaPlannerRef.current?.modo === "census" &&
+      semillaPlannerRef.current.total === celdas.length;
+    if (reanuda) {
+      await ejecutarCenso();
+      return;
+    }
+    const consultas = celdas.length * Math.max(1, terminosMarca.length);
+    await gateCorrida(
+      {
+        consultas,
+        origen: "censo",
+        titulo: `Censo ${marca.trim() || "de marca"} · ${zona.nombre ?? ciudadQuery.trim()} · ${celdas.length.toLocaleString("es-MX")} celdas`,
+        proyectoId: planner?.proyectoId,
+        configuracion: {
+          modo: "census",
+          marca: marca.trim(),
+          centro: { lat: zona.lat, lng: zona.lng },
+          alcance,
+          radioCelda,
+          tipoCuadricula,
+          excludes,
+          celdas: celdas.length,
+        },
+      },
+      async (solicitudId) => {
+        solicitudCorridaRef.current = solicitudId;
+        await ejecutarCenso();
+      }
+    );
+  }
+
   async function ejecutarCenso() {
     if (!celdas || celdas.length === 0 || !zona) return;
     const m = marca.trim();
@@ -2636,6 +2723,8 @@ export default function SeekerApp({
           nameFilters: terminosMarca,
           excludes,
           persist: false,
+          contexto: `censo: ${m} · ${zona.nombre ?? ciudadQuery.trim()}`,
+          solicitudId: solicitudCorridaRef.current,
         } satisfies SearchRequest);
         celdasCorridas++;
         fallosSeguidos = 0;
@@ -3309,6 +3398,8 @@ export default function SeekerApp({
             nameFilters,
             excludes,
             persist: false,
+            contexto: `orígenes: ${nameFilters.length > 0 ? nameFilters.join(", ") : etiquetasCategorias.join(", ") || "categorías"}`,
+            solicitudId: solicitudCorridaRef.current,
           } satisfies SearchRequest);
         } catch (e) {
           if (
@@ -3517,7 +3608,29 @@ export default function SeekerApp({
         centrosActivos.length * consultasPorCentro > CONSULTAS_POR_CHUNK)
     ) {
       if (planOrigenes && !planOrigenes.excedeTope) {
-        await ejecutarBusquedaOrigenes(planOrigenes.centros);
+        // GATE de corridas grandes: sobre el umbral pide aprobación (o
+        // confirmación reforzada si eres admin)
+        const centrosPlan = planOrigenes.centros;
+        await gateCorrida(
+          {
+            consultas: planOrigenes.consultas,
+            origen: "origenes",
+            titulo: `Búsqueda por orígenes · ${nameFilters.length > 0 ? nameFilters.join(", ") : etiquetasCategorias.join(", ") || "categorías"} · ${centrosPlan.length.toLocaleString("es-MX")} centros`,
+            proyectoId: planner?.proyectoId,
+            configuracion: {
+              modo: "origins",
+              centros: centrosPlan.length,
+              radio,
+              categorias: categoriasApi,
+              nameFilters,
+              excludes,
+            },
+          },
+          async (solicitudId) => {
+            solicitudCorridaRef.current = solicitudId;
+            await ejecutarBusquedaOrigenes(centrosPlan);
+          }
+        );
         return;
       }
       const centros = consolidarCentros(centrosActivos, radio);
@@ -4649,7 +4762,7 @@ export default function SeekerApp({
                   )}
                   {coberturaCp.celdas.length <= MAX_CELDAS_CP ? (
                     <button
-                      onClick={() => ejecutarCensoCp()}
+                      onClick={() => lanzarCensoCp()}
                       disabled={ocupado}
                       className="mt-2 w-full rounded-md bg-emerald-400 px-3 py-2 font-display text-xs font-extrabold text-fondo transition-opacity hover:opacity-90 disabled:opacity-40"
                     >
@@ -4676,7 +4789,7 @@ export default function SeekerApp({
                         const parte = prefijoCpsQueCabe();
                         return parte.cps > 0 && parte.cps < cpsGeo.length ? (
                           <button
-                            onClick={() => ejecutarCensoCp(parte.cps)}
+                            onClick={() => lanzarCensoCp(parte.cps)}
                             disabled={ocupado}
                             className="w-full rounded-md border border-linea bg-panel2 px-3 py-2 font-mono text-[11px] text-zinc-300 transition-colors hover:border-zinc-500 disabled:opacity-40"
                           >
@@ -4689,6 +4802,7 @@ export default function SeekerApp({
                   )}
                 </div>
               )}
+              {panelAprobacion}
 
               <p className="mt-2 font-mono text-[10px] leading-relaxed text-zinc-600">
                 Polígonos y universos: hasta 500 CPs, sin costo de Google.
@@ -4800,7 +4914,7 @@ export default function SeekerApp({
                     celdas.length * Math.max(1, dividirTerminos(marca).length)
                   )}
                   <button
-                    onClick={ejecutarCenso}
+                    onClick={lanzarCenso}
                     disabled={ocupado}
                     className="mt-2 w-full rounded-md bg-magenta px-3 py-2 font-display text-xs font-extrabold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
                   >
@@ -4816,6 +4930,7 @@ export default function SeekerApp({
                   >
                     Cancelar
                   </button>
+                  {panelAprobacion}
                 </div>
               )}
 
@@ -5402,6 +5517,9 @@ export default function SeekerApp({
                 </button>
               </div>
             )}
+            {/* gate de corridas grandes: confirmación de admin / espera
+                de aprobación (censo de marca lo muestra en su caja) */}
+            {mode !== "census" && mode !== "cp" && panelAprobacion}
             {/* siempre disponible con orígenes listos: demografía del
                 radio SIN buscar POIs (p. ej. un lugar recién fijado con
                 el buscador → universos de 1 km al instante, gratis) */}
