@@ -140,10 +140,16 @@ export function centrosPorChunk(consultasPorCentro: number): number {
 }
 
 /** ¿El error NO se arregla reintentando? (cuota diaria de Google,
- * límite de celdas del usuario, sesión) — abortar, no reintentar. */
+ * límite del usuario o de la plataforma, sesión) — abortar. */
 export function esErrorFatalBusqueda(e: unknown): boolean {
   if (!(e instanceof ErrorApi)) return false;
-  if (e.codigo === "cuota_diaria" || e.codigo === "limite_diario") return true;
+  if (
+    e.codigo === "cuota_diaria" ||
+    e.codigo === "limite_diario" ||
+    e.codigo === "limite_global"
+  ) {
+    return true;
+  }
   return /no autorizado|inicia sesión|api key|clave/i.test(e.message);
 }
 
@@ -168,6 +174,10 @@ export interface OpcionesBusquedaLotes {
   /** POIs NUEVOS de cada chunk (para autosave incremental POR CHUNK). */
   onLote?: (nuevos: Poi[], lote: number, total: number) => Promise<void> | void;
   detenerRef?: { current: boolean };
+  /** Etiqueta legible del análisis, para el log de consumo. */
+  contexto?: string;
+  /** Solicitud de corrida grande APROBADA (autoriza exceder límites). */
+  solicitudId?: string;
 }
 
 export interface ResultadoBusquedaLotes {
@@ -183,6 +193,9 @@ export interface ResultadoBusquedaLotes {
   chunksFallidos: number[];
   /** Mensaje del error que interrumpió (cuota diaria / límite), si hubo. */
   interrupcion?: string;
+  /** Consumo agregado de la corrida: llamadas pagadas a Google,
+   * consultas servidas del caché ($0) y costo en MXN. */
+  consumo: { pagadas: number; deCache: number; costoMxn: number };
 }
 
 /**
@@ -219,6 +232,8 @@ export async function buscarPorLotes(
     nameFilters: o.nameFilters,
     excludes: o.excludes,
     persist: false,
+    contexto: o.contexto,
+    solicitudId: o.solicitudId,
   };
 
   const acumulados = new Map<string, Poi>(
@@ -226,6 +241,7 @@ export async function buscarPorLotes(
   );
   let excluidos = 0;
   let descartados = 0;
+  const consumo = { pagadas: 0, deCache: 0, costoMxn: 0 };
   let esperasCuota = 0;
   let reintentosTransitorios = 0;
   const chunksFallidos: number[] = [];
@@ -287,6 +303,12 @@ export async function buscarPorLotes(
     reintentosTransitorios = 0;
     excluidos += data.excluidos;
     descartados += data.descartadosPorNombre;
+    if (data.consumo) {
+      consumo.pagadas += data.consumo.pagadas;
+      consumo.deCache += data.consumo.deCache;
+      consumo.costoMxn =
+        Math.round((consumo.costoMxn + data.consumo.costoMxn) * 100) / 100;
+    }
     const nuevos: Poi[] = [];
     for (const p of data.pois) {
       if (!acumulados.has(p.placeId)) {
@@ -309,5 +331,6 @@ export async function buscarPorLotes(
     totalLotes: lotes.length,
     chunksFallidos,
     interrupcion,
+    consumo,
   };
 }

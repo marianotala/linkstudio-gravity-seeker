@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { geocodeDireccion, GoogleError } from "@/lib/google";
+import { GoogleError } from "@/lib/google";
+import { CacheGoogle, cargarConfigCostos } from "@/lib/google-cache";
 import { createClient } from "@/lib/supabase/server";
 import type { GeocodeResult } from "@/lib/types";
 
@@ -48,6 +49,8 @@ export async function POST(req: Request) {
 
   const { direcciones } = parsed.data;
   const resultados: GeocodeResult[] = new Array(direcciones.length);
+  // caché + log de consumo: la misma dirección dentro del TTL es gratis
+  const cache = new CacheGoogle(supabase, await cargarConfigCostos(supabase));
 
   try {
     // Lotes de 10 en paralelo; los lotes corren en secuencia para no
@@ -57,7 +60,7 @@ export async function POST(req: Request) {
       const parciales = await Promise.all(
         lote.map(async (dir): Promise<GeocodeResult> => {
           try {
-            return await geocodeDireccion(dir);
+            return await cache.geocode(dir);
           } catch (e) {
             // Errores de configuración (key/cuota) tumban todo el batch;
             // cualquier otro fallo queda registrado solo en su índice.
@@ -69,6 +72,7 @@ export async function POST(req: Request) {
       parciales.forEach((r, j) => (resultados[i + j] = r));
     }
   } catch (e) {
+    await cache.registrar("geocodificación");
     const mensaje =
       e instanceof GoogleError ? e.message : "Error inesperado al geocodificar";
     const codigo = e instanceof GoogleError ? e.codigo : undefined;
@@ -78,5 +82,6 @@ export async function POST(req: Request) {
     );
   }
 
-  return NextResponse.json({ resultados });
+  await cache.registrar("geocodificación");
+  return NextResponse.json({ resultados, consumo: cache.resumen() });
 }

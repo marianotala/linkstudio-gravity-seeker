@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import {
-  GoogleError,
-  searchNearby,
-  searchText,
-  type PlaceResult,
-} from "@/lib/google";
+import { GoogleError, type PlaceResult } from "@/lib/google";
+import { CacheGoogle, cargarConfigCostos } from "@/lib/google-cache";
 import { esNombreBasura, etiquetaOrigen, haversine, normalizarComparable } from "@/lib/geo";
 import { CATEGORIA_LIBRE, getCategoria, SOLO_NOMBRE, type Categoria } from "@/lib/categories";
 import { createClient } from "@/lib/supabase/server";
@@ -105,6 +101,11 @@ const BodySchema = z
       .array(z.string().regex(/^\d{5}$/, "CP inválido: usa 5 dígitos"))
       .max(25, "Máximo 25 códigos postales por búsqueda")
       .optional(),
+    /** Etiqueta legible del análisis, para el log de consumo. */
+    contexto: z.string().trim().max(160).optional(),
+    /** Solicitud de corrida grande APROBADA: autoriza exceder los
+     * límites del día (la aprobación ES la autorización del gasto). */
+    solicitudId: z.string().uuid().optional(),
   })
   .refine(
     (b) =>
@@ -146,9 +147,7 @@ const BodySchema = z
     path: ["cps"],
   });
 
-// Límites diarios por usuario (los admin no tienen límite).
-const LIMITE_BUSQUEDAS = parseInt(process.env.DAILY_SEARCH_LIMIT ?? "", 10) || 50;
-// Respaldo si app_config no tiene tope (consumir_cuota lee la base).
+// Respaldo si app_config no tiene tope (verificar_gasto lee la base).
 const LIMITE_CELDAS = parseInt(process.env.DAILY_CELL_LIMIT ?? "", 10) || 2500;
 
 const LOTE_CENTROS = 8;
@@ -293,45 +292,65 @@ export async function POST(req: Request) {
     }));
   }
 
-  // Protección de cuota: 1 búsqueda normal o 1 celda/lote por llamada.
-  // Los requests persist:false son PARTES de un proceso mayor (celdas
-  // de censo, lotes de la búsqueda por orígenes grandes): cuentan
-  // contra el límite de celdas (más holgado), no contra el de
-  // búsquedas — si no, una lista de 6 mil orígenes agotaría el día en
-  // un solo run. La RPC es security definer, atómica, y regresa
-  // permitido=true para admin.
-  const esLote = mode === "census" || parsed.data.persist === false;
+  // BLINDAJE DE COSTOS — preflight del gasto: cuántas consultas a
+  // Google disparará ESTA request (sin paginación, que se registra
+  // después con las llamadas reales) contra el tope diario del usuario
+  // (en consultas) y el LÍMITE GLOBAL de la plataforma en MXN. Los
+  // admin y las corridas con solicitud APROBADA pueden excederlos.
+  const consultasEstimadas =
+    vias.reduce(
+      (t, v) =>
+        t +
+        (v.categoria && v.categoria.types.length > 0 ? centers.length : 0) +
+        (v.categoria?.textQuery || v.texto ? centers.length : 0),
+      0
+    ) +
+    consultasNombre.length * centers.length;
   try {
-    const { data: cuota, error: errorCuota } = await supabase.rpc(
-      "consumir_cuota",
+    const { data: gasto, error: errorGasto } = await supabase.rpc(
+      "verificar_gasto",
       {
-        p_tipo: esLote ? "celda" : "busqueda",
-        p_max_busquedas: LIMITE_BUSQUEDAS,
-        p_max_celdas: LIMITE_CELDAS,
+        p_consultas: consultasEstimadas,
+        p_solicitud: parsed.data.solicitudId ?? null,
       }
     );
-    if (errorCuota) {
-      console.error("No se pudo verificar la cuota:", errorCuota.message);
-    } else if (cuota && (cuota as { permitido?: boolean }).permitido === false) {
-      const c = cuota as {
-        searches_count?: number;
-        cells_count?: number;
-        tope_celdas?: number;
+    if (errorGasto) {
+      console.error("No se pudo verificar el gasto:", errorGasto.message);
+    } else if (gasto && (gasto as { permitido?: boolean }).permitido === false) {
+      const g = gasto as {
+        motivo?: string;
+        consumo?: number;
+        tope?: number;
+        gasto_mxn?: number;
+        limite_mxn?: number;
       };
-      const topeCeldas = c.tope_celdas ?? LIMITE_CELDAS;
+      if (g.motivo === "limite_global") {
+        return NextResponse.json(
+          {
+            codigo: "limite_global",
+            error: `La plataforma alcanzó su límite de gasto del día ($${(g.gasto_mxn ?? 0).toLocaleString("es-MX")} de $${(g.limite_mxn ?? 0).toLocaleString("es-MX")} MXN). Un admin puede subirlo en Admin o aprobar tu corrida para autorizar el gasto.`,
+          },
+          { status: 429 }
+        );
+      }
       return NextResponse.json(
         {
           codigo: "limite_diario",
-          error: esLote
-            ? `Alcanzaste tu límite diario de celdas/lotes (${topeCeldas} por día; llevas ${c.cells_count ?? topeCeldas}). El avance queda guardado y el tope se reinicia mañana; un admin puede subirlo en Admin.`
-            : `Alcanzaste tu límite diario (${LIMITE_BUSQUEDAS} búsquedas por día; llevas ${c.searches_count ?? LIMITE_BUSQUEDAS}). Se reinicia mañana; los admin no tienen límite.`,
+          error: `Alcanzaste tu límite diario de consultas a Google (tope ${(g.tope ?? LIMITE_CELDAS).toLocaleString("es-MX")}; llevas ${(g.consumo ?? 0).toLocaleString("es-MX")} y esta llamada usaría ${consultasEstimadas.toLocaleString("es-MX")} más). El avance queda guardado y el tope se reinicia mañana; un admin puede subirlo o aprobar tu corrida.`,
         },
         { status: 429 }
       );
     }
   } catch (e) {
-    console.error("No se pudo verificar la cuota:", e);
+    console.error("No se pudo verificar el gasto:", e);
   }
+
+  // Caché + medidor: la misma consulta dentro del TTL es GRATIS; lo
+  // pagado se registra por método con su costo en MXN.
+  const cache = new CacheGoogle(supabase, await cargarConfigCostos(supabase));
+  const contextoLog =
+    parsed.data.contexto ??
+    `${mode}${terminos.length ? `: ${terminos.slice(0, 3).join(", ")}` : ""}`;
 
   try {
     // 1) Traer resultados crudos de Google.
@@ -349,8 +368,8 @@ export async function POST(req: Request) {
     // propias pasadas de texto. Google no soporta OR en una query.
     const esTexto = (q: string, c: (typeof centers)[number]) =>
       mode === "zone" || mode === "cp"
-        ? searchText(q, { rectangle: c.viewport ?? viewportDeRespaldo(c) })
-        : searchText(q, { circle: { center: c, radius } });
+        ? cache.text(q, { rectangle: c.viewport ?? viewportDeRespaldo(c) })
+        : cache.text(q, { circle: { center: c, radius } });
     // Círculo equivalente de un centro para searchNearby: en zona/CP el
     // área es un rectángulo → círculo CIRCUNSCRITO (centro del viewport
     // + media diagonal); lo que caiga fuera del rectángulo se descarta
@@ -396,7 +415,7 @@ export async function POST(req: Request) {
         const tiposVia = via.categoria.types;
         const porCentro = await enLotes(centers, LOTE_CENTROS, (c) => {
           const { centro, radio } = circuloDe(c);
-          return searchNearby(centro, radio, tiposVia);
+          return cache.nearby(centro, radio, tiposVia);
         });
         registrar(porCentro.flat(), via.etiqueta);
       }
@@ -574,6 +593,10 @@ export async function POST(req: Request) {
     // Guardar la búsqueda + resultados en el historial (RPC = una sola
     // transacción, con RLS del usuario). Si el guardado falla, la
     // búsqueda igual se regresa.
+    // consumo de la request al log (gasto visible HOY, no en la factura)
+    await cache.registrar(contextoLog);
+    const consumo = cache.resumen();
+
     let searchId: string | null = null;
     if (!persistir) {
       return NextResponse.json({
@@ -583,6 +606,7 @@ export async function POST(req: Request) {
         detalleExcluidos,
         detalleDescartados,
         searchId,
+        consumo,
       } satisfies SearchResponse);
     }
 
@@ -668,9 +692,13 @@ export async function POST(req: Request) {
       detalleDescartados,
       universos,
       searchId,
+      consumo,
     };
     return NextResponse.json(respuesta);
   } catch (e) {
+    // lo ya pagado antes del error TAMBIÉN se registra (el gasto real
+    // nunca se pierde del log)
+    await cache.registrar(contextoLog);
     const mensaje =
       e instanceof GoogleError ? e.message : "Error inesperado al buscar POIs";
     const codigo = e instanceof GoogleError ? e.codigo : undefined;

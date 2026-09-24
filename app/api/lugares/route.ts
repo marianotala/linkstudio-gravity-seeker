@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { costoLlamadaMxn } from "@/lib/costos";
 import { autocompleteLugares, detalleLugar, GoogleError } from "@/lib/google";
+import { cargarConfigCostos } from "@/lib/google-cache";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -61,6 +63,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ sugerencias });
     }
     const lugar = await detalleLugar(parsed.data.placeId!, parsed.data.session);
+    // el detalle CIERRA la sesión de autocomplete: se factura UNA
+    // sesión (todas las teclas incluidas), no un request por tecla —
+    // así queda en el log: 1 fila 'autocomplete_sesion' por búsqueda
+    try {
+      const cfg = await cargarConfigCostos(supabase);
+      await supabase.rpc("registrar_consumo_api", {
+        p_metodo: "autocomplete_sesion",
+        p_contexto: "buscador de lugares",
+        p_consultas: 1,
+        p_de_cache: 0,
+        p_costo_mxn:
+          Math.round(costoLlamadaMxn("autocomplete_sesion", cfg) * 10000) / 10000,
+      });
+    } catch (err) {
+      console.error("No se pudo registrar la sesión de autocomplete:", err);
+    }
     return NextResponse.json({ lugar });
   } catch (e) {
     const mensaje =

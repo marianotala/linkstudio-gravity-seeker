@@ -2798,3 +2798,349 @@ create policy "project_universes: equipo borra"
 alter table public.survey_points
   add column if not exists universo_individual integer,
   add column if not exists nse_dominante text;
+
+-- ==================================================================
+-- BLINDAJE DE COSTOS GOOGLE — caché de consultas, log de consumo en
+-- MXN, límite global diario y solicitudes de corridas grandes.
+-- Aplicada en vivo como migración blindaje_costos.
+-- ==================================================================
+
+-- (a) CACHÉ de consultas a Google: misma consulta (método + query +
+--     ubicación + radio) dentro del TTL = $0. Compartido por el equipo.
+create table if not exists public.google_cache (
+  clave text primary key,            -- sha256 de método+parámetros
+  metodo text not null,              -- text | nearby | geocode
+  consulta text,                     -- legible, para depurar
+  resultados jsonb not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists google_cache_created_idx
+  on public.google_cache (created_at);
+
+alter table public.google_cache enable row level security;
+drop policy if exists "cache: leer autenticados" on public.google_cache;
+create policy "cache: leer autenticados"
+  on public.google_cache for select to authenticated using (true);
+drop policy if exists "cache: insertar autenticados" on public.google_cache;
+create policy "cache: insertar autenticados"
+  on public.google_cache for insert to authenticated with check (true);
+drop policy if exists "cache: actualizar autenticados" on public.google_cache;
+create policy "cache: actualizar autenticados"
+  on public.google_cache for update to authenticated using (true);
+drop policy if exists "cache: borrar autenticados" on public.google_cache;
+create policy "cache: borrar autenticados"
+  on public.google_cache for delete to authenticated using (true);
+
+-- (b) LOG de consumo por llamada a la API (el gasto visible HOY,
+--     no en la factura del mes siguiente).
+create table if not exists public.api_usage_log (
+  id bigint generated always as identity primary key,
+  user_id uuid references public.profiles (id) on delete set null,
+  metodo text not null,              -- text | nearby | geocode | autocomplete_sesion
+  contexto text,                     -- 'census: domino''s · MTY', 'planner:competencia', ...
+  consultas int not null default 0,  -- llamadas PAGADAS a Google
+  de_cache int not null default 0,   -- consultas servidas del caché ($0)
+  costo_mxn numeric(12,4) not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists api_usage_log_fecha_idx
+  on public.api_usage_log (created_at);
+create index if not exists api_usage_log_user_idx
+  on public.api_usage_log (user_id, created_at);
+
+alter table public.api_usage_log enable row level security;
+drop policy if exists "log api: leer propio o admin" on public.api_usage_log;
+create policy "log api: leer propio o admin"
+  on public.api_usage_log for select
+  using (user_id = auth.uid() or public.es_admin());
+-- las escrituras pasan SOLO por la RPC registrar_consumo_api
+
+-- (c) SOLICITUDES de corridas grandes (flujo de aprobación, no bloqueo)
+create table if not exists public.run_requests (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  proyecto_id uuid references public.projects (id) on delete set null,
+  origen text not null,              -- planner_competencia | censo | censo_cp | origenes
+  titulo text not null,
+  firma text not null,               -- hash de la config (matching al reintentar)
+  configuracion jsonb not null default '{}'::jsonb,
+  consultas_estimadas int not null,
+  costo_estimado_mxn numeric(12,2) not null,
+  status text not null default 'pendiente'
+    check (status in ('pendiente','aprobada','rechazada','ejecutada','cancelada')),
+  nota_admin text,
+  resuelto_por uuid references public.profiles (id),
+  resuelto_en timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists run_requests_status_idx
+  on public.run_requests (status, created_at desc);
+create index if not exists run_requests_user_idx
+  on public.run_requests (user_id, firma, status);
+
+alter table public.run_requests enable row level security;
+drop policy if exists "solicitudes: leer propio o admin" on public.run_requests;
+create policy "solicitudes: leer propio o admin"
+  on public.run_requests for select
+  using (user_id = auth.uid() or public.es_admin());
+drop policy if exists "solicitudes: crear propio" on public.run_requests;
+create policy "solicitudes: crear propio"
+  on public.run_requests for insert
+  with check (user_id = auth.uid());
+drop policy if exists "solicitudes: actualizar propio o admin" on public.run_requests;
+create policy "solicitudes: actualizar propio o admin"
+  on public.run_requests for update
+  using (user_id = auth.uid() or public.es_admin());
+
+-- (d) configuración de costos (tarifas por SKU en USD/1000, tipo de
+--     cambio, límite global diario y umbral de aprobación) — editable
+--     en /admin; las tarifas se calibran contra la consola de Google.
+insert into public.app_config (clave, valor)
+values ('costos', '{
+  "usd_text_por_mil": 32,
+  "usd_nearby_por_mil": 32,
+  "usd_geocode_por_mil": 5,
+  "usd_sesion_autocomplete_por_mil": 17,
+  "tipo_cambio_mxn": 18.5,
+  "factor_paginacion": 1.5,
+  "limite_global_mxn_dia": 500,
+  "umbral_aprobacion_consultas": 1500,
+  "umbral_aprobacion_mxn": 300
+}'::jsonb)
+on conflict (clave) do nothing;
+
+-- (e) registrar_consumo_api: log + suma de consultas PAGADAS al tope
+--     diario del usuario (unificación: el tope de "celdas" ahora cuenta
+--     CONSULTAS a Google; los admin no acumulan tope).
+create or replace function public.registrar_consumo_api(
+  p_metodo text,
+  p_contexto text,
+  p_consultas int,
+  p_de_cache int,
+  p_costo_mxn numeric
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    return;
+  end if;
+  if coalesce(p_consultas, 0) <= 0 and coalesce(p_de_cache, 0) <= 0 then
+    return;
+  end if;
+  insert into public.api_usage_log (user_id, metodo, contexto, consultas, de_cache, costo_mxn)
+  values (
+    v_uid,
+    left(coalesce(p_metodo, 'desconocido'), 40),
+    left(p_contexto, 160),
+    greatest(coalesce(p_consultas, 0), 0),
+    greatest(coalesce(p_de_cache, 0), 0),
+    greatest(coalesce(p_costo_mxn, 0), 0)
+  );
+  if coalesce(p_consultas, 0) > 0
+     and not exists (select 1 from public.profiles where id = v_uid and rol = 'admin') then
+    insert into public.usage_limits (user_id, date, cells_count)
+    values (v_uid, current_date, p_consultas)
+    on conflict (user_id, date) do update
+      set cells_count = public.usage_limits.cells_count + excluded.cells_count;
+  end if;
+end;
+$$;
+
+revoke execute on function public.registrar_consumo_api(text, text, int, int, numeric) from public, anon;
+grant execute on function public.registrar_consumo_api(text, text, int, int, numeric) to authenticated;
+
+-- (f) verificar_gasto: preflight de una request que pagará ~p_consultas.
+--     Aplica el tope diario del usuario (ahora en consultas) y el LÍMITE
+--     GLOBAL de la plataforma en MXN. Los admin y las corridas con
+--     solicitud APROBADA pueden exceder ambos (la aprobación ES la
+--     autorización del gasto).
+create or replace function public.verificar_gasto(
+  p_consultas int,
+  p_solicitud uuid default null
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_es_admin boolean;
+  v_inicio timestamptz := date_trunc('day', now() at time zone 'America/Mexico_City') at time zone 'America/Mexico_City';
+  v_cfg jsonb := coalesce((select valor from public.app_config where clave = 'costos'), '{}'::jsonb);
+  v_limite numeric := coalesce((v_cfg ->> 'limite_global_mxn_dia')::numeric, 500);
+  v_gasto numeric;
+  v_tope int := coalesce(
+    (select (valor ->> 'tope_celdas_dia')::int from public.app_config where clave = 'cuotas'),
+    2500
+  );
+  v_consumo int;
+  v_aprobada boolean := false;
+begin
+  if v_uid is null then
+    return jsonb_build_object('permitido', false, 'motivo', 'sin_sesion');
+  end if;
+  v_es_admin := exists (select 1 from public.profiles where id = v_uid and rol = 'admin');
+  v_gasto := coalesce(
+    (select sum(costo_mxn) from public.api_usage_log where created_at >= v_inicio), 0
+  );
+  v_consumo := coalesce(
+    (select cells_count from public.usage_limits where user_id = v_uid and date = current_date), 0
+  );
+  if p_solicitud is not null then
+    v_aprobada := exists (
+      select 1 from public.run_requests
+      where id = p_solicitud and user_id = v_uid
+        and status in ('aprobada', 'ejecutada')
+    );
+  end if;
+
+  if not v_es_admin and not v_aprobada
+     and v_consumo + greatest(coalesce(p_consultas, 0), 0) > v_tope then
+    return jsonb_build_object(
+      'permitido', false, 'motivo', 'limite_usuario',
+      'consumo', v_consumo, 'tope', v_tope,
+      'gasto_mxn', round(v_gasto, 2), 'limite_mxn', v_limite
+    );
+  end if;
+  if not v_es_admin and not v_aprobada and v_gasto >= v_limite then
+    return jsonb_build_object(
+      'permitido', false, 'motivo', 'limite_global',
+      'gasto_mxn', round(v_gasto, 2), 'limite_mxn', v_limite
+    );
+  end if;
+  return jsonb_build_object(
+    'permitido', true, 'es_admin', v_es_admin, 'aprobada', v_aprobada,
+    'gasto_mxn', round(v_gasto, 2), 'limite_mxn', v_limite,
+    'consumo', v_consumo, 'tope', v_tope
+  );
+end;
+$$;
+
+revoke execute on function public.verificar_gasto(int, uuid) from public, anon;
+grant execute on function public.verificar_gasto(int, uuid) to authenticated;
+
+-- (g) gasto_api_hoy: para la confirmación reforzada del admin y el
+--     letrero de estado ("esta corrida: ~$450 · hoy llevas $120 de $500")
+create or replace function public.gasto_api_hoy()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with inicio as (
+    select date_trunc('day', now() at time zone 'America/Mexico_City') at time zone 'America/Mexico_City' as t
+  )
+  select jsonb_build_object(
+    'mxn_hoy_global', round(coalesce((
+      select sum(costo_mxn) from public.api_usage_log, inicio where created_at >= inicio.t
+    ), 0), 2),
+    'mxn_hoy_usuario', round(coalesce((
+      select sum(costo_mxn) from public.api_usage_log, inicio
+      where user_id = auth.uid() and created_at >= inicio.t
+    ), 0), 2),
+    'consultas_hoy_global', coalesce((
+      select sum(consultas) from public.api_usage_log, inicio where created_at >= inicio.t
+    ), 0),
+    'limite_global_mxn_dia', coalesce(
+      (select (valor ->> 'limite_global_mxn_dia')::numeric from public.app_config where clave = 'costos'),
+      500
+    ),
+    'es_admin', public.es_admin()
+  );
+$$;
+
+revoke execute on function public.gasto_api_hoy() from public, anon;
+grant execute on function public.gasto_api_hoy() to authenticated;
+
+-- (h) gasto_resumen_admin: consumo de HOY y del MES por usuario, por
+--     método y por contexto (búsqueda/plan), en MXN — solo admin.
+create or replace function public.gasto_resumen_admin()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_inicio_dia timestamptz := date_trunc('day', now() at time zone 'America/Mexico_City') at time zone 'America/Mexico_City';
+  v_inicio_mes timestamptz := date_trunc('month', now() at time zone 'America/Mexico_City') at time zone 'America/Mexico_City';
+  v jsonb;
+begin
+  if not public.es_admin() then
+    return '{}'::jsonb;
+  end if;
+  select jsonb_build_object(
+    'hoy_mxn', round(coalesce(sum(costo_mxn) filter (where created_at >= v_inicio_dia), 0), 2),
+    'mes_mxn', round(coalesce(sum(costo_mxn) filter (where created_at >= v_inicio_mes), 0), 2),
+    'hoy_consultas', coalesce(sum(consultas) filter (where created_at >= v_inicio_dia), 0),
+    'mes_consultas', coalesce(sum(consultas) filter (where created_at >= v_inicio_mes), 0),
+    'hoy_cache', coalesce(sum(de_cache) filter (where created_at >= v_inicio_dia), 0),
+    'mes_cache', coalesce(sum(de_cache) filter (where created_at >= v_inicio_mes), 0),
+    'usuarios', (
+      select coalesce(jsonb_agg(fila order by mes_mxn desc), '[]'::jsonb)
+      from (
+        select jsonb_build_object(
+          'email', p.email, 'nombre', p.nombre,
+          'hoy_mxn', round(coalesce(sum(l.costo_mxn) filter (where l.created_at >= v_inicio_dia), 0), 2),
+          'mes_mxn', round(coalesce(sum(l.costo_mxn) filter (where l.created_at >= v_inicio_mes), 0), 2),
+          'hoy_consultas', coalesce(sum(l.consultas) filter (where l.created_at >= v_inicio_dia), 0),
+          'mes_consultas', coalesce(sum(l.consultas) filter (where l.created_at >= v_inicio_mes), 0)
+        ) as fila,
+        coalesce(sum(l.costo_mxn) filter (where l.created_at >= v_inicio_mes), 0) as mes_mxn
+        from public.api_usage_log l
+        join public.profiles p on p.id = l.user_id
+        where l.created_at >= v_inicio_mes
+        group by p.id, p.email, p.nombre
+      ) t
+    ),
+    'metodos', (
+      select coalesce(jsonb_agg(fila order by mes_mxn desc), '[]'::jsonb)
+      from (
+        select jsonb_build_object(
+          'metodo', metodo,
+          'hoy_mxn', round(coalesce(sum(costo_mxn) filter (where created_at >= v_inicio_dia), 0), 2),
+          'mes_mxn', round(coalesce(sum(costo_mxn) filter (where created_at >= v_inicio_mes), 0), 2),
+          'hoy_consultas', coalesce(sum(consultas) filter (where created_at >= v_inicio_dia), 0),
+          'mes_consultas', coalesce(sum(consultas) filter (where created_at >= v_inicio_mes), 0),
+          'mes_cache', coalesce(sum(de_cache) filter (where created_at >= v_inicio_mes), 0)
+        ) as fila,
+        coalesce(sum(costo_mxn) filter (where created_at >= v_inicio_mes), 0) as mes_mxn
+        from public.api_usage_log
+        where created_at >= v_inicio_mes
+        group by metodo
+      ) t
+    ),
+    'contextos', (
+      select coalesce(jsonb_agg(fila order by mes_mxn desc), '[]'::jsonb)
+      from (
+        select jsonb_build_object(
+          'contexto', coalesce(contexto, '(sin contexto)'),
+          'mes_mxn', round(coalesce(sum(costo_mxn), 0), 2),
+          'mes_consultas', coalesce(sum(consultas), 0)
+        ) as fila,
+        coalesce(sum(costo_mxn), 0) as mes_mxn
+        from public.api_usage_log
+        where created_at >= v_inicio_mes
+        group by coalesce(contexto, '(sin contexto)')
+        order by coalesce(sum(costo_mxn), 0) desc
+        limit 25
+      ) t
+    )
+  ) into v
+  from public.api_usage_log
+  where created_at >= v_inicio_mes;
+  return coalesce(v, '{}'::jsonb);
+end;
+$$;
+
+revoke execute on function public.gasto_resumen_admin() from public, anon;
+grant execute on function public.gasto_resumen_admin() to authenticated;

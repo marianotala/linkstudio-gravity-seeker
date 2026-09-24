@@ -149,6 +149,12 @@ async function postPlaces(
   return data;
 }
 
+/** Contador de llamadas REALES a Google (para el log de costos: una
+ * consulta con paginación son 2-3 llamadas facturables). */
+export interface MedidorLlamadas {
+  llamadas: number;
+}
+
 /**
  * searchNearby: hasta 20 resultados ordenados por distancia,
  * restringidos al círculo centro+radio. (Modo orígenes con categoría.)
@@ -156,8 +162,10 @@ async function postPlaces(
 export async function searchNearby(
   center: LatLng,
   radiusM: number,
-  includedTypes: string[]
+  includedTypes: string[],
+  medidor?: MedidorLlamadas
 ): Promise<PlaceResult[]> {
+  if (medidor) medidor.llamadas++;
   const data = (await postPlaces(
     NEARBY_URL,
     {
@@ -191,11 +199,13 @@ export type AreaBusqueda =
  */
 export async function searchText(
   textQuery: string,
-  area: AreaBusqueda
+  area: AreaBusqueda,
+  medidor?: MedidorLlamadas
 ): Promise<PlaceResult[]> {
   const resultados: PlaceResult[] = [];
   let pageToken: string | undefined;
   do {
+    if (medidor) medidor.llamadas++;
     const body: Record<string, unknown> = {
       textQuery,
       pageSize: 20,

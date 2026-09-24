@@ -266,6 +266,10 @@ export interface SearchRequest {
   censo?: CensoInfo;
   /** Solo modo cp: códigos postales de 5 dígitos (centers va vacío). */
   cps?: string[];
+  /** Etiqueta legible del análisis para el log de consumo (opcional). */
+  contexto?: string;
+  /** Solicitud de corrida grande APROBADA (autoriza exceder límites). */
+  solicitudId?: string;
 }
 
 export interface SearchResponse {
@@ -281,6 +285,9 @@ export interface SearchResponse {
   universos?: Universos;
   /** id de la búsqueda guardada en el historial (null si falló el guardado). */
   searchId: string | null;
+  /** Consumo de Google de ESTA request: llamadas pagadas, consultas
+   * servidas del caché ($0) y costo en MXN. */
+  consumo?: { pagadas: number; deCache: number; costoMxn: number };
 }
 
 export interface PerfilUsuario {
