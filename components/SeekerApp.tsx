@@ -51,6 +51,7 @@ import {
 } from "@/lib/universos-lotes";
 import { createClient } from "@/lib/supabase/client";
 import { DIAS_AMARILLO, frescuraCenso } from "@/lib/censos";
+import { consumoVacio, notaConsumo, sumarConsumo } from "@/lib/costos";
 import {
   costoEstimadoIA,
   depurarConIA,
@@ -2106,6 +2107,7 @@ export default function SeekerApp({
       const acumulados = new Map<string, Poi>();
       const detExcluidos = new Set<string>();
       const detDescartados = new Set<string>();
+      const consumoRun = consumoVacio();
       let excluidosTotal = 0;
       let descartadosTotal = 0;
       let errorFatal: string | null = null;
@@ -2172,6 +2174,7 @@ export default function SeekerApp({
             } satisfies SearchRequest);
             fallosSeguidos = 0;
             esperasCuota = 0;
+            sumarConsumo(consumoRun, data.consumo);
             excluidosTotal += data.excluidos;
             descartadosTotal += data.descartadosPorNombre;
             (data.detalleExcluidos ?? []).forEach((n) => {
@@ -2390,6 +2393,8 @@ export default function SeekerApp({
       if (candidatos.length - lista.length > 0)
         extras.push(`${candidatos.length - lista.length} fuera del polígono`);
       if (celdasFallidas > 0) extras.push(`${celdasFallidas} celdas fallaron`);
+      const notaCosto = notaConsumo(consumoRun);
+      if (notaCosto) extras.push(notaCosto.slice(3));
       if (restantes > 0)
         extras.push(
           `quedan ${restantes} CPs sin censar (desde ${cpsGeo[k].codigo_postal}): quita los censados y repite`
@@ -2703,6 +2708,7 @@ export default function SeekerApp({
     }
     const detExcluidos = new Set<string>();
     const detDescartados = new Set<string>();
+    const consumoRun = consumoVacio();
     let excluidosTotal = 0;
     let descartadosTotal = 0;
     let errorFatal: string | null = null;
@@ -2729,6 +2735,7 @@ export default function SeekerApp({
         celdasCorridas++;
         fallosSeguidos = 0;
         esperasCuota = 0;
+        sumarConsumo(consumoRun, data.consumo);
         excluidosTotal += data.excluidos;
         descartadosTotal += data.descartadosPorNombre;
         (data.detalleExcluidos ?? []).forEach((n) => {
@@ -2876,12 +2883,12 @@ export default function SeekerApp({
     } else if (detenerCensoRef.current) {
       reportar(
         "ok",
-        `Censo detenido por ti: ${celdasCorridas} de ${celdas.length} celdas · ${lista.length} POIs${notaFallidas}${guardado ? " · guardado en la biblioteca" : ""}${notaDelta}`
+        `Censo detenido por ti: ${celdasCorridas} de ${celdas.length} celdas · ${lista.length} POIs${notaFallidas}${notaConsumo(consumoRun)}${guardado ? " · guardado en la biblioteca" : ""}${notaDelta}`
       );
     } else {
       reportar(
         "ok",
-        `Censo completo: ${lista.length} POIs de "${m}" en ${celdasCorridas} celdas${notaFallidas}${guardado ? " · guardado en la biblioteca" : ""}${notaDelta}`
+        `Censo completo: ${lista.length} POIs de "${m}" en ${celdasCorridas} celdas${notaFallidas}${notaConsumo(consumoRun)}${guardado ? " · guardado en la biblioteca" : ""}${notaDelta}`
       );
     }
     setOcupado(false);
@@ -3364,6 +3371,7 @@ export default function SeekerApp({
     }
     // backoff automático ante rate limit: el MISMO lote se reintenta
     // tras la espera — lo ya acumulado nunca se re-consulta ni re-paga
+    const consumoRun = consumoVacio();
     let esperasCuota = 0;
     // fallas TRANSITORIAS (504/red): reintentos con backoff del mismo
     // chunk — un chunk fallido no tira la corrida
@@ -3443,6 +3451,7 @@ export default function SeekerApp({
         }
         esperasCuota = 0;
         reintentosTransitorios = 0;
+        sumarConsumo(consumoRun, data.consumo);
         excluidosTotal += data.excluidos;
         descartadosTotal += data.descartadosPorNombre;
         (data.detalleExcluidos ?? []).forEach((n) => {
@@ -3565,6 +3574,10 @@ export default function SeekerApp({
     if (excluidosTotal > 0) extras.push(`${excluidosTotal} excluidos`);
     if (descartadosTotal > 0)
       extras.push(`${descartadosTotal} descartados por nombre`);
+    {
+      const notaCosto = notaConsumo(consumoRun);
+      if (notaCosto) extras.push(notaCosto.slice(3));
+    }
     if (origenes.length > MAX_ORIGENES_HISTORIAL)
       extras.push("no se guardó en historial (lista muy grande)");
     reportar(
@@ -3776,6 +3789,11 @@ export default function SeekerApp({
       if (data.excluidos > 0) extras.push(`${data.excluidos} excluidos`);
       if (data.descartadosPorNombre > 0)
         extras.push(`${data.descartadosPorNombre} descartados por nombre`);
+      // el costo (y lo servido del caché, $0) siempre visible
+      if (data.consumo) {
+        const notaCosto = notaConsumo(data.consumo);
+        if (notaCosto) extras.push(notaCosto.slice(3));
+      }
       reportar(
         data.pois.length > 0 ? "ok" : "error",
         data.pois.length > 0

@@ -100,6 +100,34 @@ export function fmtMxn(n: number): string {
   return `$${n.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+/** Consumo agregado de una corrida (para mostrar el costo al usuario). */
+export interface ConsumoRun {
+  pagadas: number;
+  deCache: number;
+  costoMxn: number;
+}
+
+export const consumoVacio = (): ConsumoRun => ({
+  pagadas: 0,
+  deCache: 0,
+  costoMxn: 0,
+});
+
+export function sumarConsumo(acum: ConsumoRun, c?: ConsumoRun): void {
+  if (!c) return;
+  acum.pagadas += c.pagadas;
+  acum.deCache += c.deCache;
+  acum.costoMxn = Math.round((acum.costoMxn + c.costoMxn) * 100) / 100;
+}
+
+/** " · costo ~$12.40 MXN · 128 del caché ($0)" — o "" sin consumo. */
+export function notaConsumo(c: ConsumoRun): string {
+  if (c.pagadas + c.deCache === 0) return "";
+  const cache =
+    c.deCache > 0 ? ` · ${c.deCache.toLocaleString("es-MX")} del caché ($0)` : "";
+  return ` · costo ~${fmtMxn(c.costoMxn)} MXN${cache}`;
+}
+
 /** ¿La corrida supera el umbral de aprobación? */
 export function esCorridaGrande(consultas: number, cfg: ConfigCostos): boolean {
   return (
