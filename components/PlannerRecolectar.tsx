@@ -1060,11 +1060,19 @@ export function SeccionCompetencia({
         setSospechosos(null);
         setChecksDep({});
       }
-      // corrida terminada: se limpia el marcador y lo ya censado
+      // corrida terminada: se limpia el marcador y lo ya censado. El
+      // toggle de separación REGRESA a su default (true): al limpiarse
+      // los términos el checkbox desaparece de la UI y un "false" viejo
+      // quedaría invisible — así nació el survey mezclado de CDMX.
       delete cfgLocal.runActivo;
       onBorrador({
         ...borrador,
-        config: { ...cfgLocal, terminos: [], categorias: [] },
+        config: {
+          ...cfgLocal,
+          terminos: [],
+          categorias: [],
+          separarEnCapas: true,
+        },
       });
       await alGuardar();
     } catch (e) {
@@ -1181,6 +1189,19 @@ export function SeccionCompetencia({
               ? ` → ${fmt(centros.length)} centros (traslapes consolidados)`
               : ""}{" "}
             · ≈ {fmt(consultas)} consultas a Google
+            {/* destino EXPLÍCITO antes de pagar: capas vs combinado */}
+            {etiquetasRun.length > 0 ? (
+              <span className="text-cian">
+                {" "}
+                → {etiquetasRun.length} capas (una por{" "}
+                {categorias.length >= 2 ? "categoría" : "marca"})
+              </span>
+            ) : categorias.length >= 2 || terminos.length >= 2 ? (
+              <span className="text-amber-400">
+                {" "}
+                → 1 levantamiento COMBINADO (separar en capas está apagado)
+              </span>
+            ) : null}
           </span>
         )}
         {confirmando && (

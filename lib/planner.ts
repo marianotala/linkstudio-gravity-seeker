@@ -5,6 +5,7 @@
 // por lote conforme llegan (autosave), universos y progreso para
 // reanudar sin repagar consultas. Todo vía Supabase con RLS de equipo.
 
+import { normalizarComparable } from "./geo";
 import { createClient } from "./supabase/client";
 import { calcularUniversosCliente } from "./universos-lotes";
 import type {
@@ -627,6 +628,168 @@ export function geocercasDeSurvey(
     lng: p.lng,
     radio_m: RADIO_INFLUENCIA_CONSOLIDADO,
   }));
+}
+
+// ------------------------------------------------------------------
+// DIVIDIR EN CAPAS POR MARCA — reparación de un survey MEZCLADO (varios
+// términos en un solo levantamiento, p. ej. corrido con "separar en
+// capas" apagado): crea un survey por término, REASIGNA los puntos ya
+// guardados (cero consultas a Google — el término que capturó cada POI
+// está en metadata.termino) y recalcula el universo de cada capa nueva
+// con la maquinaria corregida. Los puntos sin término se infieren por
+// matching de nombre (mismas reglas del filtro estricto del servidor) y
+// los que no matchean van a una capa "Revisar" para ojo humano.
+// ------------------------------------------------------------------
+
+/** Etiqueta de la capa de puntos sin marca inferible. */
+export const ETIQUETA_REVISAR = "Revisar (sin marca)";
+
+export interface ResultadoDivision {
+  capas: { etiqueta: string; puntos: number }[];
+  /** Puntos sin término registrado NI inferible (capa "Revisar"). */
+  ambiguos: number;
+}
+
+export async function dividirSurveyEnCapas(
+  surveyId: string,
+  onEstado?: (texto: string) => void
+): Promise<ResultadoDivision> {
+  const supabase = createClient();
+  const { data: s, error: errS } = await supabase
+    .from("surveys")
+    .select("id, project_id, rol, fuente, configuracion")
+    .eq("id", surveyId)
+    .maybeSingle();
+  if (errS || !s) {
+    throw new Error("No pude leer el levantamiento a dividir");
+  }
+  const cfg = (s.configuracion ?? {}) as Record<string, unknown>;
+  if (cfg.etiqueta) {
+    throw new Error("Este levantamiento ya es una capa (tiene etiqueta)");
+  }
+
+  onEstado?.("Cargando los puntos del levantamiento…");
+  const crudos = await cargarPuntosCrudosSurvey(surveyId);
+  if (crudos.length === 0) {
+    throw new Error("El levantamiento no tiene puntos que dividir");
+  }
+
+  // matchers de respaldo, espejo del filtro estricto del servidor:
+  // "comillas" = el nombre EMPIEZA con el término; sin comillas = todas
+  // sus palabras aparecen en el nombre (sin acentos ni puntuación)
+  const terminosCfg = ((cfg.nameFilters as string[]) ?? [])
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const matchers = terminosCfg.map((t) => {
+    const exacto = /^".*"$/.test(t);
+    const norm = normalizarComparable(exacto ? t.slice(1, -1) : t);
+    return { termino: t, exacto, norm, tokens: norm.split(" ").filter(Boolean) };
+  });
+  const inferir = (nombre: string): string | null => {
+    const n = normalizarComparable(nombre);
+    const captura = matchers.find((m) =>
+      m.exacto
+        ? m.norm.length > 0 && (n === m.norm || n.startsWith(m.norm + " "))
+        : m.tokens.length > 0 && m.tokens.every((t) => n.includes(t))
+    );
+    return captura?.termino ?? null;
+  };
+
+  // agrupar por término (registrado > inferido > Revisar)
+  const grupos = new Map<string, PuntoSurvey[]>();
+  let ambiguos = 0;
+  for (const p of crudos) {
+    let termino = (p.metadata?.termino as string | null) || null;
+    if (!termino) termino = inferir(p.nombre);
+    if (!termino) {
+      termino = ETIQUETA_REVISAR;
+      ambiguos++;
+    }
+    grupos.set(termino, [...(grupos.get(termino) ?? []), p]);
+  }
+  if (grupos.size < 2) {
+    throw new Error(
+      "Todos los puntos son del mismo término — no hay nada que dividir"
+    );
+  }
+
+  // un survey COMPLETADO por término, hermanados con un runId nuevo
+  const runId = uuid();
+  const entradas = Array.from(grupos.entries());
+  const capas: ResultadoDivision["capas"] = [];
+  for (let i = 0; i < entradas.length; i++) {
+    const [etiqueta, puntos] = entradas[i];
+    onEstado?.(
+      `Creando la capa "${etiqueta}" (${i + 1} de ${entradas.length}) · ${puntos.length.toLocaleString("es-MX")} puntos…`
+    );
+    const cfgNueva = {
+      ...cfg,
+      runId,
+      nombre: etiqueta,
+      etiqueta,
+      dividido_de: surveyId,
+    };
+    const { data: nuevo, error: errN } = await supabase
+      .from("surveys")
+      .insert({
+        project_id: s.project_id,
+        rol: s.rol,
+        fuente: s.fuente ?? "division",
+        status: "completado",
+        configuracion: cfgNueva,
+      })
+      .select("id")
+      .single();
+    if (errN || !nuevo) {
+      throw new Error(`No se pudo crear la capa "${etiqueta}": ${errN?.message}`);
+    }
+    // REASIGNAR los puntos ya pagados (por place_id, en tandas)
+    const ids = puntos.map((p) => p.place_id);
+    for (let j = 0; j < ids.length; j += 150) {
+      const { error: errM } = await supabase
+        .from("survey_points")
+        .update({ survey_id: nuevo.id })
+        .eq("survey_id", surveyId)
+        .in("place_id", ids.slice(j, j + 150));
+      if (errM) {
+        throw new Error(
+          `No se pudieron mover los puntos de "${etiqueta}": ${errM.message}`
+        );
+      }
+    }
+    // universo PROPIO de la capa (gratis, PostGIS): buffers de SUS
+    // puntos con la influencia acotada (geocercasDeSurvey ya la aplica)
+    onEstado?.(
+      `Universo de "${etiqueta}" (${i + 1} de ${entradas.length})…`
+    );
+    const geocercas = geocercasDeSurvey(
+      { id: nuevo.id, rol: s.rol as RolLevantamiento, configuracion: cfgNueva },
+      puntos
+    );
+    const u = await calcularUniversosCliente(
+      geocercas,
+      `población alrededor de los ${puntos.length.toLocaleString("es-MX")} puntos de la capa`,
+      {
+        onProgreso: (lote, total) =>
+          onEstado?.(
+            `Universo de "${etiqueta}" · lote ${lote + 1} de ${total}…`
+          ),
+      }
+    );
+    if (u.disponible) {
+      await supabase.from("survey_universes").insert({
+        survey_id: nuevo.id,
+        resultados: { ...u, porAgeb: undefined, agebsGeo: undefined },
+      });
+    }
+    capas.push({ etiqueta, puntos: puntos.length });
+  }
+
+  // el survey original queda vacío: fuera (cascade limpia sus universos)
+  onEstado?.("Retirando el levantamiento mezclado…");
+  await supabase.from("surveys").delete().eq("id", surveyId);
+
+  return { capas, ambiguos };
 }
 
 /** Carga un run COMPLETO para reanudar/re-correr: el survey pedido,

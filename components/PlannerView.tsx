@@ -33,6 +33,8 @@ import {
   cargarPuntosCrudosSurvey,
   cargarPuntosSurveys,
   colorSurvey,
+  dividirSurveyEnCapas,
+  ETIQUETA_REVISAR,
   ETIQUETA_ROL,
   geocercasDeSurvey,
   type PuntoSurvey,
@@ -169,8 +171,14 @@ export default function PlannerView({
   const [seleccionado, setSeleccionado] = useState<string | null>(null);
   const [foco, setFoco] = useState<LatLng | null>(null);
   const [confirmando, setConfirmando] = useState<{
-    accion: "eliminar" | "recorrer";
+    accion: "eliminar" | "recorrer" | "dividir";
     id: string;
+  } | null>(null);
+  /** División de un survey mezclado en capas por marca (progreso). */
+  const [dividiendo, setDividiendo] = useState<{ id: string; texto: string } | null>(null);
+  const [avisoDivision, setAvisoDivision] = useState<{
+    tipo: "ok" | "error";
+    texto: string;
   } | null>(null);
   const [renombrando, setRenombrando] = useState<{ id: string; texto: string } | null>(null);
   const estadoListoRef = useRef(false);
@@ -423,6 +431,53 @@ export default function PlannerView({
       );
     } finally {
       setRecalculando(null);
+    }
+  }
+
+  /** ¿El survey es un MEZCLADO divisible? (varios términos de marca y
+   * sin etiqueta de capa propia). */
+  const esDivisible = (s: SurveyFila) =>
+    s.rol !== "ooh" &&
+    puntosDe(s) > 0 &&
+    !s.configuracion?.etiqueta &&
+    ((s.configuracion?.nameFilters as string[] | undefined)?.length ?? 0) >= 2;
+
+  /** DIVIDIR EN CAPAS POR MARCA: reasigna los puntos ya pagados a un
+   * survey por término (cero consultas a Google) y calcula el universo
+   * propio de cada capa nueva. */
+  async function dividirSurvey(s: SurveyFila) {
+    setConfirmando(null);
+    setAvisoDivision(null);
+    setDividiendo({ id: s.id, texto: "preparando…" });
+    try {
+      const r = await dividirSurveyEnCapas(s.id, (t) =>
+        setDividiendo({ id: s.id, texto: t })
+      );
+      // caches del survey retirado fuera; recarga trae las capas nuevas
+      setPuntosCache((prev) => {
+        const nuevo = { ...prev };
+        delete nuevo[s.id];
+        return nuevo;
+      });
+      if (seleccionado === s.id) setSeleccionado(null);
+      await cargar();
+      setAvisoDivision({
+        tipo: "ok",
+        texto: `"${nombreDe(s)}" dividido en ${r.capas.length} capas — ${r.capas
+          .map((c) => `${c.etiqueta}: ${fmt(c.puntos)}`)
+          .join(" · ")}${
+          r.ambiguos > 0
+            ? ` · ${fmt(r.ambiguos)} puntos sin marca inferible quedaron en "${ETIQUETA_REVISAR}"`
+            : ""
+        } · 0 consultas a Google. Recalcula el consolidado en el Resumen.`,
+      });
+    } catch (e) {
+      setAvisoDivision({
+        tipo: "error",
+        texto: e instanceof Error ? e.message : "No se pudo dividir el levantamiento",
+      });
+    } finally {
+      setDividiendo(null);
     }
   }
 
@@ -826,6 +881,17 @@ export default function PlannerView({
                   />
                 ) : null}
 
+                {avisoDivision && (
+                  <p
+                    className={`mt-3 rounded-md border px-3 py-2 font-mono text-[11px] leading-relaxed ${
+                      avisoDivision.tipo === "ok"
+                        ? "border-emerald-400/50 bg-emerald-400/10 text-emerald-400"
+                        : "border-magenta/50 bg-magenta/10 text-magenta"
+                    }`}
+                  >
+                    {avisoDivision.texto}
+                  </p>
+                )}
                 {filasSeccion.length > 0 && (
                   <div className="mt-3 max-h-52 overflow-y-auto rounded-lg border border-linea">
                     <table className="w-full text-left font-mono text-xs">
@@ -933,13 +999,17 @@ export default function PlannerView({
                                     <span className="text-[10px] text-magenta">
                                       {confirmando.accion === "eliminar"
                                         ? "¿Eliminar?"
-                                        : "¿Re-correr y reemplazar?"}
+                                        : confirmando.accion === "dividir"
+                                          ? "¿Dividir en una capa por marca? (0 consultas)"
+                                          : "¿Re-correr y reemplazar?"}
                                     </span>
                                     <button
                                       onClick={() =>
                                         confirmando.accion === "eliminar"
                                           ? eliminarSurvey(s.id)
-                                          : recorrerSurvey(s)
+                                          : confirmando.accion === "dividir"
+                                            ? dividirSurvey(s)
+                                            : recorrerSurvey(s)
                                       }
                                       className="rounded border border-magenta bg-magenta/10 px-2 py-0.5 text-[10px] text-magenta hover:bg-magenta/20"
                                     >
@@ -1015,6 +1085,20 @@ export default function PlannerView({
                                         ? `⟳ ${recalculando.texto}`
                                         : "⟳ Universo"}
                                     </button>
+                                    {esDivisible(s) && (
+                                      <button
+                                        onClick={() =>
+                                          setConfirmando({ accion: "dividir", id: s.id })
+                                        }
+                                        disabled={dividiendo !== null}
+                                        className="rounded border border-cian/60 bg-cian/10 px-2 py-0.5 text-[10px] text-cian hover:bg-cian/20 disabled:opacity-50"
+                                        title="Levantamiento con varias marcas mezcladas: crea una capa por marca reasignando los puntos YA PAGADOS (0 consultas a Google) y calcula el universo propio de cada capa"
+                                      >
+                                        {dividiendo?.id === s.id
+                                          ? `⟳ ${dividiendo.texto}`
+                                          : "Dividir en capas"}
+                                      </button>
+                                    )}
                                     <button
                                       onClick={() =>
                                         setConfirmando({ accion: "recorrer", id: s.id })
