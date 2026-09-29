@@ -216,6 +216,19 @@ export default function ExportarProyecto({
   // ---------------- Export plan del proyecto (PDF) ----------------
   async function exportarPlanProyecto() {
     if (!consolidado?.resultados?.disponible || seleccionados.length === 0) return;
+    // VALIDACIÓN DE SANIDAD: un universo imposible jamás llega a un PDF
+    const conAdvertencia = [
+      ...(consolidado.resultados.advertencia ? ["el consolidado"] : []),
+      ...seleccionados
+        .filter((s) => universoDe(s)?.advertencia)
+        .map((s) => `"${nombreDe(s)}"`),
+    ];
+    if (conAdvertencia.length > 0) {
+      setError(
+        `No se puede exportar: ${conAdvertencia.join(", ")} no ${conAdvertencia.length === 1 ? "pasó" : "pasaron"} la validación de sanidad (universo físicamente imposible por doble conteo). Recalcula en el Resumen / con ⟳ Universo y vuelve a exportar.`
+      );
+      return;
+    }
     if (desactualizado && !confirmarDesactualizado) {
       setConfirmarDesactualizado(true);
       return;

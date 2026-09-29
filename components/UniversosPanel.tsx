@@ -123,6 +123,13 @@ export default function UniversosPanel({
 
   return (
     <div className="shrink-0 border-b border-linea bg-panel2/50">
+      {/* VALIDACIÓN DE SANIDAD: número físicamente imposible (doble
+          conteo) — visible aquí y bloquea los exports */}
+      {universos.advertencia && (
+        <p className="border-b border-amber-400/40 bg-amber-400/10 px-5 py-2 font-mono text-[10px] leading-relaxed text-amber-400">
+          ⚠ {universos.advertencia}
+        </p>
+      )}
       <div className="flex items-stretch overflow-x-auto px-1 py-1.5">
         <Tarjeta etiqueta="Universo">
           <p className="mt-0.5 font-display text-xl font-extrabold leading-none text-white">

@@ -160,6 +160,10 @@ export interface GeocercaUniverso {
   viewport?: Viewport;
   cp?: string;
   clip?: { lat: number; lng: number; radio_m: number };
+  /** Recorte con VARIOS círculos (celda de malla global ∩ unión de los
+   * buffers que la tocan): geometría disjunta entre lotes — la suma de
+   * crudos queda exacta, sin doble conteo por traslapes. */
+  clips?: { lat: number; lng: number; radio_m: number }[];
 }
 
 export interface UniversoPorGeocerca {
@@ -181,6 +185,10 @@ export interface Universos {
   disponible: boolean;
   /** Cuando disponible=false: explicación en español. */
   mensaje?: string;
+  /** VALIDACIÓN DE SANIDAD: presente cuando el cálculo excede el techo
+   * físico de su zona (doble conteo) — visible en la UI y BLOQUEA los
+   * exports hasta recalcular. */
+  advertencia?: string;
   /** Etiqueta de fuente y método — siempre presente cuando disponible. */
   fuente?: string;
   /** Criterio de área usado, p. ej. "población a 500 m de los puntos censados". */

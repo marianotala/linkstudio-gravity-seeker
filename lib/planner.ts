@@ -245,6 +245,9 @@ export async function guardarUniversosPorCapa(
   onEstado?: (texto: string) => void
 ): Promise<void> {
   try {
+    // influencia por punto ACOTADA: el radio de búsqueda/cercanía no es
+    // radio de buffer (ver RADIO_MAX_CAPA_M)
+    const radioCapa = Math.min(radioM, RADIO_MAX_CAPA_M);
     const supabase = createClient();
     const entradas = Array.from(run.surveys.entries());
     for (let i = 0; i < entradas.length; i++) {
@@ -269,11 +272,11 @@ export async function guardarUniversosPorCapa(
         id: `${surveyId.slice(0, 8)}:${j}`,
         lat: p.lat,
         lng: p.lng,
-        radio_m: radioM,
+        radio_m: radioCapa,
       }));
       const u = await calcularUniversosCliente(
         geocercas,
-        `población a ${radioM} m de los ${propios.length.toLocaleString("es-MX")} puntos de la capa`,
+        `población a ${radioCapa} m de los ${propios.length.toLocaleString("es-MX")} puntos de la capa`,
         {
           onProgreso: (lote, total) =>
             onEstado?.(
@@ -539,6 +542,13 @@ export async function cargarPuntosSurveys(
  * 500 m de los puntos" del panel individual. */
 export const RADIO_INFLUENCIA_CONSOLIDADO = 500;
 
+/** TOPE del buffer de INFLUENCIA por punto en capas de COMPETENCIA: el
+ * radio de cercanía (5-20 km) define DÓNDE BUSCAR rivales, no cuánta
+ * población "pertenece" a cada rival — usarlo como buffer inflaba el
+ * universo de la capa a metrópolis completas (bug Domino's GDL). La
+ * influencia de un punto de competencia se acota a 2 km. */
+export const RADIO_MAX_CAPA_M = 2000;
+
 /**
  * Geocercas de un survey según su modo:
  * - cp → polígonos reales de los códigos postales
@@ -573,13 +583,14 @@ export function geocercasDeSurvey(
   if (modo === "origins") {
     const radio = typeof cfg.radius === "number" ? cfg.radius : 1000;
     // COMPETENCIA: los orígenes de la búsqueda solo definen DÓNDE
-    // buscar; el territorio de la capa son SUS PROPIOS puntos
+    // buscar; el territorio de la capa son SUS PROPIOS puntos, con la
+    // influencia ACOTADA (el radio de cercanía no es radio de buffer)
     if (survey.rol === "competencia" && puntos.length > 0) {
       return puntos.map((p, i) => ({
         id: `${pref}:p${i}`,
         lat: p.lat,
         lng: p.lng,
-        radio_m: radio,
+        radio_m: Math.min(radio, RADIO_MAX_CAPA_M),
       }));
     }
     const origenes = (cfg.origenes as Origin[]) ?? (cfg.centers as Origin[]) ?? [];

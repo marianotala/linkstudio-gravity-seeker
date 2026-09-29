@@ -4019,6 +4019,14 @@ export default function SeekerApp({
       reportar("error", "Corre una búsqueda primero para exportar el plan");
       return;
     }
+    // VALIDACIÓN DE SANIDAD: un universo imposible jamás llega a un PDF
+    if (universos?.advertencia) {
+      reportar(
+        "error",
+        "El universo de este análisis no pasó la validación de sanidad (doble conteo) — recalcúlalo antes de exportar."
+      );
+      return;
+    }
     setOcupado(true);
     reportar("busy", "Generando Export plan (PDF)…");
     setProceso({

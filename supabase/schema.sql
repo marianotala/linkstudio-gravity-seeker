@@ -3144,3 +3144,184 @@ $$;
 
 revoke execute on function public.gasto_resumen_admin() from public, anon;
 grant execute on function public.gasto_resumen_admin() to authenticated;
+
+-- ==================================================================
+-- FIX UNIVERSOS EXACTOS — aplicada en vivo como migración
+-- universos_exactos. El camino por lotes sumaba lotes cuyas geometrías
+-- se traslapaban (buffers metropolitanos): doble/triple conteo (plan
+-- Domino's GDL: 7.49M adultos reportados vs techo real ~3.4M ZMG).
+-- (a) calcular_universos_crudo v3: acepta "clips" (VARIOS círculos) —
+--     geometría = base ∩ ST_Union(buffers) — y regresa ageb_ids /
+--     rural_ids para contar zonas DISTINTAS entre lotes. Validado en
+--     vivo: celda con clips [A,B] == unión directa de A+B al decimal
+--     (98,811.33 adultos), mientras la suma de lotes separados daba
+--     132,787 (+34%).
+-- (b) techo_universo(bbox): cota superior de sanidad — población 18+
+--     de los AGEBs que intersectan la envolvente (+ rural dentro).
+
+create or replace function public.calcular_universos_crudo(p_geocercas jsonb)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v jsonb;
+begin
+  if coalesce(jsonb_array_length(p_geocercas), 0) = 0
+     or jsonb_array_length(p_geocercas) > 500 then
+    return jsonb_build_object('ok', false, 'motivo', 'geocercas_invalidas');
+  end if;
+
+  with gc as (
+    select case
+      -- clips MÚLTIPLES: base ∩ unión de los círculos (celda de malla
+      -- global tocada por varios buffers → su cobertura exacta)
+      when g.value ? 'clips' then ST_Intersection(
+        base.geom,
+        (select ST_Union((ST_Buffer(
+          ST_SetSRID(ST_MakePoint(
+            (c.value->>'lng')::float,
+            (c.value->>'lat')::float), 4326)::geography,
+          least(greatest((c.value->>'radio_m')::float, 10), 100000)
+        ))::geometry)
+        from jsonb_array_elements(g.value->'clips') as c)
+      )
+      when g.value ? 'clip' then ST_Intersection(
+        base.geom,
+        (ST_Buffer(
+          ST_SetSRID(ST_MakePoint(
+            (g.value->'clip'->>'lng')::float,
+            (g.value->'clip'->>'lat')::float), 4326)::geography,
+          least(greatest((g.value->'clip'->>'radio_m')::float, 10), 100000)
+        ))::geometry
+      )
+      else base.geom
+    end as geom
+    from jsonb_array_elements(p_geocercas) with ordinality as g
+    cross join lateral (
+      select case
+        when g.value ? 'cp' then (select c.geom from public.cp_poligonos c where c.codigo_postal = g.value->>'cp')
+        when g.value ? 'viewport' then ST_MakeEnvelope(
+          (g.value->'viewport'->>'west')::float,
+          (g.value->'viewport'->>'south')::float,
+          (g.value->'viewport'->>'east')::float,
+          (g.value->'viewport'->>'north')::float, 4326)
+        else (ST_Buffer(
+          ST_SetSRID(ST_MakePoint((g.value->>'lng')::float, (g.value->>'lat')::float), 4326)::geography,
+          least(greatest((g.value->>'radio_m')::float, 10), 100000)
+        ))::geometry
+      end as geom
+    ) base
+  ),
+  un as (select ST_Union(geom) as geom from gc),
+  inter as (
+    select a.cvegeo, a.pobtot, a.pobfem, a.pobmas, a.p_18ymas, a.p_18a24,
+           a.p_60ymas, a.tvivhab, a.nse_proxy,
+           coalesce(a.pob65_mas, coalesce(a.p_60ymas, 0) * 0.673) as p65_fila,
+           ST_Area(ST_Intersection(a.geom, un.geom)::geography)
+             / nullif(ST_Area(a.geom::geography), 0) as frac
+    from public.agebs a, un
+    where un.geom is not null and a.geom && un.geom and ST_Intersects(a.geom, un.geom)
+  ),
+  agg as (
+    select
+      count(*) as n,
+      coalesce(jsonb_agg(cvegeo) filter (where frac > 0), '[]'::jsonb) as ids,
+      coalesce(sum(pobtot * frac), 0) as pob,
+      coalesce(sum(p_18ymas * frac), 0) as adultos,
+      coalesce(sum(tvivhab * frac), 0) as viv,
+      sum(pobfem * frac) as pobfem,
+      sum(pobmas * frac) as pobmas,
+      coalesce(sum(p_18a24 * frac), 0) as e18a24,
+      coalesce(sum(greatest(coalesce(p_18ymas,0) - coalesce(p_18a24,0) - coalesce(p_60ymas,0), 0) * frac), 0) as e25a59,
+      coalesce(sum(greatest(coalesce(p_60ymas,0) - p65_fila, 0) * frac), 0) as e60a64,
+      coalesce(sum(p65_fila * frac), 0) as e65,
+      coalesce(sum(p_60ymas * frac), 0) as e60,
+      coalesce(sum(nse_proxy * coalesce(pobtot,0) * frac), 0) as s_nse,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy is not null), 0) as w_nse,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 75), 0) as w_ab,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 65 and nse_proxy < 75), 0) as w_cmas,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 55 and nse_proxy < 65), 0) as w_c,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 45 and nse_proxy < 55), 0) as w_cmenos,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy >= 35 and nse_proxy < 45), 0) as w_dmas,
+      coalesce(sum(coalesce(pobtot,0) * frac) filter (where nse_proxy < 35), 0) as w_de
+    from inter where frac > 0
+  ),
+  rur as (
+    select
+      count(*) as n_loc,
+      coalesce(jsonb_agg(l.cvegeo), '[]'::jsonb) as ids,
+      coalesce(sum(l.pobtot), 0) as pob,
+      coalesce(sum(l.p_18ymas), 0) as adultos,
+      coalesce(sum(l.tvivhab), 0) as viv,
+      sum(l.pobfem) as pobfem,
+      sum(l.pobmas) as pobmas,
+      coalesce(sum(l.p_18a24), 0) as e18a24,
+      coalesce(sum(greatest(coalesce(l.p_18ymas,0) - coalesce(l.p_18a24,0) - coalesce(l.p_60ymas,0), 0)), 0) as e25a59,
+      coalesce(sum(l.p_60ymas), 0) as e60
+    from public.localidades_rurales l, un
+    where un.geom is not null and l.geom && un.geom and ST_Within(l.geom, un.geom)
+  )
+  select jsonb_build_object(
+    'ok', true,
+    'agebs', agg.n,
+    'ageb_ids', agg.ids,
+    'rurales', rur.n_loc,
+    'rural_ids', rur.ids,
+    'pob_u', agg.pob, 'adultos_u', agg.adultos, 'viv_u', agg.viv,
+    'pobfem_u', agg.pobfem, 'pobmas_u', agg.pobmas,
+    'e18a24_u', agg.e18a24, 'e25a59_u', agg.e25a59,
+    'e60a64_u', agg.e60a64, 'e65_u', agg.e65, 'e60_u', agg.e60,
+    's_nse', agg.s_nse,
+    'w_nse', agg.w_nse, 'w_ab', agg.w_ab, 'w_cmas', agg.w_cmas,
+    'w_c', agg.w_c, 'w_cmenos', agg.w_cmenos, 'w_dmas', agg.w_dmas,
+    'w_de', agg.w_de,
+    'pob_r', rur.pob, 'adultos_r', rur.adultos, 'viv_r', rur.viv,
+    'pobfem_r', rur.pobfem, 'pobmas_r', rur.pobmas,
+    'e18a24_r', rur.e18a24, 'e25a59_r', rur.e25a59, 'e60_r', rur.e60
+  )
+  into v from agg, rur;
+  return v;
+end;
+$$;
+
+revoke execute on function public.calcular_universos_crudo(jsonb) from public, anon;
+grant execute on function public.calcular_universos_crudo(jsonb) to authenticated;
+
+-- ------------------------------------------------------------
+-- techo_universo: VALIDACIÓN DE SANIDAD. La población 18+ de los
+-- AGEBs que intersectan la ENVOLVENTE de la geometría (más la rural
+-- dentro de ella) es una cota superior estricta de cualquier
+-- interpolación areal válida sobre esa geometría. Si un cálculo la
+-- excede, hay doble conteo — warning visible, nunca a un PDF.
+-- ------------------------------------------------------------
+create or replace function public.techo_universo(p_bbox jsonb)
+returns jsonb
+language sql
+stable
+security invoker
+set search_path = public, extensions
+as $$
+  with env as (
+    select ST_MakeEnvelope(
+      (p_bbox->>'west')::float,
+      (p_bbox->>'south')::float,
+      (p_bbox->>'east')::float,
+      (p_bbox->>'north')::float, 4326) as geom
+  )
+  select jsonb_build_object(
+    'adultos_techo',
+      coalesce((select sum(a.p_18ymas) from public.agebs a, env
+                where a.geom && env.geom and ST_Intersects(a.geom, env.geom)), 0)
+      + coalesce((select sum(l.p_18ymas) from public.localidades_rurales l, env
+                  where l.geom && env.geom and ST_Within(l.geom, env.geom)), 0),
+    'agebs_techo',
+      coalesce((select count(*) from public.agebs a, env
+                where a.geom && env.geom and ST_Intersects(a.geom, env.geom)), 0)
+  );
+$$;
+
+revoke execute on function public.techo_universo(jsonb) from public, anon;
+grant execute on function public.techo_universo(jsonb) to authenticated;

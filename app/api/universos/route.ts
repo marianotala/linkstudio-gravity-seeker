@@ -37,18 +37,44 @@ const GeocercaSchema = z.object({
       radio_m: z.number().min(10).max(100000),
     })
     .optional(),
+  /** Recorte con VARIOS círculos (celda de malla global ∩ unión de
+   * buffers): geometría disjunta entre lotes — sin doble conteo. */
+  clips: z
+    .array(
+      z.object({
+        lat: z.number().min(-90).max(90),
+        lng: z.number().min(-180).max(180),
+        radio_m: z.number().min(10).max(100000),
+      })
+    )
+    .max(60)
+    .optional(),
 });
 
-const BodySchema = z.object({
-  geocercas: z
-    .array(GeocercaSchema)
-    .min(1, "Manda al menos una geocerca")
-    .max(2000, "Máximo 2000 geocercas"),
-  incluirAgebs: z.boolean().default(false),
-  /** Modo LOTE: regresa las sumas crudas del RPC calcular_universos_crudo
-   * (máx 500 geocercas por lote); el cliente agrega lotes al final. */
-  crudo: z.boolean().default(false),
-});
+const BodySchema = z
+  .object({
+    geocercas: z
+      .array(GeocercaSchema)
+      .max(2000, "Máximo 2000 geocercas")
+      .optional(),
+    incluirAgebs: z.boolean().default(false),
+    /** Modo LOTE: regresa las sumas crudas del RPC calcular_universos_crudo
+     * (máx 500 geocercas por lote); el cliente agrega lotes al final. */
+    crudo: z.boolean().default(false),
+    /** VALIDACIÓN DE SANIDAD: regresa el techo (población 18+ de los
+     * AGEBs que intersectan esta envolvente) en vez de calcular. */
+    techo: z
+      .object({
+        north: z.number().min(-90).max(90),
+        south: z.number().min(-90).max(90),
+        east: z.number().min(-180).max(180),
+        west: z.number().min(-180).max(180),
+      })
+      .optional(),
+  })
+  .refine((b) => (b.geocercas?.length ?? 0) > 0 || b.techo, {
+    message: "Manda al menos una geocerca (o un techo a validar)",
+  });
 
 export async function POST(req: Request) {
   const supabase = createClient();
@@ -77,15 +103,31 @@ export async function POST(req: Request) {
     );
   }
 
+  // VALIDACIÓN DE SANIDAD: techo de la envolvente (cota superior)
+  if (parsed.data.techo) {
+    const { data, error } = await supabase.rpc("techo_universo", {
+      p_bbox: parsed.data.techo,
+    });
+    if (error) {
+      console.error("techo_universo falló:", error.message);
+      return NextResponse.json(
+        { error: `La validación del techo falló: ${error.message}` },
+        { status: 500 }
+      );
+    }
+    return NextResponse.json({ techo: data });
+  }
+
+  const geocercas = parsed.data.geocercas ?? [];
   if (parsed.data.crudo) {
-    if (parsed.data.geocercas.length > 500) {
+    if (geocercas.length > 500) {
       return NextResponse.json(
         { error: "Máximo 500 geocercas por lote crudo" },
         { status: 400 }
       );
     }
     const { data, error } = await supabase.rpc("calcular_universos_crudo", {
-      p_geocercas: parsed.data.geocercas,
+      p_geocercas: geocercas,
     });
     if (error) {
       console.error("calcular_universos_crudo falló:", error.message);
@@ -97,7 +139,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ crudo: data });
   }
 
-  const universos = await calcularUniversos(supabase, parsed.data.geocercas, {
+  const universos = await calcularUniversos(supabase, geocercas, {
     incluirAgebs: parsed.data.incluirAgebs,
   });
   return NextResponse.json({ universos });

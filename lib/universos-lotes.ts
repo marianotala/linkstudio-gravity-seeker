@@ -22,6 +22,10 @@ export interface UniversosCrudo {
   motivo?: string;
   agebs: number;
   rurales: number;
+  /** Claves de los AGEBs/localidades del lote — para contar zonas
+   * DISTINTAS al agregar (un AGEB puede tocar varios lotes). */
+  ageb_ids?: string[];
+  rural_ids?: string[];
   pob_u: number;
   adultos_u: number;
   viv_u: number;
@@ -64,50 +68,130 @@ function llaveEspacial(g: GeocercaUniverso): { lat: number; lng: number } {
   return { lat: pref, lng: 0 };
 }
 
-/**
- * Agrupa geocercas por proximidad espacial (retícula de 1°) y las
- * parte en lotes de hasta `maxPorLote`. El orden por celda mantiene
- * cada lote geográficamente compacto — los traslapes se deduplican
- * DENTRO del lote (ST_Union) y entre lotes vecinos son despreciables.
- */
-export function agruparGeocercasPorProximidad(
-  geocercas: GeocercaUniverso[],
-  maxPorLote = LOTE_UNIVERSOS
-): GeocercaUniverso[][] {
-  const ordenadas = geocercas
-    .map((g) => ({ g, c: llaveEspacial(g) }))
-    .sort((a, b) => {
-      const ca = `${Math.floor(a.c.lat)}:${Math.floor(a.c.lng)}`;
-      const cb = `${Math.floor(b.c.lat)}:${Math.floor(b.c.lng)}`;
-      if (ca !== cb) return ca < cb ? -1 : 1;
-      return a.c.lat - b.c.lat || a.c.lng - b.c.lng;
-    })
-    .map(({ g }) => g);
-  const lotes: GeocercaUniverso[][] = [];
-  for (let i = 0; i < ordenadas.length; i += maxPorLote) {
-    lotes.push(ordenadas.slice(i, i + maxPorLote));
-  }
-  return lotes;
-}
-
 // ------------------------------------------------------------------
-// Subdivisión de geometrías GRANDES (radios de 10-30 km, viewports de
-// ciudad completa): una sola unión gigante excede el timeout del RPC.
-// Un círculo grande se parte en celdas de cuadrícula CLIPEADAS al
-// círculo (celda ∩ círculo, exacto — validado en vivo al habitante) y
-// un viewport grande en sub-rectángulos (teselado exacto). Las celdas
-// no se traslapan entre lotes: la agregación de crudos es exacta.
+// GEOMETRÍA DISJUNTA para el camino por lotes. El RPC crudo deduplica
+// (ST_Union) DENTRO de cada lote, pero los lotes se SUMAN entre sí:
+// mandar buffers crudos traslapados repartidos en varios lotes contaba
+// a la misma población 2-3 veces (bug del consolidado Domino's GDL:
+// 7.49M "adultos" contra un techo real de ~3.4M en la ZMG). El fix:
+// TODOS los círculos se convierten en celdas de una MALLA GLOBAL
+// ALINEADA; cada celda aparece UNA sola vez, clipeada en el servidor a
+// la UNIÓN de los círculos que la tocan (clips múltiples). Las celdas
+// son disjuntas por construcción → la suma entre lotes es EXACTA
+// (validado en vivo: celda con clips [A,B] == unión directa de A+B al
+// decimal). Los viewports grandes se teselan (exacto) como antes.
 // ------------------------------------------------------------------
 
-/** Círculo con radio mayor a esto se subdivide en celdas. */
+/** Círculo con radio mayor a esto obliga el camino por lotes. */
 export const RADIO_SUBDIVIDIR_M = 8000;
-/** Lado de las celdas al subdividir un círculo. */
-const CELDA_CIRCULO_M = 4000;
+/** Lado de las celdas de la malla global (~4 km). */
+export const CELDA_GLOBAL_M = 4000;
+/** Techo de clips por celda: con más círculos que esto tocando una
+ * celda de 4 km, se conservan los más cercanos (el resto aporta
+ * orillas ya cubiertas — error despreciable, jamás sobreconteo). */
+const MAX_CLIPS_CELDA = 60;
 /** Viewport con lado mayor a esto (km) se subdivide. */
 const LADO_SUBDIVIDIR_VIEWPORT_KM = 25;
 const PASO_VIEWPORT_KM = 18;
 /** Área máxima (km²) que puede cargar un lote del RPC crudo. */
 export const MAX_AREA_LOTE_KM2 = 300;
+
+interface Circulo {
+  lat: number;
+  lng: number;
+  radio_m: number;
+}
+
+/**
+ * Convierte un conjunto de círculos (buffers) en celdas DISJUNTAS de
+ * la malla global. Una celda totalmente cubierta por algún círculo va
+ * completa (sin clip); una celda parcial lleva `clips` con los
+ * círculos que la tocan (el servidor hace celda ∩ unión de buffers).
+ */
+export function celdasDeCirculos(circulos: Circulo[]): GeocercaUniverso[] {
+  if (circulos.length === 0) return [];
+  const latRef =
+    circulos.reduce((s, c) => s + c.lat, 0) / circulos.length;
+  const mLat = 111320;
+  const mLng = 111320 * Math.max(0.2, Math.cos((latRef * Math.PI) / 180));
+  const dLat = CELDA_GLOBAL_M / mLat;
+  const dLng = CELDA_GLOBAL_M / mLng;
+
+  const celdas = new Map<
+    string,
+    { i: number; j: number; circulos: Circulo[]; llena: boolean }
+  >();
+  for (const c of circulos) {
+    const iMin = Math.floor((c.lat - c.radio_m / mLat) / dLat);
+    const iMax = Math.floor((c.lat + c.radio_m / mLat) / dLat);
+    const jMin = Math.floor((c.lng - c.radio_m / mLng) / dLng);
+    const jMax = Math.floor((c.lng + c.radio_m / mLng) / dLng);
+    for (let i = iMin; i <= iMax; i++) {
+      for (let j = jMin; j <= jMax; j++) {
+        const south = i * dLat;
+        const north = (i + 1) * dLat;
+        const west = j * dLng;
+        const east = (j + 1) * dLng;
+        // punto de la celda MÁS CERCANO al centro: ¿toca el círculo?
+        const cLat = Math.min(Math.max(c.lat, south), north);
+        const cLng = Math.min(Math.max(c.lng, west), east);
+        const dy = (cLat - c.lat) * mLat;
+        const dx = (cLng - c.lng) * mLng;
+        if (dx * dx + dy * dy > c.radio_m * c.radio_m) continue;
+        const k = `${i}:${j}`;
+        let celda = celdas.get(k);
+        if (!celda) {
+          celda = { i, j, circulos: [], llena: false };
+          celdas.set(k, celda);
+        }
+        if (celda.llena) continue;
+        // ¿el círculo cubre la celda COMPLETA? (esquina más lejana)
+        const fLat = north - c.lat > c.lat - south ? north : south;
+        const fLng = east - c.lng > c.lng - west ? east : west;
+        const fy = (fLat - c.lat) * mLat;
+        const fx = (fLng - c.lng) * mLng;
+        if (fx * fx + fy * fy <= c.radio_m * c.radio_m) {
+          celda.llena = true;
+          celda.circulos = [];
+        } else {
+          celda.circulos.push(c);
+        }
+      }
+    }
+  }
+
+  const salida: GeocercaUniverso[] = [];
+  celdas.forEach((celda, k) => {
+    const viewport = {
+      south: celda.i * dLat,
+      north: (celda.i + 1) * dLat,
+      west: celda.j * dLng,
+      east: (celda.j + 1) * dLng,
+    };
+    if (celda.llena || celda.circulos.length === 0) {
+      salida.push({ id: `celda:${k}`, viewport });
+      return;
+    }
+    let clips = celda.circulos;
+    if (clips.length > MAX_CLIPS_CELDA) {
+      const cy = (viewport.south + viewport.north) / 2;
+      const cx = (viewport.west + viewport.east) / 2;
+      const holgura = (c: Circulo) =>
+        Math.hypot((c.lat - cy) * mLat, (c.lng - cx) * mLng) - c.radio_m;
+      clips = [...clips].sort((a, b) => holgura(a) - holgura(b)).slice(0, MAX_CLIPS_CELDA);
+    }
+    salida.push({
+      id: `celda:${k}`,
+      viewport,
+      clips: clips.map((c) => ({
+        lat: c.lat,
+        lng: c.lng,
+        radio_m: Math.round(c.radio_m),
+      })),
+    });
+  });
+  return salida;
+}
 
 const KM_POR_GRADO = 111.32;
 
@@ -133,94 +217,66 @@ export function areaTotalKm2(geocercas: GeocercaUniverso[]): number {
   return geocercas.reduce((s, g) => s + areaGeocercaKm2(g), 0);
 }
 
-/**
- * Subdivide las geocercas grandes. Regresa la lista fina y si hubo
- * subdivisión (para decidir el camino por lotes).
- */
-export function subdividirGeocercas(geocercas: GeocercaUniverso[]): {
-  finas: GeocercaUniverso[];
-  huboSubdivision: boolean;
-} {
-  const finas: GeocercaUniverso[] = [];
-  let huboSubdivision = false;
+/** Teselado exacto de un viewport grande en sub-rectángulos. */
+function teselarViewport(g: GeocercaUniverso): GeocercaUniverso[] {
+  if (!g.viewport) return [g];
+  const midLat = ((g.viewport.north + g.viewport.south) / 2) * (Math.PI / 180);
+  const wKm =
+    Math.abs(g.viewport.east - g.viewport.west) *
+    KM_POR_GRADO *
+    Math.max(0.2, Math.cos(midLat));
+  const hKm = Math.abs(g.viewport.north - g.viewport.south) * KM_POR_GRADO;
+  if (Math.max(wKm, hKm) <= LADO_SUBDIVIDIR_VIEWPORT_KM) return [g];
+  const salida: GeocercaUniverso[] = [];
+  const nx = Math.max(1, Math.ceil(wKm / PASO_VIEWPORT_KM));
+  const ny = Math.max(1, Math.ceil(hKm / PASO_VIEWPORT_KM));
+  const dLng = (g.viewport.east - g.viewport.west) / nx;
+  const dLat = (g.viewport.north - g.viewport.south) / ny;
+  for (let iy = 0; iy < ny; iy++) {
+    for (let ix = 0; ix < nx; ix++) {
+      salida.push({
+        id: `${g.id}~${ix}:${iy}`,
+        viewport: {
+          west: g.viewport.west + ix * dLng,
+          east: g.viewport.west + (ix + 1) * dLng,
+          south: g.viewport.south + iy * dLat,
+          north: g.viewport.south + (iy + 1) * dLat,
+        },
+      });
+    }
+  }
+  return salida;
+}
 
+/**
+ * Vuelve DISJUNTA la geometría para el camino por lotes: todos los
+ * círculos → celdas de malla global (sin traslape entre celdas ni
+ * entre lotes); viewports grandes → teselas exactas; CPs y viewports
+ * chicos pasan tal cual. Con la geometría disjunta, la SUMA de los
+ * crudos de los lotes equivale a la interpolación areal de la unión
+ * completa — sin doble conteo.
+ */
+export function volverGeometriaDisjunta(
+  geocercas: GeocercaUniverso[]
+): GeocercaUniverso[] {
+  const circulos: Circulo[] = [];
+  const resto: GeocercaUniverso[] = [];
   for (const g of geocercas) {
-    // círculo grande → celdas clipeadas al círculo (exacto)
     if (
       g.lat !== undefined &&
       g.lng !== undefined &&
       g.radio_m !== undefined &&
       !g.viewport &&
-      !g.cp &&
-      g.radio_m > RADIO_SUBDIVIDIR_M
+      !g.cp
     ) {
-      huboSubdivision = true;
-      const dLat = CELDA_CIRCULO_M / 111320;
-      const dLng =
-        CELDA_CIRCULO_M /
-        (111320 * Math.max(0.2, Math.cos((g.lat * Math.PI) / 180)));
-      const n = Math.ceil(g.radio_m / CELDA_CIRCULO_M);
-      const clip = { lat: g.lat, lng: g.lng, radio_m: g.radio_m };
-      for (let i = -n - 1; i <= n; i++) {
-        for (let j = -n - 1; j <= n; j++) {
-          const south = g.lat + i * dLat;
-          const north = south + dLat;
-          const west = g.lng + j * dLng;
-          const east = west + dLng;
-          // ¿la celda toca el círculo? distancia del punto del
-          // rectángulo más cercano al centro (aprox plana escalada)
-          const cLat = Math.min(Math.max(g.lat, south), north);
-          const cLng = Math.min(Math.max(g.lng, west), east);
-          const dy = (cLat - g.lat) * 111320;
-          const dx =
-            (cLng - g.lng) *
-            111320 *
-            Math.max(0.2, Math.cos((g.lat * Math.PI) / 180));
-          if (Math.sqrt(dx * dx + dy * dy) > g.radio_m) continue;
-          finas.push({
-            id: `${g.id}~${i}:${j}`,
-            viewport: { north, south, east, west },
-            clip,
-          });
-        }
-      }
-      continue;
+      circulos.push({ lat: g.lat, lng: g.lng, radio_m: g.radio_m });
+    } else if (g.viewport && !g.cp) {
+      resto.push(...teselarViewport(g));
+    } else {
+      resto.push(g);
     }
-    // viewport grande → sub-rectángulos (teselado exacto, sin clip)
-    if (g.viewport && !g.cp) {
-      const midLat =
-        ((g.viewport.north + g.viewport.south) / 2) * (Math.PI / 180);
-      const wKm =
-        Math.abs(g.viewport.east - g.viewport.west) *
-        KM_POR_GRADO *
-        Math.max(0.2, Math.cos(midLat));
-      const hKm =
-        Math.abs(g.viewport.north - g.viewport.south) * KM_POR_GRADO;
-      if (Math.max(wKm, hKm) > LADO_SUBDIVIDIR_VIEWPORT_KM) {
-        huboSubdivision = true;
-        const nx = Math.max(1, Math.ceil(wKm / PASO_VIEWPORT_KM));
-        const ny = Math.max(1, Math.ceil(hKm / PASO_VIEWPORT_KM));
-        const dLng = (g.viewport.east - g.viewport.west) / nx;
-        const dLat = (g.viewport.north - g.viewport.south) / ny;
-        for (let iy = 0; iy < ny; iy++) {
-          for (let ix = 0; ix < nx; ix++) {
-            finas.push({
-              id: `${g.id}~${ix}:${iy}`,
-              viewport: {
-                west: g.viewport.west + ix * dLng,
-                east: g.viewport.west + (ix + 1) * dLng,
-                south: g.viewport.south + iy * dLat,
-                north: g.viewport.south + (iy + 1) * dLat,
-              },
-            });
-          }
-        }
-        continue;
-      }
-    }
-    finas.push(g);
   }
-  return { finas, huboSubdivision };
+  return [...celdasDeCirculos(circulos), ...resto];
 }
 
 /**
@@ -297,11 +353,18 @@ export async function calcularUniversosCliente(
   if (geocercas.length === 0) {
     return { disponible: false, mensaje: "Sin geocercas para calcular" };
   }
-  const { finas, huboSubdivision } = subdividirGeocercas(geocercas);
+  const hayCirculoGrande = geocercas.some(
+    (g) =>
+      g.radio_m !== undefined &&
+      !g.viewport &&
+      !g.cp &&
+      g.radio_m > RADIO_SUBDIVIDIR_M
+  );
 
-  // geometría CHICA: un solo RPC — conserva porGeocerca y el detalle
+  // geometría CHICA: un solo RPC — la unión completa en una llamada es
+  // EXACTA por construcción y conserva porGeocerca y el detalle
   if (
-    !huboSubdivision &&
+    !hayCirculoGrande &&
     geocercas.length <= UMBRAL_UNIVERSOS_LOTES &&
     areaTotalKm2(geocercas) <= MAX_AREA_SENCILLO_KM2
   ) {
@@ -309,7 +372,10 @@ export async function calcularUniversosCliente(
       const { universos } = await postUniversos<{ universos: Universos }>({
         geocercas,
       });
-      return universos?.disponible ? { ...universos, criterio } : universos;
+      return await verificarTechoUniverso(
+        geocercas,
+        universos?.disponible ? { ...universos, criterio } : universos
+      );
     } catch (e) {
       return {
         disponible: false,
@@ -319,8 +385,10 @@ export async function calcularUniversosCliente(
     }
   }
 
-  // geometría GRANDE: lotes crudos con reintentos y agregación exacta
-  const lotes = agruparGeocercasEnLotes(finas);
+  // geometría GRANDE: se vuelve DISJUNTA (celdas de malla global con
+  // clips múltiples) y se reparte en lotes — la suma de crudos es
+  // exacta porque ninguna celda se repite ni se traslapa entre lotes
+  const lotes = agruparGeocercasEnLotes(volverGeometriaDisjunta(geocercas));
   const crudos: UniversosCrudo[] = [];
   const fallidos: number[] = [];
   for (let i = 0; i < lotes.length; i++) {
@@ -363,7 +431,83 @@ export async function calcularUniversosCliente(
     fallidos.length > 0
       ? ` · ${fallidos.length} de ${lotes.length} lotes fallaron (${fallidos.slice(0, 5).join(", ")}${fallidos.length > 5 ? "…" : ""}) y quedaron fuera del total`
       : "";
-  return agregarUniversosCrudos(crudos, `${criterio}${nota}`);
+  return verificarTechoUniverso(
+    geocercas,
+    agregarUniversosCrudos(crudos, `${criterio}${nota}`)
+  );
+}
+
+// ------------------------------------------------------------------
+// VALIDACIÓN DE SANIDAD permanente: el universo de cualquier geometría
+// no puede exceder la población 18+ de los AGEBs que intersectan su
+// ENVOLVENTE (+ la rural dentro). Si el cálculo la excede hay doble
+// conteo: advertencia visible + log — un número físicamente imposible
+// nunca vuelve a llegar a un PDF (los exports se bloquean con la
+// advertencia presente).
+// ------------------------------------------------------------------
+
+/** Envolvente de las geocercas; null si alguna no tiene coordenadas
+ * (CP puro) — sin envolvente confiable no se valida. */
+export function bboxDeGeocercas(
+  geocercas: GeocercaUniverso[]
+): { north: number; south: number; east: number; west: number } | null {
+  let north = -90;
+  let south = 90;
+  let east = -180;
+  let west = 180;
+  let alguna = false;
+  for (const g of geocercas) {
+    if (g.viewport) {
+      north = Math.max(north, g.viewport.north);
+      south = Math.min(south, g.viewport.south);
+      east = Math.max(east, g.viewport.east);
+      west = Math.min(west, g.viewport.west);
+      alguna = true;
+    } else if (g.lat !== undefined && g.lng !== undefined) {
+      const r = g.radio_m ?? 0;
+      const dLat = r / 111320;
+      const dLng =
+        r / (111320 * Math.max(0.2, Math.cos((g.lat * Math.PI) / 180)));
+      north = Math.max(north, g.lat + dLat);
+      south = Math.min(south, g.lat - dLat);
+      east = Math.max(east, g.lng + dLng);
+      west = Math.min(west, g.lng - dLng);
+      alguna = true;
+    } else {
+      // CP sin coordenadas: la envolvente no lo cubriría → no validar
+      return null;
+    }
+  }
+  return alguna ? { north, south, east, west } : null;
+}
+
+async function verificarTechoUniverso(
+  geocercas: GeocercaUniverso[],
+  u: Universos
+): Promise<Universos> {
+  if (!u.disponible || !u.residencial) return u;
+  const bbox = bboxDeGeocercas(geocercas);
+  if (!bbox) return u;
+  try {
+    const { techo } = await postUniversos<{
+      techo: { adultos_techo: number; agebs_techo: number } | null;
+    }>({ techo: bbox });
+    if (
+      techo &&
+      techo.adultos_techo > 0 &&
+      u.residencial.adultos18 > techo.adultos_techo * 1.001
+    ) {
+      const advertencia = `NÚMERO IMPOSIBLE: el universo calculado (${u.residencial.adultos18.toLocaleString("es-MX")} adultos 18+) excede el techo físico de su zona (${Math.round(techo.adultos_techo).toLocaleString("es-MX")} adultos en los ${techo.agebs_techo.toLocaleString("es-MX")} AGEBs de la envolvente). Hay doble conteo: recalcula y, si persiste, avisa al admin. Este universo NO se puede exportar.`;
+      console.error("[universos] validación de sanidad:", advertencia, {
+        geocercas: geocercas.length,
+        criterio: u.criterio,
+      });
+      return { ...u, advertencia };
+    }
+  } catch (e) {
+    console.error("No se pudo validar el techo del universo:", e);
+  }
+  return u;
 }
 
 /**
@@ -419,8 +563,25 @@ export function agregarUniversosCrudos(
   criterio?: string
 ): Universos {
   const ok = crudos.filter((c) => c.ok);
-  const agebs = ok.reduce((s, c) => s + c.agebs, 0);
-  const rurales = ok.reduce((s, c) => s + c.rurales, 0);
+  // zonas DISTINTAS: un AGEB puede tocar varios lotes — se cuenta una
+  // vez (la población no se duplica: cada lote suma solo su fracción)
+  const contarDistintos = (
+    ids: (string[] | undefined)[],
+    respaldo: number
+  ): number => {
+    if (ids.some((x) => x === undefined)) return respaldo;
+    const set = new Set<string>();
+    for (const lista of ids) for (const id of lista ?? []) set.add(id);
+    return set.size;
+  };
+  const agebs = contarDistintos(
+    ok.map((c) => c.ageb_ids),
+    ok.reduce((s, c) => s + c.agebs, 0)
+  );
+  const rurales = contarDistintos(
+    ok.map((c) => c.rural_ids),
+    ok.reduce((s, c) => s + c.rurales, 0)
+  );
   if (agebs === 0 && rurales === 0) {
     return {
       disponible: false,
