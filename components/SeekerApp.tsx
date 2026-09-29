@@ -64,15 +64,20 @@ import {
   cargarRunParaReanudar,
   crearSurveysPlanner,
   depurarRunPersistido,
+  eliminarDescartadosDeRun,
   ETIQUETA_ROL,
+  guardarDescartados,
   guardarPuntosPlanner,
   guardarUniversosPlanner,
   guardarUniversosPorCapa,
+  marcarSurveysModificados,
   marcarUniversosActualizados,
   reescribirPuntosPlanner,
   type ContextoPlanner,
   type RunPlanner,
 } from "@/lib/planner";
+import { registrarTypoCorregido, sugerirCorreccion } from "@/lib/typos";
+import PanelDescartados from "./PanelDescartados";
 import {
   CLAVES_TACTICAS,
   TACTICAS,
@@ -104,6 +109,7 @@ import type {
   CpPoligono,
   DeltaCenso,
   DenuePoi,
+  DescartePoi,
   Fuente,
   GeocercaUniverso,
   GeocodeResponse,
@@ -750,6 +756,16 @@ export default function SeekerApp({
    * persistido al confirmar). */
   const ultimoRunDepRef = useRef<{ run: RunPlanner; radioCapaM?: number } | null>(null);
 
+  // ---- DESCARTADOS de la corrida activa (YA PAGADOS): panel de
+  //      revisión/rescate manual + aviso de typo con descarte masivo
+  const [descartes, setDescartes] = useState<DescartePoi[]>([]);
+  const [panelDescAbierto, setPanelDescAbierto] = useState(false);
+  const [conservandoDesc, setConservandoDesc] = useState(false);
+  const [avisoTypo, setAvisoTypo] = useState<{
+    original: string;
+    sugerido: string;
+  } | null>(null);
+
   // ---- BLINDAJE DE COSTOS: gate de corridas grandes (umbral en
   //      /admin). Bajo el umbral el flujo es el de siempre; sobre él,
   //      el admin confirma reforzado y el no-admin queda en espera de
@@ -1046,12 +1062,16 @@ export default function SeekerApp({
     /** Radio para universos POR CAPA (buffers de los puntos de cada
      * survey). Con varias capas o rol competencia, cada capa guarda su
      * universo PROPIO — los orígenes solo definen dónde buscar. */
-    radioCapaM?: number
+    radioCapaM?: number,
+    /** Descartados COMPLETOS de la corrida (ya pagados): se persisten
+     * para el panel de rescate y el re-filtrado. */
+    descartesRun?: DescartePoi[]
   ) {
     const run = plannerRunRef.current;
     if (!run) return;
     if (completo) {
       await reescribirPuntosPlanner(run, lista);
+      if (descartesRun) await guardarDescartados(run, descartesRun);
       const porCapa =
         radioCapaM != null &&
         lista.length > 0 &&
@@ -2108,6 +2128,7 @@ export default function SeekerApp({
       const detExcluidos = new Set<string>();
       const detDescartados = new Set<string>();
       const consumoRun = consumoVacio();
+      const descartesRun = new Map<string, DescartePoi>();
       let excluidosTotal = 0;
       let descartadosTotal = 0;
       let errorFatal: string | null = null;
@@ -2175,6 +2196,7 @@ export default function SeekerApp({
             fallosSeguidos = 0;
             esperasCuota = 0;
             sumarConsumo(consumoRun, data.consumo);
+            for (const d of data.descartes ?? []) descartesRun.set(d.placeId, d);
             excluidosTotal += data.excluidos;
             descartadosTotal += data.descartadosPorNombre;
             (data.detalleExcluidos ?? []).forEach((n) => {
@@ -2346,10 +2368,17 @@ export default function SeekerApp({
         setCapaDemografica(false);
         geocercasRef.current = cpsCodigos.map((cp) => ({ id: cp, cp }));
       }
+      const descartesCp = Array.from(descartesRun.values()).filter(
+        (d) => !acumulados.has(d.placeId)
+      );
+      setDescartes(descartesCp);
+      evaluarAvisoTypo(lista.length, descartesCp.length, nameFilters);
       await finalizarPlanner(
         lista,
         universosCp,
-        !detenerCensoRef.current
+        !detenerCensoRef.current,
+        undefined,
+        descartesCp
       );
 
       // 4) guardar en el historial como UNA búsqueda
@@ -2468,6 +2497,9 @@ export default function SeekerApp({
     setDepurados(0);
     ultimoRunDepRef.current = null;
     solicitudCorridaRef.current = undefined;
+    setDescartes([]);
+    setPanelDescAbierto(false);
+    setAvisoTypo(null);
     setPois([]);
     setContadores({ excluidos: 0, descartadosPorNombre: 0 });
     setDetalles({ excluidos: [], descartados: [] });
@@ -2709,6 +2741,7 @@ export default function SeekerApp({
     const detExcluidos = new Set<string>();
     const detDescartados = new Set<string>();
     const consumoRun = consumoVacio();
+    const descartesRun = new Map<string, DescartePoi>();
     let excluidosTotal = 0;
     let descartadosTotal = 0;
     let errorFatal: string | null = null;
@@ -2736,6 +2769,7 @@ export default function SeekerApp({
         fallosSeguidos = 0;
         esperasCuota = 0;
         sumarConsumo(consumoRun, data.consumo);
+        for (const d of data.descartes ?? []) descartesRun.set(d.placeId, d);
         excluidosTotal += data.excluidos;
         descartadosTotal += data.descartadosPorNombre;
         (data.detalleExcluidos ?? []).forEach((n) => {
@@ -2837,13 +2871,20 @@ export default function SeekerApp({
     setVerLista(null);
     setTablaColapsada(false);
 
+    const descartesCenso = Array.from(descartesRun.values()).filter(
+      (d) => !acumulados.has(d.placeId)
+    );
+    setDescartes(descartesCenso);
+    evaluarAvisoTypo(lista.length, descartesCenso.length, terminosMarca);
+
     // Universos sobre las geocercas por POI + guardado en la biblioteca.
     const universosCenso = await calcularUniversosDeCenso(lista);
     await finalizarPlanner(
       lista,
       universosCenso,
       !errorFatal && !detenerCensoRef.current,
-      radioInfluencia
+      radioInfluencia,
+      descartesCenso
     );
     let guardado = false;
     let delta: DeltaCenso | null = null;
@@ -3372,6 +3413,7 @@ export default function SeekerApp({
     // backoff automático ante rate limit: el MISMO lote se reintenta
     // tras la espera — lo ya acumulado nunca se re-consulta ni re-paga
     const consumoRun = consumoVacio();
+    const descartesRun = new Map<string, DescartePoi>();
     let esperasCuota = 0;
     // fallas TRANSITORIAS (504/red): reintentos con backoff del mismo
     // chunk — un chunk fallido no tira la corrida
@@ -3452,6 +3494,7 @@ export default function SeekerApp({
         esperasCuota = 0;
         reintentosTransitorios = 0;
         sumarConsumo(consumoRun, data.consumo);
+        for (const d of data.descartes ?? []) descartesRun.set(d.placeId, d);
         excluidosTotal += data.excluidos;
         descartadosTotal += data.descartadosPorNombre;
         (data.detalleExcluidos ?? []).forEach((n) => {
@@ -3568,7 +3611,12 @@ export default function SeekerApp({
     setAgebsGeo(null);
     setCapaDemografica(false);
     geocercasRef.current = geocercas.length <= 2000 ? geocercas : null;
-    await finalizarPlanner(lista, u, true, radio);
+    const descartesOrig = Array.from(descartesRun.values()).filter(
+      (d) => !acumulados.has(d.placeId)
+    );
+    setDescartes(descartesOrig);
+    evaluarAvisoTypo(lista.length, descartesOrig.length, nameFilters);
+    await finalizarPlanner(lista, u, true, radio, descartesOrig);
 
     const extras: string[] = [];
     if (excluidosTotal > 0) extras.push(`${excluidosTotal} excluidos`);
@@ -3781,10 +3829,17 @@ export default function SeekerApp({
           data.pois,
           universosBusqueda,
           true,
-          mode === "origins" ? radio : radioInfluencia
+          mode === "origins" ? radio : radioInfluencia,
+          data.descartes
         );
       }
       setTablaColapsada(false);
+      setDescartes(data.descartes ?? []);
+      evaluarAvisoTypo(
+        data.pois.length,
+        (data.descartes ?? []).length,
+        nameFilters
+      );
       const extras: string[] = [];
       if (data.excluidos > 0) extras.push(`${data.excluidos} excluidos`);
       if (data.descartadosPorNombre > 0)
@@ -4005,6 +4060,173 @@ export default function SeekerApp({
       "ok",
       `Censo depurado: ${excluir.size} ${excluir.size === 1 ? "punto excluido" : "puntos excluidos"} por coherencia de giro`
     );
+  }
+
+  // ---- DESCARTADOS: rescate manual + aviso de typo -----------------
+
+  /** TYPO al escribir el chip: término a distancia ≤2 de una palabra
+   * del dominio → sugerencia inline con un clic (no bloquea). */
+  const sugerenciaTypo = useMemo(() => {
+    const candidatos = mode === "census" ? dividirTerminos(marca) : nameFilters;
+    for (const t of candidatos) {
+      const s = sugerirCorreccion(t);
+      if (s && normalizarComparable(s) !== normalizarComparable(t)) {
+        return { original: t, sugerido: s };
+      }
+    }
+    return null;
+  }, [mode, marca, nameFilters]);
+
+  function corregirChip(original: string, sugerido: string) {
+    if (mode === "census") {
+      setMarca(
+        dividirTerminos(marca)
+          .map((t) => (t === original ? sugerido : t))
+          .join(", ")
+      );
+    } else {
+      setNameFilters(nameFilters.map((t) => (t === original ? sugerido : t)));
+    }
+    registrarTypoCorregido(original, sugerido);
+  }
+
+  /** Aviso de typo tras la corrida: descarte masivo (>90%) + término a
+   * distancia ≤2 de una palabra del dominio. */
+  function evaluarAvisoTypo(
+    conservados: number,
+    nDescartes: number,
+    terminosUsados: string[]
+  ) {
+    setAvisoTypo(null);
+    if (nDescartes <= 9 || nDescartes <= 0.9 * (conservados + nDescartes)) return;
+    for (const t of terminosUsados) {
+      const s = sugerirCorreccion(t);
+      if (s && normalizarComparable(s) !== normalizarComparable(t)) {
+        setAvisoTypo({ original: t, sugerido: s });
+        return;
+      }
+    }
+  }
+
+  /** Aplica la corrección del typo a los chips/marca — las consultas
+   * repetidas de la re-corrida salen del caché ($0 dentro del TTL). */
+  function aplicarCorreccionTypo() {
+    const typo = avisoTypo;
+    if (!typo) return;
+    if (mode === "census") {
+      setMarca(
+        dividirTerminos(marca)
+          .map((t) => (t === typo.original ? typo.sugerido : t))
+          .join(", ")
+      );
+    } else {
+      setNameFilters(
+        nameFilters.map((t) => (t === typo.original ? typo.sugerido : t))
+      );
+      setPlanOrigenes(null);
+      busquedaGrandeRef.current = null;
+    }
+    registrarTypoCorregido(typo.original, typo.sugerido);
+    setAvisoTypo(null);
+    reportar(
+      "ok",
+      `Corrección aplicada: "${typo.original}" → "${typo.sugerido}" — vuelve a ejecutar; las consultas repetidas salen del caché ($0)`
+    );
+  }
+
+  /** RESCATE MANUAL desde el panel de descartados: entran a los
+   * resultados (y a la capa de su término), se persisten al survey del
+   * Planner con origen "rescatado manual" — 0 consultas a Google. */
+  async function conservarDescartes(seleccion: DescartePoi[]) {
+    if (seleccion.length === 0) return;
+    setConservandoDesc(true);
+    try {
+      const buscador =
+        centrosActivos.length > 0
+          ? crearBuscadorCercano(centrosActivos, Math.max(radio * 1.5, 500))
+          : null;
+      const existentes = new Set(pois.map((p) => p.placeId));
+      const netos: Poi[] = seleccion
+        .filter((d) => !existentes.has(d.placeId))
+        .map((d) => {
+          const cerca = buscador ? buscador(d) : { idx: 0, dist: 0 };
+          return {
+            placeId: d.placeId,
+            nombre: d.nombre,
+            direccion: d.direccion,
+            lat: d.lat,
+            lng: d.lng,
+            types: d.types,
+            distancia: Math.max(0, Math.round(cerca.dist)),
+            origenIdx: Math.max(0, cerca.idx),
+            fuente: "google" as const,
+            estrato: null,
+            cp: null,
+            capa: null,
+            termino: d.termino,
+            categoria: null,
+            rescatado: true,
+          };
+        });
+      if (netos.length === 0) {
+        setConservandoDesc(false);
+        return;
+      }
+      const listaNueva = [...pois, ...netos];
+      setPois(listaNueva);
+      // a la capa de su término más afín; ambiguos a la primera (activa)
+      if (capas.length > 0) {
+        const asignacion = new Map<string, number>();
+        for (const p of netos) {
+          const idx = capas.findIndex((c) => c.nombre === p.termino);
+          asignacion.set(p.placeId, idx >= 0 ? idx : 0);
+        }
+        setCapas((prev) =>
+          prev.map((c, i) => ({
+            ...c,
+            pois: [...c.pois, ...netos.filter((p) => asignacion.get(p.placeId) === i)],
+          }))
+        );
+      }
+      setContadores((prev) => ({
+        ...prev,
+        descartadosPorNombre: Math.max(0, prev.descartadosPorNombre - netos.length),
+      }));
+      const idsSel = new Set(netos.map((p) => p.placeId));
+      setDescartes((prev) => prev.filter((d) => !idsSel.has(d.placeId)));
+      // PLANNER: persistir el rescate y marcar universos por recalcular
+      const runDep = ultimoRunDepRef.current;
+      if (planner && runDep) {
+        await guardarPuntosPlanner(runDep.run, netos);
+        await marcarSurveysModificados(Array.from(runDep.run.surveys.values()));
+        await eliminarDescartadosDeRun(
+          runDep.run.runId,
+          netos.map((p) => p.placeId)
+        );
+      }
+      // universos de censo: recalcular gratis (buffers por punto)
+      if ((mode === "census" || mode === "territorial") && universos?.disponible) {
+        const u = await calcularUniversosDeCenso(listaNueva);
+        setUniversos(u);
+        if (planner && runDep && u?.disponible) {
+          await guardarUniversosPlanner(runDep.run, u);
+          await marcarUniversosActualizados(
+            Array.from(runDep.run.surveys.values())
+          );
+        }
+      }
+      reportar(
+        "ok",
+        `${netos.length.toLocaleString("es-MX")} ${netos.length === 1 ? "punto rescatado" : "puntos rescatados"} a mano · $0 — quedan marcados "rescatado manual" en los exports${mode === "origins" || mode === "zone" || mode === "cp" ? "; recalcula universos si los necesitas exactos" : ""}`
+      );
+    } catch (e) {
+      reportar(
+        "error",
+        e instanceof Error ? e.message : "No se pudo rescatar la selección"
+      );
+    } finally {
+      setConservandoDesc(false);
+    }
   }
 
   // ---- Export plan (PDF): documento comercial con branding Gravity a
@@ -4846,6 +5068,20 @@ export default function SeekerApp({
                 placeholder="Marca · p. ej. OXXO"
                 className={inputCls}
               />
+              {sugerenciaTypo && (
+                <p className="mt-1 font-mono text-[10px] text-amber-400">
+                  ¿Quisiste decir &quot;{sugerenciaTypo.sugerido}&quot; en vez
+                  de &quot;{sugerenciaTypo.original}&quot;?{" "}
+                  <button
+                    onClick={() =>
+                      corregirChip(sugerenciaTypo.original, sugerenciaTypo.sugerido)
+                    }
+                    className="rounded border border-amber-400/60 bg-amber-400/10 px-1.5 py-px hover:bg-amber-400/20"
+                  >
+                    Corregir
+                  </button>
+                </p>
+              )}
               <input
                 value={ciudadQuery}
                 onChange={(e) => setCiudadQuery(e.target.value)}
@@ -5351,6 +5587,20 @@ export default function SeekerApp({
                 })}
               </div>
             )}
+            {sugerenciaTypo && (
+              <p className="mt-1.5 font-mono text-[10px] text-amber-400">
+                ¿Quisiste decir &quot;{sugerenciaTypo.sugerido}&quot; en vez de
+                &quot;{sugerenciaTypo.original}&quot;?{" "}
+                <button
+                  onClick={() =>
+                    corregirChip(sugerenciaTypo.original, sugerenciaTypo.sugerido)
+                  }
+                  className="rounded border border-amber-400/60 bg-amber-400/10 px-1.5 py-px hover:bg-amber-400/20"
+                >
+                  Corregir
+                </button>
+              </p>
+            )}
             <p className="mt-1 font-mono text-[10px] text-zinc-600">
               Filtro estricto por término: sin acentos ni mayúsculas, todas
               sus palabras deben aparecer en el nombre. Con varios términos,
@@ -5572,9 +5822,44 @@ export default function SeekerApp({
                 <span className="rounded-full border border-linea px-2 py-0.5 text-zinc-500">
                   {contadores.excluidos} excluidos
                 </span>
-                <span className="rounded-full border border-linea px-2 py-0.5 text-zinc-500">
-                  {contadores.descartadosPorNombre} descartados por nombre
-                </span>
+                {descartes.length > 0 ? (
+                  <button
+                    onClick={() => setPanelDescAbierto(true)}
+                    className="rounded-full border border-cian/60 bg-cian/10 px-2 py-0.5 text-cian transition-colors hover:bg-cian/20"
+                    title="Los descartados ya se pagaron: revísalos, búscalos y rescata los que sí sirven — 0 consultas a Google"
+                  >
+                    {contadores.descartadosPorNombre} descartados · ver y rescatar
+                  </button>
+                ) : (
+                  <span className="rounded-full border border-linea px-2 py-0.5 text-zinc-500">
+                    {contadores.descartadosPorNombre} descartados por nombre
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* TYPO: descarte masivo + término corregible */}
+            {avisoTypo && (
+              <div className="mt-2 rounded-lg border border-amber-400/60 bg-amber-400/10 p-3 font-mono text-[11px] text-amber-400">
+                <p className="font-semibold">
+                  El término &quot;{avisoTypo.original}&quot; descartó más del
+                  90% de los resultados. ¿Quisiste decir &quot;
+                  {avisoTypo.sugerido}&quot;?
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    onClick={aplicarCorreccionTypo}
+                    className="rounded-md border border-amber-400 bg-amber-400/15 px-3 py-1.5 font-semibold text-amber-300 hover:bg-amber-400/25"
+                  >
+                    Corregir y volver a ejecutar (repetidas: $0 del caché)
+                  </button>
+                  <button
+                    onClick={() => setAvisoTypo(null)}
+                    className="rounded-md border border-linea bg-panel2 px-3 py-1.5 text-zinc-400 hover:border-zinc-600"
+                  >
+                    Ignorar
+                  </button>
+                </div>
               </div>
             )}
           </section>
@@ -5990,6 +6275,23 @@ export default function SeekerApp({
           </div>
         </main>
       </div>
+
+      {/* panel de rescate de descartados (overlay) */}
+      {panelDescAbierto && (
+        <PanelDescartados
+          titulo={
+            mode === "census"
+              ? `Censo: ${marca.trim() || "marca"}`
+              : nameFilters.length > 0
+                ? nameFilters.join(", ")
+                : "Búsqueda actual"
+          }
+          descartes={descartes}
+          onCerrar={() => setPanelDescAbierto(false)}
+          onConservar={conservarDescartes}
+          conservando={conservandoDesc}
+        />
+      )}
 
       <GuardarEnPlanModal
         abierto={modalGuardarPlan}

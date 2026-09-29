@@ -52,6 +52,8 @@ export interface Poi {
   fuente: Fuente;
   /** Solo DENUE: estrato de personal ocupado (p. ej. "0 a 5 personas"). */
   estrato?: string | null;
+  /** true = rescatado A MANO del panel de descartados (trazabilidad). */
+  rescatado?: boolean;
   /** Solo DENUE: razón social y clase de actividad SCIAN. */
   razonSocial?: string | null;
   actividad?: string | null;
@@ -280,6 +282,20 @@ export interface SearchRequest {
   solicitudId?: string;
 }
 
+/** Punto DESCARTADO por los filtros de una corrida — ya se PAGÓ, así
+ * que se conserva (panel de rescate, re-filtrado, auditoría). */
+export interface DescartePoi {
+  placeId: string;
+  nombre: string;
+  direccion: string;
+  lat: number;
+  lng: number;
+  types: string[];
+  /** Término que lo había capturado (null = ningún término matcheó). */
+  termino: string | null;
+  motivo: "nombre" | "exclusion" | "calidad";
+}
+
 export interface SearchResponse {
   pois: Poi[];
   /** POIs eliminados por exclusiones de marca. */
@@ -296,6 +312,9 @@ export interface SearchResponse {
   /** Consumo de Google de ESTA request: llamadas pagadas, consultas
    * servidas del caché ($0) y costo en MXN. */
   consumo?: { pagadas: number; deCache: number; costoMxn: number };
+  /** Puntos descartados por los filtros CON sus datos completos (ya se
+   * pagaron: materia prima del rescate y el re-filtrado). */
+  descartes?: DescartePoi[];
 }
 
 export interface PerfilUsuario {

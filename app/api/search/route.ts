@@ -442,6 +442,29 @@ export async function POST(req: Request) {
     }
     let lugares = Array.from(porId.values());
 
+    // Los DESCARTADOS ya se pagaron: regresan COMPLETOS (coordenadas,
+    // types, término y motivo) para el panel de rescate y el
+    // re-filtrado sin re-pagar. Tope defensivo por request.
+    const descartes: NonNullable<SearchResponse["descartes"]> = [];
+    const MAX_DESCARTES = 2000;
+    const registrarDescarte = (
+      p: PlaceResult,
+      motivo: "nombre" | "exclusion" | "calidad",
+      termino: string | null
+    ) => {
+      if (descartes.length >= MAX_DESCARTES) return;
+      descartes.push({
+        placeId: p.placeId,
+        nombre: p.nombre,
+        direccion: p.direccion,
+        lat: p.lat,
+        lng: p.lng,
+        types: p.types,
+        termino,
+        motivo,
+      });
+    };
+
     // 3) Filtro de CALIDAD: descarta registros basura de Google
     //    (".", "Casa", "Sin nombre"...) en todos los modos. Se reportan
     //    en el contador de descartados por nombre, no en silencio.
@@ -453,6 +476,7 @@ export async function POST(req: Request) {
       if (detalleDescartados.length < 300) {
         detalleDescartados.push(p.nombre.trim() || "(sin nombre)");
       }
+      registrarDescarte(p, "calidad", null);
       return false;
     });
 
@@ -491,6 +515,7 @@ export async function POST(req: Request) {
         if (!captura) {
           descartadosPorNombre++;
           if (detalleDescartados.length < 300) detalleDescartados.push(p.nombre);
+          registrarDescarte(p, "nombre", null);
           return false;
         }
         terminoPorId.set(p.placeId, captura.termino);
@@ -511,6 +536,7 @@ export async function POST(req: Request) {
         if (fuera) {
           excluidos++;
           if (detalleExcluidos.length < 300) detalleExcluidos.push(p.nombre);
+          registrarDescarte(p, "exclusion", terminoPorId.get(p.placeId) ?? null);
         }
         return !fuera;
       });
@@ -607,6 +633,7 @@ export async function POST(req: Request) {
         detalleDescartados,
         searchId,
         consumo,
+        descartes,
       } satisfies SearchResponse);
     }
 
@@ -693,6 +720,7 @@ export async function POST(req: Request) {
       universos,
       searchId,
       consumo,
+      descartes,
     };
     return NextResponse.json(respuesta);
   } catch (e) {

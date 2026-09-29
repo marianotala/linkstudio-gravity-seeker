@@ -39,7 +39,11 @@ import {
   consolidarCentros,
   crearBuscadorCercano,
   etiquetaOrigen,
+  normalizarComparable,
 } from "@/lib/geo";
+import { registrarTypoCorregido, sugerirCorreccion } from "@/lib/typos";
+import { reFiltrarRun } from "@/lib/refiltrado";
+import PanelDescartados from "./PanelDescartados";
 import {
   CLAVES_TIPO_PANTALLA,
   cruzarPantallasPdvs,
@@ -50,14 +54,18 @@ import {
 } from "@/lib/ooh";
 import {
   actualizarRunPlanner,
+  cargarDescartados,
   cargarPuntosSurveys,
   crearSurveysPlanner,
   depurarRunPersistido,
+  guardarDescartados,
   guardarPuntosPlanner,
   guardarUniversosPlanner,
   guardarUniversosPorCapa,
   insertarPuntosCrudos,
   reescribirPuntosPlanner,
+  rescatarDescartados,
+  type DescarteGuardado,
   type RunPlanner,
 } from "@/lib/planner";
 import { createClient } from "@/lib/supabase/client";
@@ -181,8 +189,10 @@ async function guardarListaComoSurvey(args: {
   }
 }
 
-/** Chips de términos (marcas) con input que acepta comas y "comillas". */
-function ChipsTerminos({
+/** Chips de términos (marcas) con input que acepta comas y "comillas".
+ * Detecta TYPOS al agregar: término a distancia de edición ≤2 de una
+ * palabra del dominio → '¿Quisiste decir…?' con un clic (no bloquea). */
+export function ChipsTerminos({
   terminos,
   onCambiar,
   placeholder,
@@ -192,11 +202,22 @@ function ChipsTerminos({
   placeholder: string;
 }) {
   const [texto, setTexto] = useState("");
+  const [ignorados, setIgnorados] = useState<Set<string>>(new Set());
   const agregar = () => {
     const nuevos = dividirTerminos(texto, terminos);
     if (nuevos.length > 0) onCambiar([...terminos, ...nuevos]);
     setTexto("");
   };
+  const sugerencia = useMemo(() => {
+    for (const t of terminos) {
+      if (ignorados.has(t)) continue;
+      const s = sugerirCorreccion(t);
+      if (s && normalizarComparable(s) !== normalizarComparable(t)) {
+        return { original: t, sugerido: s };
+      }
+    }
+    return null;
+  }, [terminos, ignorados]);
   return (
     <div>
       <div className="flex gap-2">
@@ -232,6 +253,33 @@ function ChipsTerminos({
             </button>
           ))}
         </div>
+      )}
+      {sugerencia && (
+        <p className="mt-1.5 font-mono text-[10px] text-amber-400">
+          ¿Quisiste decir &quot;{sugerencia.sugerido}&quot; en vez de &quot;
+          {sugerencia.original}&quot;?{" "}
+          <button
+            onClick={() => {
+              onCambiar(
+                terminos.map((t) =>
+                  t === sugerencia.original ? sugerencia.sugerido : t
+                )
+              );
+              registrarTypoCorregido(sugerencia.original, sugerencia.sugerido);
+            }}
+            className="rounded border border-amber-400/60 bg-amber-400/10 px-1.5 py-px hover:bg-amber-400/20"
+          >
+            Corregir
+          </button>{" "}
+          <button
+            onClick={() =>
+              setIgnorados((prev) => new Set(prev).add(sugerencia.original))
+            }
+            className="text-zinc-500 underline decoration-dotted"
+          >
+            así está bien
+          </button>
+        </p>
       )}
     </div>
   );
@@ -755,6 +803,104 @@ export function SeccionCompetencia({
     marca: string;
   } | null>(null);
 
+  // descartados de la última corrida (YA PAGADOS): panel de rescate,
+  // re-filtrado sin consultas nuevas y aviso de typo
+  const [numDescartados, setNumDescartados] = useState(0);
+  const [panelDesc, setPanelDesc] = useState<DescarteGuardado[] | null>(null);
+  const [conservandoDesc, setConservandoDesc] = useState(false);
+  const [avisoTypo, setAvisoTypo] = useState<{
+    original: string;
+    sugerido: string;
+  } | null>(null);
+  const ultimoRunDescRef = useRef<{
+    run: RunPlanner;
+    terminos: string[];
+    exclusiones: string[];
+  } | null>(null);
+
+  async function abrirDescartados() {
+    const ctx = ultimoRunDescRef.current;
+    if (!ctx) return;
+    setOcupado(true);
+    try {
+      setPanelDesc(await cargarDescartados({ runId: ctx.run.runId }));
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  /** Rescate manual: los seleccionados entran a la capa de su término
+   * (ambiguos, al survey donde quedaron) — cero consultas a Google. */
+  async function conservarDescartados(seleccion: DescarteGuardado[]) {
+    const ctx = ultimoRunDescRef.current;
+    if (!ctx || seleccion.length === 0) return;
+    setConservandoDesc(true);
+    setError("");
+    try {
+      const porSurvey = new Map<string, DescarteGuardado[]>();
+      for (const d of seleccion) {
+        const destino =
+          (d.termino && ctx.run.surveys.get(d.termino)) || d.survey_id;
+        porSurvey.set(destino, [...(porSurvey.get(destino) ?? []), d]);
+      }
+      const n = await rescatarDescartados(
+        Array.from(porSurvey.entries()).map(([surveyId, filas]) => ({
+          surveyId,
+          filas,
+        }))
+      );
+      const ids = new Set(seleccion.map((d) => d.placeId));
+      setPanelDesc((prev) => (prev ? prev.filter((d) => !ids.has(d.placeId)) : prev));
+      setNumDescartados((v) => Math.max(0, v - n));
+      setEstado(
+        `${fmt(n)} ${n === 1 ? "punto rescatado" : "puntos rescatados"} a mano — universos marcados para recalcular (⟳ Universo) · 0 consultas a Google`
+      );
+      await alGuardar();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo rescatar la selección");
+    } finally {
+      setConservandoDesc(false);
+    }
+  }
+
+  /** Re-filtrado directo con la corrección del typo: re-aplica el
+   * filtro sobre TODO lo guardado (conservados + descartados). */
+  async function reFiltrarConCorreccion() {
+    const ctx = ultimoRunDescRef.current;
+    const typo = avisoTypo;
+    if (!ctx || !typo) return;
+    setOcupado(true);
+    setError("");
+    try {
+      const terminosNuevos = ctx.terminos.map((t) =>
+        t === typo.original ? typo.sugerido : t
+      );
+      const r = await reFiltrarRun({
+        surveyIds: Array.from(ctx.run.surveys.values()),
+        terminos: terminosNuevos,
+        exclusiones: ctx.exclusiones,
+        onEstado: setEstado,
+      });
+      await registrarTypoCorregido(typo.original, typo.sugerido, r.entraron);
+      setAvisoTypo(null);
+      setPanelDesc(null);
+      setNumDescartados(0);
+      // el run cambió de forma (capas renombradas/creadas): el rescate
+      // posterior se hace desde la tabla de levantamientos
+      ultimoRunDescRef.current = null;
+      setEstado(
+        `Re-filtrado con "${typo.sugerido}": entraron ${fmt(r.entraron)} y salieron ${fmt(r.salieron)} — ${r.porCapa
+          .map((c) => `${c.etiqueta}: ${fmt(c.puntos)}`)
+          .join(" · ")} · universos marcados para recalcular · 0 consultas a Google`
+      );
+      await alGuardar();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo re-filtrar");
+    } finally {
+      setOcupado(false);
+    }
+  }
+
   async function correrDepuracionIA() {
     const ctx = ctxDepRef.current;
     if (!ctx || ctx.lista.length === 0) return;
@@ -1028,6 +1174,31 @@ export function SeccionCompetencia({
       await guardarUniversosPorCapa(elRun, lista, radio, setEstado);
       await actualizarRunPlanner(elRun, { status: "completado", progreso: null });
 
+      // DESCARTADOS: ya se pagaron — se persisten para el panel de
+      // rescate y el re-filtrado sin consultas nuevas (retención 30 días)
+      await guardarDescartados(elRun, r.descartes);
+      ultimoRunDescRef.current = {
+        run: elRun,
+        terminos: [...terminos],
+        exclusiones: [...exclusiones],
+      };
+      setNumDescartados(r.descartes.length);
+      // TYPO: descarte masivo (>90%) + término a distancia ≤2 de una
+      // palabra del dominio → ofrecer el re-filtrado con la corrección
+      setAvisoTypo(null);
+      if (
+        r.descartes.length > 9 &&
+        r.descartes.length > 0.9 * (lista.length + r.descartes.length)
+      ) {
+        for (const t of terminos) {
+          const sug = sugerirCorreccion(t);
+          if (sug && normalizarComparable(sug) !== normalizarComparable(t)) {
+            setAvisoTypo({ original: t, sugerido: sug });
+            break;
+          }
+        }
+      }
+
       const notas = [
         `${fmt(lista.length)} puntos de competencia`,
         ...(r.excluidos > 0 ? [`${fmt(r.excluidos)} excluidos`] : []),
@@ -1212,6 +1383,18 @@ export function SeccionCompetencia({
             cancelar
           </button>
         )}
+        {/* al terminar conviven las TRES vías: ver descartados,
+            depurar con IA y conservar todos (panel de depuración) */}
+        {numDescartados > 0 && (
+          <button
+            onClick={abrirDescartados}
+            disabled={ocupado}
+            title="Los descartados ya se pagaron: revísalos, búscalos y rescata los que sí te sirven — 0 consultas a Google"
+            className="rounded-md border border-cian/60 bg-cian/10 px-3 py-1.5 font-mono text-[11px] text-cian transition-colors hover:bg-cian/20 disabled:opacity-40"
+          >
+            Ver descartados ({fmt(numDescartados)})
+          </button>
+        )}
         {/* capa 2 bajo demanda cuando la capa 1 no marcó nada */}
         {!sospechosos && ctxDepRef.current && ctxDepRef.current.lista.length > 0 && (
           <button
@@ -1227,6 +1410,42 @@ export function SeccionCompetencia({
 
       {/* gate de corridas grandes: confirmación de admin / en espera */}
       {panelAprobacion}
+
+      {/* TYPO detectado: descarte masivo + término corregible */}
+      {avisoTypo && (
+        <div className="mt-3 rounded-lg border border-amber-400/60 bg-amber-400/10 p-3 font-mono text-[11px] text-amber-400">
+          <p className="font-semibold">
+            El término &quot;{avisoTypo.original}&quot; descartó más del 90% de
+            los resultados. ¿Quisiste decir &quot;{avisoTypo.sugerido}&quot;?
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={reFiltrarConCorreccion}
+              disabled={ocupado}
+              className="rounded-md border border-amber-400 bg-amber-400/15 px-3 py-1.5 font-semibold text-amber-300 hover:bg-amber-400/25 disabled:opacity-40"
+            >
+              Re-filtrar con la corrección (0 consultas)
+            </button>
+            <button
+              onClick={() => setAvisoTypo(null)}
+              className="rounded-md border border-linea bg-panel2 px-3 py-1.5 text-zinc-400 hover:border-zinc-600"
+            >
+              Ignorar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* panel de rescate de descartados */}
+      {panelDesc && (
+        <PanelDescartados
+          titulo="Levantamiento de competencia"
+          descartes={panelDesc}
+          onCerrar={() => setPanelDesc(null)}
+          onConservar={conservarDescartados}
+          conservando={conservandoDesc}
+        />
+      )}
 
       {/* revisión de la depuración del levantamiento recién corrido */}
       {sospechosos && (

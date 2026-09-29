@@ -9,6 +9,7 @@ import { normalizarComparable } from "./geo";
 import type { SeleccionCategoria } from "@/components/CategoriaBuscador";
 import type {
   ApiError,
+  DescartePoi,
   GeocodeResponse,
   Origin,
   Poi,
@@ -196,6 +197,9 @@ export interface ResultadoBusquedaLotes {
   /** Consumo agregado de la corrida: llamadas pagadas a Google,
    * consultas servidas del caché ($0) y costo en MXN. */
   consumo: { pagadas: number; deCache: number; costoMxn: number };
+  /** Descartados COMPLETOS de toda la corrida (dedupe por place_id) —
+   * ya pagados: materia prima del rescate y el re-filtrado. */
+  descartes: DescartePoi[];
 }
 
 /**
@@ -242,6 +246,7 @@ export async function buscarPorLotes(
   let excluidos = 0;
   let descartados = 0;
   const consumo = { pagadas: 0, deCache: 0, costoMxn: 0 };
+  const descartesAcum = new Map<string, DescartePoi>();
   let esperasCuota = 0;
   let reintentosTransitorios = 0;
   const chunksFallidos: number[] = [];
@@ -309,6 +314,9 @@ export async function buscarPorLotes(
       consumo.costoMxn =
         Math.round((consumo.costoMxn + data.consumo.costoMxn) * 100) / 100;
     }
+    for (const d of data.descartes ?? []) {
+      if (!acumulados.has(d.placeId)) descartesAcum.set(d.placeId, d);
+    }
     const nuevos: Poi[] = [];
     for (const p of data.pois) {
       if (!acumulados.has(p.placeId)) {
@@ -332,5 +340,9 @@ export async function buscarPorLotes(
     chunksFallidos,
     interrupcion,
     consumo,
+    // un punto conservado en cualquier chunk no es descarte de la corrida
+    descartes: Array.from(descartesAcum.values()).filter(
+      (d) => !acumulados.has(d.placeId)
+    ),
   };
 }

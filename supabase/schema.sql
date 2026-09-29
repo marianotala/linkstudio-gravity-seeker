@@ -3325,3 +3325,64 @@ $$;
 
 revoke execute on function public.techo_universo(jsonb) from public, anon;
 grant execute on function public.techo_universo(jsonb) to authenticated;
+
+-- ==================================================================
+-- GESTIÓN DE DESCARTADOS — aplicada en vivo como migración
+-- descartados. Los puntos que los filtros tiraron ya se PAGARON: se
+-- guardan asociados al levantamiento (retención 30 días, limpieza
+-- oportunista del cliente) para revisarlos, rescatarlos y
+-- re-filtrarlos sin volver a pagar.
+-- ==================================================================
+
+create table if not exists public.discarded_points (
+  id bigint generated always as identity primary key,
+  survey_id uuid not null references public.surveys (id) on delete cascade,
+  run_id text,                       -- hermana los descartes de un run multi-capa
+  place_id text not null,
+  nombre text not null,
+  direccion text,
+  lat double precision not null,
+  lng double precision not null,
+  types jsonb,
+  termino text,                      -- término que lo capturó (null = ninguno)
+  motivo text not null check (motivo in ('nombre', 'exclusion', 'calidad')),
+  created_at timestamptz not null default now()
+);
+create index if not exists discarded_points_survey_idx
+  on public.discarded_points (survey_id);
+create index if not exists discarded_points_run_idx
+  on public.discarded_points (run_id);
+create index if not exists discarded_points_created_idx
+  on public.discarded_points (created_at);
+
+alter table public.discarded_points enable row level security;
+drop policy if exists "descartados: equipo lee" on public.discarded_points;
+create policy "descartados: equipo lee"
+  on public.discarded_points for select to authenticated using (true);
+drop policy if exists "descartados: equipo inserta" on public.discarded_points;
+create policy "descartados: equipo inserta"
+  on public.discarded_points for insert to authenticated with check (true);
+drop policy if exists "descartados: equipo borra" on public.discarded_points;
+create policy "descartados: equipo borra"
+  on public.discarded_points for delete to authenticated using (true);
+
+-- Conteo de descartados por survey (badge "Ver descartados (N)").
+-- Aplicada en vivo como migración descartados_conteo.
+create or replace function public.descartados_conteo(p_survey_ids uuid[])
+returns jsonb
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select coalesce(jsonb_object_agg(survey_id::text, n), '{}'::jsonb)
+  from (
+    select survey_id, count(*) as n
+    from public.discarded_points
+    where survey_id = any(p_survey_ids)
+    group by survey_id
+  ) t;
+$$;
+
+revoke execute on function public.descartados_conteo(uuid[]) from public, anon;
+grant execute on function public.descartados_conteo(uuid[]) to authenticated;

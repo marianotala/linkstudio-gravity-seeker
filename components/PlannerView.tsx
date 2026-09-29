@@ -30,15 +30,22 @@ import {
 import type { PuntoRecolectado } from "./RecolectorPuntos";
 import type { TacticaClave } from "@/lib/tacticas";
 import {
+  cargarDescartados,
   cargarPuntosCrudosSurvey,
   cargarPuntosSurveys,
   colorSurvey,
+  contarDescartados,
   dividirSurveyEnCapas,
   ETIQUETA_REVISAR,
   ETIQUETA_ROL,
   geocercasDeSurvey,
+  rescatarDescartados,
+  type DescarteGuardado,
   type PuntoSurvey,
 } from "@/lib/planner";
+import { reFiltrarRun } from "@/lib/refiltrado";
+import PanelDescartados from "./PanelDescartados";
+import { ChipsTerminos } from "./PlannerRecolectar";
 import { calcularUniversosCliente } from "@/lib/universos-lotes";
 import { createClient } from "@/lib/supabase/client";
 import type {
@@ -180,6 +187,20 @@ export default function PlannerView({
     tipo: "ok" | "error";
     texto: string;
   } | null>(null);
+  // descartados persistidos (ya pagados): conteo por survey, panel de
+  // rescate y re-filtrado sin consultas nuevas
+  const [descPorSurvey, setDescPorSurvey] = useState<Record<string, number>>({});
+  const [panelDesc, setPanelDesc] = useState<{
+    survey: SurveyFila;
+    filas: DescarteGuardado[];
+  } | null>(null);
+  const [conservandoDesc, setConservandoDesc] = useState(false);
+  const [refiltro, setRefiltro] = useState<{
+    survey: SurveyFila;
+    terminos: string[];
+    exclusiones: string[];
+  } | null>(null);
+  const [refiltrando, setRefiltrando] = useState<string | null>(null);
   const [renombrando, setRenombrando] = useState<{ id: string; texto: string } | null>(null);
   const estadoListoRef = useRef(false);
 
@@ -206,6 +227,10 @@ export default function PlannerView({
       .eq("project_id", proyectoId)
       .order("created_at", { ascending: false });
     setSurveys(((s ?? []) as unknown as SurveyFila[]) ?? []);
+    // conteo de descartados persistidos (badge "Descartados (N)")
+    if (s && s.length > 0) {
+      setDescPorSurvey(await contarDescartados(s.map((x) => (x as { id: string }).id)));
+    }
     // estado de UI del plan (sección activa + visibilidad de capas)
     if (!estadoListoRef.current) {
       const { data: ps } = await supabase
@@ -431,6 +456,104 @@ export default function PlannerView({
       );
     } finally {
       setRecalculando(null);
+    }
+  }
+
+  /** runId del survey (hermana capas de una misma corrida). */
+  const runIdDe = (s: SurveyFila) =>
+    (s.configuracion?.runId as string | undefined) ?? s.id;
+  /** Descartados persistidos del RUN completo del survey. */
+  const descDeRun = (s: SurveyFila) =>
+    surveys
+      .filter((x) => runIdDe(x) === runIdDe(s))
+      .reduce((t, x) => t + (descPorSurvey[x.id] ?? 0), 0);
+
+  async function abrirDescartados(s: SurveyFila) {
+    const filas = await cargarDescartados({ runId: runIdDe(s) });
+    setPanelDesc({ survey: s, filas });
+  }
+
+  /** Rescate manual desde la tabla: cada punto a la capa de su término
+   * más afín (ambiguos al survey abierto) — 0 consultas a Google. */
+  async function conservarDescartados(seleccion: DescarteGuardado[]) {
+    if (!panelDesc || seleccion.length === 0) return;
+    setConservandoDesc(true);
+    try {
+      const hermanos = surveys.filter(
+        (x) => runIdDe(x) === runIdDe(panelDesc.survey)
+      );
+      const porEtiqueta = new Map(
+        hermanos.map((h) => [
+          (h.configuracion?.etiqueta as string) ?? "",
+          h.id,
+        ])
+      );
+      const porSurvey = new Map<string, DescarteGuardado[]>();
+      for (const d of seleccion) {
+        const destino =
+          (d.termino && porEtiqueta.get(d.termino)) || panelDesc.survey.id;
+        porSurvey.set(destino, [...(porSurvey.get(destino) ?? []), d]);
+      }
+      const n = await rescatarDescartados(
+        Array.from(porSurvey.entries()).map(([surveyId, filas]) => ({
+          surveyId,
+          filas,
+        }))
+      );
+      const ids = new Set(seleccion.map((d) => d.placeId));
+      setPanelDesc((prev) =>
+        prev ? { ...prev, filas: prev.filas.filter((d) => !ids.has(d.placeId)) } : prev
+      );
+      setPuntosCache({});
+      await cargar();
+      setAvisoDivision({
+        tipo: "ok",
+        texto: `${fmt(n)} ${n === 1 ? "punto rescatado" : "puntos rescatados"} a mano — origen "rescatado manual" en los exports · universos marcados para recalcular (⟳ Universo) · 0 consultas a Google.`,
+      });
+    } catch (e) {
+      setAvisoDivision({
+        tipo: "error",
+        texto: e instanceof Error ? e.message : "No se pudo rescatar la selección",
+      });
+    } finally {
+      setConservandoDesc(false);
+    }
+  }
+
+  /** RE-FILTRADO (cero consultas): re-aplica el filtro con términos y
+   * exclusiones corregidos sobre TODO lo guardado del run. */
+  async function aplicarReFiltro() {
+    if (!refiltro) return;
+    const { survey, terminos, exclusiones } = refiltro;
+    const hermanos = surveys.filter((x) => runIdDe(x) === runIdDe(survey));
+    setRefiltrando("preparando…");
+    try {
+      const r = await reFiltrarRun({
+        surveyIds: hermanos.map((h) => h.id),
+        terminos,
+        exclusiones,
+        onEstado: setRefiltrando,
+      });
+      setRefiltro(null);
+      setPuntosCache({});
+      await cargar();
+      setAvisoDivision({
+        tipo: "ok",
+        texto: `Re-filtrado: entraron ${fmt(r.entraron)} y salieron ${fmt(r.salieron)} — ${r.porCapa
+          .map((c) => `${c.etiqueta}: ${fmt(c.puntos)}`)
+          .join(" · ")} · universos marcados para recalcular · 0 consultas a Google${
+          !r.habiaDescartados
+            ? " (esta corrida no tenía descartados guardados: solo se pudo quitar; para rescatar, re-córrela — el caché de 36 h la hace ~$0)"
+            : ""
+        }`,
+      });
+    } catch (e) {
+      setAvisoDivision({
+        tipo: "error",
+        texto: e instanceof Error ? e.message : "No se pudo re-filtrar",
+      });
+    } finally {
+      setRefiltrando(null);
     }
   }
 
@@ -892,6 +1015,78 @@ export default function PlannerView({
                     {avisoDivision.texto}
                   </p>
                 )}
+
+                {/* RE-FILTRADO: corrige términos/exclusiones y re-aplica
+                    sobre todo lo guardado — cero consultas a Google */}
+                {refiltro && (
+                  <div className="mt-3 rounded-lg border border-cian/50 bg-cian/5 p-3">
+                    <p className="font-mono text-[11px] font-semibold text-cian">
+                      Re-filtrar “{nombreDe(refiltro.survey)}”
+                      {runIdDe(refiltro.survey) !== refiltro.survey.id ||
+                      surveys.filter((x) => runIdDe(x) === runIdDe(refiltro.survey))
+                        .length > 1
+                        ? " (y sus capas hermanas)"
+                        : ""}
+                    </p>
+                    <p className="mt-1 font-mono text-[10px] leading-relaxed text-zinc-500">
+                      El filtro se re-aplica LOCALMENTE sobre todos los
+                      resultados guardados (conservados + descartados): entran
+                      los que ahora pasan, salen los que ya no — 0 consultas a
+                      Google, universos marcados para recalcular.
+                      {descDeRun(refiltro.survey) === 0 &&
+                        " Esta corrida no guardó descartados (previa a esta versión): solo se puede QUITAR; para rescatar lo descartado, re-córrela — las consultas repetidas salen del caché ($0 dentro de 36 h)."}
+                    </p>
+                    <div className="mt-2">
+                      <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                        Términos de marca
+                      </p>
+                      <ChipsTerminos
+                        terminos={refiltro.terminos}
+                        onCambiar={(t) => setRefiltro({ ...refiltro, terminos: t })}
+                        placeholder='p. ej. cafetería, "tim hortons" (comas = varios)'
+                      />
+                    </div>
+                    <div className="mt-2">
+                      <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                        Exclusiones
+                      </p>
+                      <ChipsTerminos
+                        terminos={refiltro.exclusiones}
+                        onCambiar={(t) =>
+                          setRefiltro({ ...refiltro, exclusiones: t })
+                        }
+                        placeholder="marcas a excluir"
+                      />
+                    </div>
+                    <div className="mt-3 flex items-center gap-2">
+                      <button
+                        onClick={aplicarReFiltro}
+                        disabled={refiltrando !== null}
+                        className="rounded-md bg-cian px-4 py-2 font-display text-xs font-extrabold text-fondo transition-opacity hover:opacity-90 disabled:opacity-40"
+                      >
+                        {refiltrando ? `⟳ ${refiltrando}` : "Aplicar re-filtrado (0 consultas)"}
+                      </button>
+                      <button
+                        onClick={() => setRefiltro(null)}
+                        disabled={refiltrando !== null}
+                        className="rounded-md border border-linea bg-panel2 px-3 py-2 font-mono text-[11px] text-zinc-400 hover:text-zinc-200 disabled:opacity-40"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* panel de rescate de descartados (overlay) */}
+                {panelDesc && (
+                  <PanelDescartados
+                    titulo={`${nombreDe(panelDesc.survey)} · ${ETIQUETA_ROL[panelDesc.survey.rol]}`}
+                    descartes={panelDesc.filas}
+                    onCerrar={() => setPanelDesc(null)}
+                    onConservar={conservarDescartados}
+                    conservando={conservandoDesc}
+                  />
+                )}
                 {filasSeccion.length > 0 && (
                   <div className="mt-3 max-h-52 overflow-y-auto rounded-lg border border-linea">
                     <table className="w-full text-left font-mono text-xs">
@@ -1085,6 +1280,41 @@ export default function PlannerView({
                                         ? `⟳ ${recalculando.texto}`
                                         : "⟳ Universo"}
                                     </button>
+                                    {descDeRun(s) > 0 && (
+                                      <button
+                                        onClick={() => abrirDescartados(s)}
+                                        disabled={conservandoDesc}
+                                        className="rounded border border-cian/60 bg-cian/10 px-2 py-0.5 text-[10px] text-cian hover:bg-cian/20 disabled:opacity-50"
+                                        title="Los descartados de esta corrida ya se pagaron: revísalos, búscalos y rescata los que sí sirven — 0 consultas a Google"
+                                      >
+                                        Descartados ({fmt(descDeRun(s))})
+                                      </button>
+                                    )}
+                                    {s.status === "completado" &&
+                                      s.rol !== "ooh" &&
+                                      (((s.configuracion?.nameFilters as string[])
+                                        ?.length ?? 0) > 0 ||
+                                        ((s.configuracion?.excludes as string[])
+                                          ?.length ?? 0) > 0) && (
+                                        <button
+                                          onClick={() =>
+                                            setRefiltro({
+                                              survey: s,
+                                              terminos:
+                                                (s.configuracion
+                                                  ?.nameFilters as string[]) ?? [],
+                                              exclusiones:
+                                                (s.configuracion
+                                                  ?.excludes as string[]) ?? [],
+                                            })
+                                          }
+                                          disabled={refiltrando !== null}
+                                          className="rounded border border-linea bg-panel2 px-2 py-0.5 text-[10px] text-zinc-400 hover:border-cian hover:text-cian disabled:opacity-50"
+                                          title="Corrige términos/exclusiones y re-aplica el filtro sobre TODO lo guardado (conservados + descartados) — cero consultas a Google"
+                                        >
+                                          Re-filtrar
+                                        </button>
+                                      )}
                                     {esDivisible(s) && (
                                       <button
                                         onClick={() =>

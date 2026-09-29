@@ -5,10 +5,11 @@
 // por lote conforme llegan (autosave), universos y progreso para
 // reanudar sin repagar consultas. Todo vía Supabase con RLS de equipo.
 
-import { normalizarComparable } from "./geo";
+import { matchersDe, terminoQueCaptura } from "./filtro-nombre";
 import { createClient } from "./supabase/client";
 import { calcularUniversosCliente } from "./universos-lotes";
 import type {
+  DescartePoi,
   GeocercaUniverso,
   Origin,
   Poi,
@@ -152,6 +153,8 @@ export async function guardarPuntosPlanner(
           // giro de Google: materia prima de la depuración por
           // coherencia de tipos y de futuros análisis
           types: (p.types ?? []).slice(0, 8),
+          // trazabilidad del rescate manual (panel de descartados)
+          ...(p.rescatado ? { origen: "rescatado_manual" } : {}),
         },
       }))
     );
@@ -418,6 +421,7 @@ export function puntoAPoi(r: PuntoSurvey): Poi {
     lat: r.lat,
     lng: r.lng,
     types: (r.metadata?.types as string[] | undefined) ?? [],
+    rescatado: r.metadata?.origen === "rescatado_manual" || undefined,
     distancia: r.metadata?.distancia_m ?? 0,
     origenIdx: r.metadata?.origen_idx ?? 0,
     fuente: (r.metadata?.fuente as Poi["fuente"]) ?? "google",
@@ -631,6 +635,222 @@ export function geocercasDeSurvey(
 }
 
 // ------------------------------------------------------------------
+// DESCARTADOS — los puntos que los filtros tiraron YA SE PAGARON: se
+// persisten asociados al levantamiento (retención 30 días) para el
+// panel de rescate y el re-filtrado sin volver a pagar.
+// ------------------------------------------------------------------
+
+/** Fila persistida de un descartado (con su id para rescatar/borrar). */
+export interface DescarteGuardado extends DescartePoi {
+  id: number;
+  survey_id: string;
+  run_id: string | null;
+}
+
+/** Marca surveys como MODIFICADOS: universos desactualizados (⚠ + ⟳
+ * en ámbar) y el consolidado del proyecto por recalcular. Nunca lanza. */
+export async function marcarSurveysModificados(
+  surveyIds: string[]
+): Promise<void> {
+  try {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("surveys")
+      .select("id, configuracion")
+      .in("id", surveyIds);
+    const ahora = new Date().toISOString();
+    for (const s of (data ?? []) as {
+      id: string;
+      configuracion: Record<string, unknown> | null;
+    }[]) {
+      await supabase
+        .from("surveys")
+        .update({
+          configuracion: {
+            ...(s.configuracion ?? {}),
+            // depurado_en = última modificación de los PUNTOS (rescate,
+            // re-filtrado o depuración): vuelve desactualizado al
+            // consolidado, que compara contra esta fecha
+            depurado_en: ahora,
+            universos_desactualizados: true,
+          },
+        })
+        .eq("id", s.id);
+    }
+  } catch (e) {
+    console.error("No se pudieron marcar los surveys modificados:", e);
+  }
+}
+
+/** Persiste los descartados de una corrida, ruteados al survey de su
+ * término (sin término → el primero). Reemplaza los del run (re-
+ * corridas) y hace limpieza oportunista de +30 días. Nunca lanza. */
+export async function guardarDescartados(
+  run: RunPlanner,
+  descartes: DescartePoi[]
+): Promise<void> {
+  try {
+    const supabase = createClient();
+    await supabase.from("discarded_points").delete().eq("run_id", run.runId);
+    if (descartes.length === 0) return;
+    const primero = run.surveys.values().next().value!;
+    const filas = descartes.map((d) => ({
+      survey_id: (d.termino && run.surveys.get(d.termino)) || primero,
+      run_id: run.runId,
+      place_id: d.placeId,
+      nombre: d.nombre.slice(0, 200),
+      direccion: d.direccion?.slice(0, 300) || null,
+      lat: d.lat,
+      lng: d.lng,
+      types: (d.types ?? []).slice(0, 8),
+      termino: d.termino,
+      motivo: d.motivo,
+    }));
+    for (let i = 0; i < filas.length; i += 500) {
+      const { error } = await supabase
+        .from("discarded_points")
+        .insert(filas.slice(i, i + 500));
+      if (error) {
+        console.error("No se pudieron guardar los descartados:", error.message);
+        return;
+      }
+    }
+    // retención 30 días: limpieza oportunista
+    if (Math.random() < 0.05) {
+      const corte = new Date(Date.now() - 30 * 24 * 3600_000).toISOString();
+      await supabase.from("discarded_points").delete().lt("created_at", corte);
+    }
+  } catch (e) {
+    console.error("No se pudieron guardar los descartados:", e);
+  }
+}
+
+function filaADescarte(r: Record<string, unknown>): DescarteGuardado {
+  return {
+    id: r.id as number,
+    survey_id: r.survey_id as string,
+    run_id: (r.run_id as string) ?? null,
+    placeId: r.place_id as string,
+    nombre: r.nombre as string,
+    direccion: (r.direccion as string) ?? "",
+    lat: r.lat as number,
+    lng: r.lng as number,
+    types: (r.types as string[]) ?? [],
+    termino: (r.termino as string) ?? null,
+    motivo: r.motivo as DescartePoi["motivo"],
+  };
+}
+
+/** Descartados persistidos de un run o de surveys sueltos (paginado). */
+export async function cargarDescartados(filtro: {
+  runId?: string;
+  surveyIds?: string[];
+}): Promise<DescarteGuardado[]> {
+  const supabase = createClient();
+  const salida: DescarteGuardado[] = [];
+  for (let desde = 0; ; desde += 1000) {
+    let q = supabase
+      .from("discarded_points")
+      .select("id, survey_id, run_id, place_id, nombre, direccion, lat, lng, types, termino, motivo")
+      .order("id")
+      .range(desde, desde + 999);
+    if (filtro.runId) q = q.eq("run_id", filtro.runId);
+    else if (filtro.surveyIds?.length) q = q.in("survey_id", filtro.surveyIds);
+    else return salida;
+    const { data, error } = await q;
+    if (error) break;
+    (data ?? []).forEach((r) => salida.push(filaADescarte(r as Record<string, unknown>)));
+    if (!data || data.length < 1000) break;
+  }
+  return salida;
+}
+
+/** Borra descartados de un run por place_id (tras un rescate hecho
+ * desde el estado en memoria del modo consulta). Nunca lanza. */
+export async function eliminarDescartadosDeRun(
+  runId: string,
+  placeIds: string[]
+): Promise<void> {
+  try {
+    const supabase = createClient();
+    for (let i = 0; i < placeIds.length; i += 150) {
+      await supabase
+        .from("discarded_points")
+        .delete()
+        .eq("run_id", runId)
+        .in("place_id", placeIds.slice(i, i + 150));
+    }
+  } catch (e) {
+    console.error("No se pudieron borrar los descartados rescatados:", e);
+  }
+}
+
+/** Conteo de descartados por survey (badge del Planner). */
+export async function contarDescartados(
+  surveyIds: string[]
+): Promise<Record<string, number>> {
+  try {
+    const supabase = createClient();
+    const { data } = await supabase.rpc("descartados_conteo", {
+      p_survey_ids: surveyIds,
+    });
+    return (data as Record<string, number>) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * RESCATE MANUAL: los descartados seleccionados entran al survey
+ * indicado como puntos (metadata.origen = "rescatado_manual" para
+ * trazabilidad), salen de discarded_points y el survey queda marcado
+ * para recalcular universos. Cero consultas a Google.
+ */
+export async function rescatarDescartados(
+  asignaciones: { surveyId: string; filas: DescarteGuardado[] }[]
+): Promise<number> {
+  const supabase = createClient();
+  let total = 0;
+  const surveysTocados: string[] = [];
+  for (const { surveyId, filas } of asignaciones) {
+    if (filas.length === 0) continue;
+    surveysTocados.push(surveyId);
+    for (let i = 0; i < filas.length; i += 500) {
+      const lote = filas.slice(i, i + 500);
+      const { error } = await supabase.from("survey_points").insert(
+        lote.map((d) => ({
+          survey_id: surveyId,
+          place_id: d.placeId,
+          nombre: d.nombre,
+          direccion: d.direccion || null,
+          lat: d.lat,
+          lng: d.lng,
+          categoria: d.termino,
+          metadata: {
+            fuente: "google",
+            termino: d.termino,
+            distancia_m: 0,
+            origen_idx: 0,
+            types: (d.types ?? []).slice(0, 8),
+            origen: "rescatado_manual",
+          },
+        }))
+      );
+      if (error) {
+        throw new Error(`No se pudieron rescatar los puntos: ${error.message}`);
+      }
+      const ids = lote.map((d) => d.id);
+      await supabase.from("discarded_points").delete().in("id", ids);
+      total += lote.length;
+    }
+  }
+  if (surveysTocados.length > 0) {
+    await marcarSurveysModificados(surveysTocados);
+  }
+  return total;
+}
+
+// ------------------------------------------------------------------
 // DIVIDIR EN CAPAS POR MARCA — reparación de un survey MEZCLADO (varios
 // términos en un solo levantamiento, p. ej. corrido con "separar en
 // capas" apagado): crea un survey por término, REASIGNA los puntos ya
@@ -674,26 +894,11 @@ export async function dividirSurveyEnCapas(
     throw new Error("El levantamiento no tiene puntos que dividir");
   }
 
-  // matchers de respaldo, espejo del filtro estricto del servidor:
-  // "comillas" = el nombre EMPIEZA con el término; sin comillas = todas
-  // sus palabras aparecen en el nombre (sin acentos ni puntuación)
-  const terminosCfg = ((cfg.nameFilters as string[]) ?? [])
-    .map((t) => t.trim())
-    .filter(Boolean);
-  const matchers = terminosCfg.map((t) => {
-    const exacto = /^".*"$/.test(t);
-    const norm = normalizarComparable(exacto ? t.slice(1, -1) : t);
-    return { termino: t, exacto, norm, tokens: norm.split(" ").filter(Boolean) };
-  });
-  const inferir = (nombre: string): string | null => {
-    const n = normalizarComparable(nombre);
-    const captura = matchers.find((m) =>
-      m.exacto
-        ? m.norm.length > 0 && (n === m.norm || n.startsWith(m.norm + " "))
-        : m.tokens.length > 0 && m.tokens.every((t) => n.includes(t))
-    );
-    return captura?.termino ?? null;
-  };
+  // matchers de respaldo, espejo del filtro estricto del servidor
+  // (lib/filtro-nombre: la misma pieza del re-filtrado)
+  const matchers = matchersDe((cfg.nameFilters as string[]) ?? []);
+  const inferir = (nombre: string): string | null =>
+    terminoQueCaptura(nombre, matchers);
 
   // agrupar por término (registrado > inferido > Revisar)
   const grupos = new Map<string, PuntoSurvey[]>();
