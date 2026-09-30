@@ -33,11 +33,12 @@ import {
   cargarDescartados,
   cargarPuntosCrudosSurvey,
   cargarPuntosSurveys,
-  colorSurvey,
+  colorCapaEstable,
   contarDescartados,
   dividirSurveyEnCapas,
   ETIQUETA_REVISAR,
   ETIQUETA_ROL,
+  deduplicarEntreSurveys,
   geocercasDeSurvey,
   rescatarDescartados,
   type DescarteGuardado,
@@ -324,11 +325,9 @@ export default function PlannerView({
   const puntosDe = (s: SurveyFila) => s.survey_points?.[0]?.count ?? 0;
   const universoDe = (s: SurveyFila): Universos | null =>
     s.survey_universes?.[0]?.resultados ?? null;
-  /** Color estable por survey: índice dentro de su rol (orden cronológico). */
-  const colorDe = (s: SurveyFila) => {
-    const delRol = [...porRol(s.rol)].reverse();
-    return colorSurvey(s.rol, delRol.findIndex((x) => x.id === s.id));
-  };
+  /** Color estable por capa: hash del NOMBRE sobre la paleta del rol —
+   * la misma marca se pinta igual en todas las plazas y exports. */
+  const colorDe = (s: SurveyFila) => colorCapaEstable(s.rol, nombreDe(s));
 
   // lo RECOLECTADO (sin calcular todavía) se pinta en vivo en el mapa
   const capasBorrador: CapaProyecto[] = SECCIONES.filter(
@@ -459,6 +458,23 @@ export default function PlannerView({
     }
   }
 
+  /** Marca(s) DEL CLIENTE en este proyecto: términos de los POIs
+   * propios + nombre del cliente — se pre-cargan como exclusión
+   * sugerida en Competencia (la marca propia no es su competencia). */
+  const marcasPropias = (() => {
+    const set = new Set<string>();
+    for (const s of surveys.filter((x) => x.rol === "poi_propio")) {
+      const cfg = s.configuracion ?? {};
+      for (const t of (cfg.nameFilters as string[]) ?? []) set.add(t);
+      for (const t of (cfg.censoTerminos as string[]) ?? []) set.add(t);
+      if (typeof cfg.marca === "string" && cfg.marca.trim()) {
+        set.add(cfg.marca.trim());
+      }
+    }
+    if (proyecto?.nombre_cliente?.trim()) set.add(proyecto.nombre_cliente.trim());
+    return Array.from(set).slice(0, 8);
+  })();
+
   /** runId del survey (hermana capas de una misma corrida). */
   const runIdDe = (s: SurveyFila) =>
     (s.configuracion?.runId as string | undefined) ?? s.id;
@@ -520,6 +536,40 @@ export default function PlannerView({
     }
   }
 
+  const [dedupeando, setDedupeando] = useState<string | null>(null);
+
+  /** DEDUPE ENTRE CAPAS del rol activo: place_id/coordenada repetidos
+   * entre capas → el punto queda en la de marca más específica. */
+  async function deduplicarRol(filas: SurveyFila[]) {
+    setDedupeando("preparando…");
+    try {
+      const r = await deduplicarEntreSurveys(
+        filas.map((s) => ({
+          id: s.id,
+          nombre: nombreDe(s),
+          etiqueta: (s.configuracion?.etiqueta as string) ?? null,
+        })),
+        setDedupeando
+      );
+      setPuntosCache({});
+      await cargar();
+      setAvisoDivision({
+        tipo: "ok",
+        texto:
+          r.eliminados === 0
+            ? "Sin duplicados entre capas — nada que quitar."
+            : `${fmt(r.eliminados)} duplicados quitados entre capas (${r.detalle.join(" · ")}) — cada punto quedó en la capa de marca más específica · universos marcados para recalcular.`,
+      });
+    } catch (e) {
+      setAvisoDivision({
+        tipo: "error",
+        texto: e instanceof Error ? e.message : "No se pudo deduplicar",
+      });
+    } finally {
+      setDedupeando(null);
+    }
+  }
+
   /** RE-FILTRADO (cero consultas): re-aplica el filtro con términos y
    * exclusiones corregidos sobre TODO lo guardado del run. */
   async function aplicarReFiltro() {
@@ -557,13 +607,10 @@ export default function PlannerView({
     }
   }
 
-  /** ¿El survey es un MEZCLADO divisible? (varios términos de marca y
-   * sin etiqueta de capa propia). */
-  const esDivisible = (s: SurveyFila) =>
-    s.rol !== "ooh" &&
-    puntosDe(s) > 0 &&
-    !s.configuracion?.etiqueta &&
-    ((s.configuracion?.nameFilters as string[] | undefined)?.length ?? 0) >= 2;
+  /** ¿El survey se puede dividir en capas? Por término de captura o,
+   * sin términos (capa de categoría tipo "pizza"), por MARCA
+   * NORMALIZADA — los Little Caesars dentro de "pizza" se reasignan. */
+  const esDivisible = (s: SurveyFila) => s.rol !== "ooh" && puntosDe(s) > 0;
 
   /** DIVIDIR EN CAPAS POR MARCA: reasigna los puntos ya pagados a un
    * survey por término (cero consultas a Google) y calcula el universo
@@ -980,6 +1027,7 @@ export default function PlannerView({
                       setBorradores((prev) => ({ ...prev, competencia: b }))
                     }
                     alGuardar={cargar}
+                    exclusionesSugeridas={marcasPropias}
                   />
                 ) : seccion === "ooh" ? (
                   <SeccionOoh
@@ -1086,6 +1134,18 @@ export default function PlannerView({
                     onConservar={conservarDescartados}
                     conservando={conservandoDesc}
                   />
+                )}
+                {/* P4a: un punto no puede vivir en DOS capas del mismo
+                    proyecto — queda en la de marca más específica */}
+                {filasSeccion.length >= 2 && (
+                  <button
+                    onClick={() => deduplicarRol(filasSeccion)}
+                    disabled={dedupeando !== null}
+                    className="mt-3 rounded-md border border-linea bg-panel2 px-3 py-1.5 font-mono text-[11px] text-zinc-400 transition-colors hover:border-cian hover:text-cian disabled:opacity-50"
+                    title="Deduplica por place_id y por coordenada (~11 m) ENTRE las capas de esta sección: el punto queda en la capa de marca más específica"
+                  >
+                    {dedupeando ? `⟳ ${dedupeando}` : "Deduplicar entre capas"}
+                  </button>
                 )}
                 {filasSeccion.length > 0 && (
                   <div className="mt-3 max-h-52 overflow-y-auto rounded-lg border border-linea">

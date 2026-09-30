@@ -570,6 +570,7 @@ export async function POST(req: Request) {
           lat: p.lat,
           lng: p.lng,
           types: p.types,
+          businessStatus: p.businessStatus ?? null,
           distancia: Math.round(mejorDist),
           origenIdx: mejorIdx,
           fuente: "google",

@@ -81,6 +81,73 @@ export function ciudadDeDireccion(direccion: string): string {
 }
 
 /**
+ * Colonia aproximada de una formattedAddress de Google MX: el segmento
+ * anterior al que trae el CP ("Calle X 123, Polanco, 11560 CDMX, …" →
+ * "Polanco"). Heurística best-effort; vacío si no se distingue.
+ */
+export function coloniaDeDireccion(direccion: string): string {
+  const partes = direccion
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (let i = 1; i < partes.length; i++) {
+    if (/\b\d{5}\b/.test(partes[i])) {
+      const cand = partes[i - 1];
+      // el segmento con número al inicio suele ser calle, no colonia
+      if (cand && !/^\d/.test(cand) && !/\b\d{5}\b/.test(cand)) return cand;
+      return "";
+    }
+  }
+  return "";
+}
+
+/**
+ * ORIGEN REAL para TODAS las filas: recalcula la distancia y el origen
+ * más cercano de cada punto; si queda a más del radio de toda
+ * sucursal, se marca fueraDeRadio con su distancia real — un punto
+ * JAMÁS hereda el primer origen de la lista por default.
+ */
+export function normalizarOrigenesPois<T extends {
+  lat: number;
+  lng: number;
+  origenIdx: number;
+  distancia: number;
+  fueraDeRadio?: boolean;
+}>(pois: T[], centros: { lat: number; lng: number }[], radioM: number): T[] {
+  if (centros.length === 0 || pois.length === 0) return pois;
+  const buscador =
+    centros.length > 50
+      ? crearBuscadorCercano(centros, Math.max(radioM * 3, 10000))
+      : null;
+  return pois.map((p) => {
+    let mejor = -1;
+    let dist = Infinity;
+    if (buscador) {
+      const r = buscador(p);
+      if (r.idx >= 0) {
+        mejor = r.idx;
+        dist = r.dist;
+      }
+    }
+    if (mejor < 0) {
+      for (let i = 0; i < centros.length; i++) {
+        const d = haversine(centros[i], p);
+        if (d < dist) {
+          dist = d;
+          mejor = i;
+        }
+      }
+    }
+    return {
+      ...p,
+      origenIdx: Math.max(0, mejor),
+      distancia: Math.round(dist),
+      fueraDeRadio: dist > radioM + 50,
+    };
+  });
+}
+
+/**
  * Etiqueta visible de un origen: nombre del PDV si viene (del Excel o
  * del textarea), si no la dirección corta, y como último recurso el
  * índice anónimo de siempre.

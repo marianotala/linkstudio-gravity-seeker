@@ -15,7 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   cargarPuntosCrudosSurvey,
   cargarPuntosSurveys,
-  colorSurvey,
+  colorCapaEstable,
   ETIQUETA_ROL,
   geocercasDeSurvey,
   guardarDetallePuntos,
@@ -64,9 +64,12 @@ interface ConsolidadoGuardado {
 interface TraslapeGuardado {
   roles: [RolLevantamiento, RolLevantamiento];
   poblacion: number;
+  /** % del universo BASE (el menor del par). */
   pctBase: number;
   base: RolLevantamiento;
   poblacionBase: number;
+  /** Validación fallida (intersección > universo menor): bloquea export. */
+  advertencia?: string;
 }
 
 const fmt = (n: number) => n.toLocaleString("es-MX");
@@ -111,11 +114,9 @@ export default function ExportarProyecto({
   const puntosDe = (s: SurveyExportar) => s.survey_points?.[0]?.count ?? 0;
   const universoDe = (s: SurveyExportar): Universos | null =>
     s.survey_universes?.[0]?.resultados ?? null;
-  /** Mismo color estable que el mapa del proyecto (índice dentro del rol). */
-  const colorDe = (s: SurveyExportar) => {
-    const delRol = surveys.filter((x) => x.rol === s.rol).reverse();
-    return colorSurvey(s.rol, delRol.findIndex((x) => x.id === s.id));
-  };
+  /** Mismo color estable que el mapa del proyecto: hash del NOMBRE de
+   * la capa sobre la paleta del rol (igual en todas las plazas). */
+  const colorDe = (s: SurveyExportar) => colorCapaEstable(s.rol, nombreDe(s));
 
   // consolidado + traslapes guardados (F4)
   useEffect(() => {
@@ -222,6 +223,11 @@ export default function ExportarProyecto({
       ...seleccionados
         .filter((s) => universoDe(s)?.advertencia)
         .map((s) => `"${nombreDe(s)}"`),
+      ...(traslapes.some(
+        (t) => t.advertencia || t.poblacion > t.poblacionBase * 1.005
+      )
+        ? ["los traslapes (recalcúlalos en el Resumen)"]
+        : []),
     ];
     if (conAdvertencia.length > 0) {
       setError(
@@ -449,6 +455,28 @@ export default function ExportarProyecto({
           color: COLOR_OOH,
         }))
       );
+
+      // encuadre GLOBAL del proyecto: los mapas por táctica se capturan
+      // con los MISMOS bounds → misma extensión y zoom en todas las
+      // láminas de la plaza, superponibles entre sí (auditoría 30-sep)
+      const boundsGlobales = (() => {
+        let norte = -Infinity;
+        let sur = Infinity;
+        let este = -Infinity;
+        let oeste = Infinity;
+        const sumar = (lat: number, lng: number) => {
+          if (lat > norte) norte = lat;
+          if (lat < sur) sur = lat;
+          if (lng > este) este = lng;
+          if (lng < oeste) oeste = lng;
+        };
+        poisMapa.forEach((p) => sumar(p.lat, p.lng));
+        pantallasMapa.forEach((p) => sumar(p.lat, p.lng));
+        lineasMapa.forEach((l) => sumar(l.b.lat, l.b.lng));
+        return Number.isFinite(norte) && Number.isFinite(este)
+          ? { norte, sur, este, oeste }
+          : undefined;
+      })();
       // el mapa general multi-capa solo vive en el one-pager (las
       // láminas llevan un mapa POR táctica)
       const mapaDataUrl =
@@ -478,11 +506,15 @@ export default function ExportarProyecto({
             ).map((rel) => ({ lat: rel.lat, lng: rel.lng, color: "#2fb9e8" }))
           ),
           ...dimsSlot,
+          // en presentación, el mapa OOH comparte encuadre con las tácticas
+          ...(formato === "slides" && boundsGlobales
+            ? { bounds: boundsGlobales }
+            : {}),
         });
       }
 
-      // formato presentación: un mapa POR TÁCTICA con SOLO sus capas
-      // (zoom automático al encuadre de esa capa)
+      // formato presentación: un mapa POR TÁCTICA con SOLO sus capas,
+      // todos con el MISMO encuadre global (superponibles entre sí)
       const mapasRol: Partial<Record<RolLevantamiento, string | null>> = {};
       if (formato === "slides") {
         for (const rol of ["poi_propio", "competencia", "proximidad"] as const) {
@@ -497,21 +529,27 @@ export default function ExportarProyecto({
             ),
             colorPorCapa: colores,
             ...dimsSlot,
+            bounds: boundsGlobales,
           });
         }
         mapasRol.ooh = ooh?.mapaDataUrl ?? null;
       }
 
-      // traslapes guardados → etiquetas legibles
-      const traslapesPdf: TraslapeProyecto[] = traslapes.map((t) => ({
-        etiquetaA: ETIQUETA_ROL[t.roles[0]],
-        etiquetaB: ETIQUETA_ROL[t.roles[1]],
-        poblacion: t.poblacion,
-        pctBase: t.pctBase,
-        poblacionBase: t.poblacionBase,
-        esConquista:
-          t.roles.includes("poi_propio") && t.roles.includes("competencia"),
-      }));
+      // traslapes guardados → etiquetas legibles. VALIDACIÓN: una
+      // intersección jamás excede a ninguno de sus conjuntos — si la
+      // pieza guardada lo viola (cálculo pre-fix), no llega al PDF
+      const traslapesPdf: TraslapeProyecto[] = traslapes
+        .filter((t) => !t.advertencia && t.poblacion <= t.poblacionBase * 1.005)
+        .map((t) => ({
+          etiquetaA: ETIQUETA_ROL[t.roles[0]],
+          etiquetaB: ETIQUETA_ROL[t.roles[1]],
+          poblacion: Math.min(t.poblacion, t.poblacionBase),
+          pctBase: t.pctBase,
+          poblacionBase: t.poblacionBase,
+          etiquetaBase: ETIQUETA_ROL[t.base],
+          esConquista:
+            t.roles.includes("poi_propio") && t.roles.includes("competencia"),
+        }));
 
       // fuentes consolidadas de TODOS los levantamientos del PDF
       const todosPois = capas.flatMap((c) => c.pois);
@@ -547,6 +585,20 @@ export default function ExportarProyecto({
               ]
             : [];
         })(),
+        // transparencia de configuración: el radio usado POR CAPA
+        ...(() => {
+          const radios = normales
+            .map((s) => {
+              const r = Number(s.configuracion?.radius);
+              if (!Number.isFinite(r) || r <= 0) return null;
+              return `${nombreDe(s)}: ${r >= 1000 ? `${r / 1000} km` : `${r} m`}`;
+            })
+            .filter(Boolean) as string[];
+          return radios.length > 0
+            ? [`Radio usado por capa — ${radios.join(" · ")}`]
+            : [];
+        })(),
+        "Universo RESIDENCIAL (población que vive en la zona): no incluye población flotante ni turismo — en plazas turísticas, complementar con la fase Footfall",
       ];
 
       const sumaSimple = seleccionados.reduce(

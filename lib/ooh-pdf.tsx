@@ -207,7 +207,7 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
         )}
         {edades && (
           <View style={{ marginTop: 14 }}>
-            <BarraApilada titulo="Edades · % del universo 18+" segmentos={edades} width={CONT} />
+            <BarraApilada titulo="Edades · % del universo 18+ (25-64: estimación con estructura nacional)" segmentos={edades} width={CONT} />
           </View>
         )}
         <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 12 }}>

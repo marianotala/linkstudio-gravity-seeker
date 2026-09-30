@@ -1,7 +1,8 @@
 // Los 4 exports de Seeker, generados 100% en el cliente.
 // Nombres de archivo seeker_* listos para cargar en DSPs.
 
-import { ciudadDeDireccion, circlePolygon, etiquetaOrigen } from "./geo";
+import { ciudadDeDireccion, circlePolygon, coloniaDeDireccion, etiquetaOrigen } from "./geo";
+import { marcaNormalizada } from "./marcas";
 import type { Origin, Poi, Universos } from "./types";
 
 /** Filas de resumen de universos para anexar al final del CSV. */
@@ -71,17 +72,27 @@ function csvCampo(v: string | number): string {
 export function exportarCsv(
   pois: Poi[],
   origenes: Origin[] = [],
-  universos?: Universos | null
+  universos?: Universos | null,
+  /** Radio del análisis (transparencia de configuración por fila). */
+  radioM?: number,
+  /** Municipio por CP (catálogo de CPs) para filas con cp resuelto. */
+  municipioPorCp?: Map<string, string>
 ) {
   const filas = [
     [
       "nombre",
       "direccion",
+      "colonia",
       "ciudad",
+      "municipio",
       "codigo_postal",
       "capa",
+      "marca_normalizada",
       "termino_marca",
       "categoria",
+      "business_status",
+      "estatus",
+      "radio_usado_m",
       "lat",
       "lng",
       "fuente",
@@ -98,17 +109,31 @@ export function exportarCsv(
       return [
         csvCampo(p.nombre),
         csvCampo(p.direccion),
+        csvCampo(coloniaDeDireccion(p.direccion)),
         csvCampo(ciudadDeDireccion(p.direccion)),
+        csvCampo(
+          (p.cp && municipioPorCp?.get(p.cp)) || ciudadDeDireccion(p.direccion)
+        ),
         csvCampo(p.cp ?? ""),
         csvCampo(p.capa ?? ""),
+        csvCampo(marcaNormalizada(p.nombre, p.termino)),
         csvCampo(p.termino ?? ""),
         csvCampo(p.categoria ?? ""),
+        csvCampo(p.businessStatus ?? ""),
+        csvCampo(estatusDe(p)),
+        radioM ?? "",
         p.lat,
         p.lng,
         p.fuente,
         csvCampo(p.estrato ?? ""),
-        csvCampo(origen ? etiquetaOrigen(origen, p.origenIdx) : ""),
-        origen ? p.origenIdx + 1 : "",
+        csvCampo(
+          p.fueraDeRadio
+            ? `fuera de radio (a ${p.distancia} m de ${origen ? etiquetaOrigen(origen, p.origenIdx) : "?"})`
+            : origen
+              ? etiquetaOrigen(origen, p.origenIdx)
+              : ""
+        ),
+        origen && !p.fueraDeRadio ? p.origenIdx + 1 : "",
         origen?.lat ?? "",
         origen?.lng ?? "",
         p.distancia,
@@ -120,22 +145,46 @@ export function exportarCsv(
   descargar("seeker_pois.csv", filas.join("\n"), "text/csv;charset=utf-8");
 }
 
+/** Estatus del punto: conservado / rescatado a mano / fuera de radio. */
+function estatusDe(p: Poi): string {
+  if (p.fueraDeRadio) return "fuera de radio";
+  if (p.rescatado) return "rescatado manual";
+  return "conservado";
+}
+
 /** Fila del Export data como objeto (comparten CSV y XLSX). */
-function filaDeDatos(p: Poi, origenes: Origin[]) {
+function filaDeDatos(
+  p: Poi,
+  origenes: Origin[],
+  radioM?: number,
+  municipioPorCp?: Map<string, string>
+) {
   const origen = origenes[p.origenIdx];
   return {
     nombre: p.nombre,
     direccion: p.direccion,
+    colonia: coloniaDeDireccion(p.direccion),
     ciudad: ciudadDeDireccion(p.direccion),
+    municipio:
+      (p.cp && municipioPorCp?.get(p.cp)) || ciudadDeDireccion(p.direccion),
     codigo_postal: p.cp ?? "",
     capa: p.capa ?? "",
+    marca_normalizada: marcaNormalizada(p.nombre, p.termino),
     termino_marca: p.termino ?? "",
     categoria: p.categoria ?? "",
+    business_status: p.businessStatus ?? "",
+    estatus: estatusDe(p),
+    radio_usado_m: radioM ?? "",
     lat: p.lat,
     lng: p.lng,
     fuente: p.fuente,
     estrato: p.estrato ?? "",
-    origen_nombre: origen ? etiquetaOrigen(origen, p.origenIdx) : "",
+    // el origen JAMÁS se asigna por default: fuera de radio se declara
+    origen_nombre: p.fueraDeRadio
+      ? `fuera de radio (a ${p.distancia} m de ${origen ? etiquetaOrigen(origen, p.origenIdx) : "?"})`
+      : origen
+        ? etiquetaOrigen(origen, p.origenIdx)
+        : "",
     origen_lat: origen?.lat ?? "",
     origen_lng: origen?.lng ?? "",
     distancia_m: p.distancia,
@@ -165,7 +214,11 @@ export async function exportarXlsxData(
   pois: Poi[],
   origenes: Origin[] = [],
   universos?: Universos | null,
-  capas?: { nombre: string; pois: Poi[] }[] | null
+  capas?: { nombre: string; pois: Poi[] }[] | null,
+  /** Radio del análisis (transparencia de configuración). */
+  radioM?: number,
+  /** Municipio por CP (catálogo de CPs) para filas con cp resuelto. */
+  municipioPorCp?: Map<string, string>
 ) {
   const XLSX = await import("xlsx");
   const wb = XLSX.utils.book_new();
@@ -179,7 +232,7 @@ export async function exportarXlsxData(
     return nombre;
   };
   const agregarHoja = (nombre: string, lista: Poi[]) => {
-    const filas = lista.map((p) => filaDeDatos(p, origenes));
+    const filas = lista.map((p) => filaDeDatos(p, origenes, radioM, municipioPorCp));
     const hoja = XLSX.utils.json_to_sheet(filas);
     hoja["!cols"] = anchosDeColumnas(filas);
     XLSX.utils.book_append_sheet(wb, hoja, nombreHoja(nombre));
@@ -202,6 +255,9 @@ export async function exportarXlsxData(
       { dato: "viviendas", valor: universos.residencial!.viviendas },
       { dato: "agebs_intersectados", valor: universos.agebs ?? "" },
       { dato: "fuente", valor: universos.fuente ?? "" },
+      // transparencia de configuración: el radio usado, visible
+      ...(radioM ? [{ dato: "radio_usado_m", valor: radioM }] : []),
+      { dato: "criterio", valor: universos.criterio ?? "" },
     ];
     const hoja = XLSX.utils.json_to_sheet(resumen);
     hoja["!cols"] = [{ wch: 44 }, { wch: 20 }];

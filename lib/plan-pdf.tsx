@@ -129,6 +129,35 @@ export function registrarFuentes(base = "") {
 
 export const fmt = (n: number) => n.toLocaleString("es-MX");
 
+/** Texto seguro para react-pdf: las fuentes del deck (Manrope/DM
+ * Mono/Inter) no tienen glifos de emoji — los pictogramas salen como
+ * caracteres corruptos en el PDF (auditoría 30-sep). Se retiran los
+ * emojis (pares sustitutos), símbolos misceláneos, selectores de
+ * variación y área de uso privado, y se colapsan los espacios. */
+export function textoPdf(s: string): string {
+  const limpio = s
+    .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "")
+    .replace(/[☀-➿⬀-⯿︀-️‍⃣-]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return limpio || "—";
+}
+
+/** Nombre de plaza abreviado para columnas angostas: "Ciudad de
+ * México" → "CDMX"; se quita el prefijo "Ciudad de / Cd. / Villa /
+ * Heroica" para que el truncado con elipsis conserve lo distintivo
+ * (evita "Ciudad de …"). */
+export function abreviarCiudad(s: string): string {
+  const limpio = textoPdf(s);
+  const clave = limpio
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+  if (/(ciudad|cd\.?)\s+de\s+mexico\b/.test(clave) || clave === "cdmx") return "CDMX";
+  const sinPrefijo = limpio.replace(/^(ciudad|cd\.?|villa|heroica)\s+(de\s+(los?\s+|las?\s+)?)?/i, "").trim();
+  return sinPrefijo || limpio;
+}
+
 // ------------------------------------------------------------------
 // Componentes del sistema (réplicas del deck)
 // ------------------------------------------------------------------
@@ -791,7 +820,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
         )}
         {edades && (
           <View style={{ marginTop: 14 }}>
-            <BarraApilada titulo="Edades · % del universo 18+" segmentos={edades} width={CONT} />
+            <BarraApilada titulo="Edades · % del universo 18+ (25-64: estimación con estructura nacional)" segmentos={edades} width={CONT} />
           </View>
         )}
         <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 12 }}>

@@ -46,6 +46,7 @@ import {
 } from "./plan-pdf";
 import {
   NOMBRE_ROL,
+  sanearDatosPlan,
   universoDeRol,
   sustentoTactica,
   type CapaPlanProyecto,
@@ -195,15 +196,16 @@ function FilaDetalle({
     );
   }
   const [nombre, ciudad, uni, nse] = item.cols!;
-  const maxN = Math.floor(anchoNombre / 3.6);
+  const maxN = Math.floor(anchoNombre / 3.9);
   return (
     <View style={{ flexDirection: "row", paddingTop: 1, paddingBottom: 1 }}>
-      <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: TINTA, width: anchoNombre }}>
+      {/* maxLines 1: una fila = una línea, sin wraps que "peguen" filas */}
+      <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: TINTA, width: anchoNombre, paddingRight: 4, maxLines: 1, textOverflow: "ellipsis" }}>
         {nombre.length > maxN ? nombre.slice(0, maxN - 1) + "…" : nombre}
       </Text>
       {conCiudad && (
-        <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS, width: 58 }}>
-          {ciudad.length > 11 ? ciudad.slice(0, 10) + "…" : ciudad}
+        <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS, width: 58, maxLines: 1, textOverflow: "ellipsis" }}>
+          {ciudad.length > 13 ? ciudad.slice(0, 12) + "…" : ciudad}
         </Text>
       )}
       <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: CIAN, width: 46, textAlign: "right" }}>
@@ -669,7 +671,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
         )}
         {edades && (
           <View style={{ marginBottom: 6 }}>
-            <BarraApilada titulo="Edades · % del universo 18+" segmentos={edades} width={DER_W} />
+            <BarraApilada titulo="Edades · % del universo 18+ (25-64: estimación con estructura nacional)" segmentos={edades} width={DER_W} />
           </View>
         )}
 
@@ -706,7 +708,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
             <View style={{ marginTop: 2 }}>
               <View style={{ flexDirection: "row" }}>
                 {Array.from({ length: COLS_DETALLE_DER }, (_, col) => {
-                  const anchoCol = (DER_W - 10) / COLS_DETALLE_DER;
+                  const anchoCol = (DER_W - 16) / COLS_DETALLE_DER;
                   const anchoNombre = anchoCol - 46 - 22;
                   const filasCol = itemsDer.slice(
                     col * FILAS_DETALLE_DER,
@@ -716,7 +718,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                   return (
                     <View
                       key={col}
-                      style={{ width: anchoCol, marginRight: col === 0 ? 10 : 0 }}
+                      style={{ width: anchoCol, marginRight: col === 0 ? 16 : 0 }}
                     >
                       <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 2, marginBottom: 2 }}>
                         <Text style={[celdaTh, { width: anchoNombre }]}>PUNTO</Text>
@@ -831,7 +833,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
         {edadesCons && (
           <View style={{ marginTop: 12 }}>
             <BarraApilada
-              titulo="Edades · % del universo 18+ consolidado"
+              titulo="Edades · % del universo 18+ consolidado (25-64: estimación con estructura nacional)"
               segmentos={edadesCons}
               width={SLIDE_W - M * 2}
             />
@@ -871,10 +873,14 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
             </Text>
             <View style={{ flexDirection: "row" }}>
               {Array.from({ length: COLS_DETALLE_CONT }, (_, col) => {
+                // separación ancha + filete entre columnas: que el NSE de
+                // una columna jamás se "pegue" al nombre de la siguiente
+                const GAP_COL = 28;
                 const anchoCol =
-                  (SLIDE_W - M * 2 - (COLS_DETALLE_CONT - 1) * 18) /
+                  (SLIDE_W - M * 2 - (COLS_DETALLE_CONT - 1) * GAP_COL) /
                   COLS_DETALLE_CONT;
-                const anchoNombre = anchoCol - 58 - 46 - 22;
+                // −10: el paddingLeft del filete de las columnas 2+
+                const anchoNombre = anchoCol - 58 - 46 - 22 - 10;
                 const filasCol = (lam.items ?? []).slice(
                   col * FILAS_DETALLE_CONT,
                   (col + 1) * FILAS_DETALLE_CONT
@@ -885,7 +891,10 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                     key={col}
                     style={{
                       width: anchoCol,
-                      marginRight: col < COLS_DETALLE_CONT - 1 ? 18 : 0,
+                      marginRight: col < COLS_DETALLE_CONT - 1 ? GAP_COL : 0,
+                      ...(col > 0
+                        ? { borderLeftWidth: 0.8, borderLeftColor: LINEA, paddingLeft: 10 }
+                        : {}),
                     }}
                   >
                     <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 2, marginBottom: 2 }}>
@@ -1029,10 +1038,10 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                 {fmt(traslapeEstrella.poblacion)} personas
               </Text>
               <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 18, color: CIAN, marginTop: 6 }}>
-                {traslapeEstrella.pctBase.toLocaleString("es-MX")}% de tu territorio también está en zona de competencia.
+                {traslapeEstrella.pctBase.toLocaleString("es-MX")}% del universo de {traslapeEstrella.etiquetaBase} está en ambos territorios.
               </Text>
               <Text style={{ fontFamily: "Inter", fontSize: 9.5, color: GRIS, marginTop: 10 }}>
-                Base: universo de {traslapeEstrella.etiquetaA} ({fmt(traslapeEstrella.poblacionBase)} personas) · cálculo por
+                % sobre el universo de {traslapeEstrella.etiquetaBase} ({fmt(traslapeEstrella.poblacionBase)} personas, el menor del par) · cálculo por
                 inclusión-exclusión sobre el censo, con las mismas sumas crudas.
               </Text>
             </View>
@@ -1045,7 +1054,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
               <Text style={{ fontFamily: "Manrope", fontWeight: 800, color: BLANCO }}>
                 {fmt(t.poblacion)} personas
               </Text>{" "}
-              ({t.pctBase.toLocaleString("es-MX")}% del universo de {t.etiquetaA}).
+              ({t.pctBase.toLocaleString("es-MX")}% del universo de {t.etiquetaBase}, el menor del par).
             </Text>
           ))}
         </Lamina>
@@ -1183,10 +1192,10 @@ export async function generarPresentacionProyecto(
   baseFuentes = ""
 ): Promise<Blob> {
   registrarFuentes(baseFuentes);
-  return pdf(<SlidesDocumento d={datos} />).toBlob();
+  return pdf(<SlidesDocumento d={sanearDatosPlan(datos)} />).toBlob();
 }
 
 /** Variante Node para pruebas (elemento en vez de Blob). */
 export function documentoPresentacionProyecto(datos: PlanProyectoDatos) {
-  return <SlidesDocumento d={datos} />;
+  return <SlidesDocumento d={sanearDatosPlan(datos)} />;
 }

@@ -41,6 +41,10 @@ interface OpcionesMapa {
    * táctica capturan con el aspecto de su slot para no recortar. */
   ancho?: number;
   alto?: number;
+  /** Encuadre FORZADO (extremos sin padding): al capturar varios mapas
+   * de la misma plaza con los mismos bounds comparten extensión y zoom
+   * — las láminas por táctica son superponibles (auditoría 30-sep). */
+  bounds?: { norte: number; sur: number; este: number; oeste: number };
 }
 
 const lngAX = (lng: number, z: number) => ((lng + 180) / 360) * 2 ** z;
@@ -115,14 +119,20 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
       lats.push(p.lat);
       lngs.push(p.lng);
     });
-    if (lats.length === 0) return null;
+    if (lats.length === 0 && !o.bounds) return null;
+    // con bounds explícitos, TODOS los mapas capturados con los mismos
+    // extremos comparten encuadre y zoom (láminas superponibles)
+    const maxLat = o.bounds?.norte ?? Math.max(...lats);
+    const minLat = o.bounds?.sur ?? Math.min(...lats);
+    const maxLng = o.bounds?.este ?? Math.max(...lngs);
+    const minLng = o.bounds?.oeste ?? Math.min(...lngs);
     const pad = 0.08;
-    const dLat = Math.max(0.01, (Math.max(...lats) - Math.min(...lats)) * pad);
-    const dLng = Math.max(0.01, (Math.max(...lngs) - Math.min(...lngs)) * pad);
-    const norte = Math.max(...lats) + dLat;
-    const sur = Math.min(...lats) - dLat;
-    const este = Math.max(...lngs) + dLng;
-    const oeste = Math.min(...lngs) - dLng;
+    const dLat = Math.max(0.01, (maxLat - minLat) * pad);
+    const dLng = Math.max(0.01, (maxLng - minLng) * pad);
+    const norte = maxLat + dLat;
+    const sur = minLat - dLat;
+    const este = maxLng + dLng;
+    const oeste = minLng - dLng;
 
     // 2) zoom que ajusta los bounds al canvas (máx 16)
     let z = 16;
@@ -288,17 +298,18 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
       ctx.strokeRect(px - 5, py - 5, 10, 10);
     }
 
-    // POIs (con capas, el color identifica a la capa)
+    // POIs (con capas, el color identifica a la capa) — radio 6px:
+    // visibles también cuando el encuadre compartido aleja el zoom
     for (const p of o.pois) {
       const [px, py] = aPx(p.lat, p.lng);
       ctx.beginPath();
-      ctx.arc(px, py, 4.5, 0, Math.PI * 2);
+      ctx.arc(px, py, 6, 0, Math.PI * 2);
       ctx.fillStyle =
         (p.capa ? o.colorPorCapa?.[p.capa] : undefined) ??
         (p.fuente === "denue" ? NARANJA : MAGENTA);
       ctx.fill();
       ctx.strokeStyle = "#0a0a0f";
-      ctx.lineWidth = 1.2;
+      ctx.lineWidth = 1.5;
       ctx.stroke();
     }
 

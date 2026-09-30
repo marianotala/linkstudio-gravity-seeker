@@ -99,9 +99,16 @@ const LOTE_GEOCODE = 500;
 export async function geocodificarDirecciones(
   direcciones: { direccion: string; nombre?: string }[],
   onEstado?: (hechas: number, total: number) => void
-): Promise<{ origenes: Origin[]; fallidas: number }> {
+): Promise<{
+  origenes: Origin[];
+  fallidas: number;
+  /** TRANSPARENCIA: qué direcciones se perdieron y por qué — ninguna
+   * sucursal desaparece en silencio. */
+  fallidasDetalle: string[];
+}> {
   const listos: Origin[] = [];
   let fallidas = 0;
+  const fallidasDetalle: string[] = [];
   for (let i = 0; i < direcciones.length; i += LOTE_GEOCODE) {
     onEstado?.(i, direcciones.length);
     const lote = direcciones.slice(i, i + LOTE_GEOCODE);
@@ -118,11 +125,16 @@ export async function geocodificarDirecciones(
         });
       } else {
         fallidas++;
+        if (fallidasDetalle.length < 200) {
+          fallidasDetalle.push(
+            `${lote[j].nombre ? lote[j].nombre + " — " : ""}${lote[j].direccion}: ${r.error ?? "sin resultado"}`
+          );
+        }
       }
     });
   }
   onEstado?.(direcciones.length, direcciones.length);
-  return { origenes: listos, fallidas };
+  return { origenes: listos, fallidas, fallidasDetalle };
 }
 
 /**

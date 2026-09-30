@@ -18,7 +18,7 @@ import { rangosEdadEstandar } from "@/lib/edades";
 import { NIVELES_NSE } from "@/lib/nse";
 import {
   cargarPuntosCrudosSurvey,
-  colorSurvey,
+  colorCapaEstable,
   ETIQUETA_ROL,
   geocercasDeSurvey,
   type PuntoSurvey,
@@ -50,9 +50,14 @@ interface Consolidado {
 interface Traslape {
   roles: [RolLevantamiento, RolLevantamiento];
   poblacion: number;
+  /** % del universo BASE (el MENOR de los dos: una intersección jamás
+   * puede exceder a ninguno de sus conjuntos). */
   pctBase: number;
   base: RolLevantamiento;
   poblacionBase: number;
+  /** Validación: la intersección excedió al universo menor (doble
+   * conteo) — visible y BLOQUEA el export hasta recalcular. */
+  advertencia?: string;
 }
 
 const fmt = (n: number) => n.toLocaleString("es-MX");
@@ -319,13 +324,32 @@ export default function ResumenProyecto({
           const pobA = universoRol.get(a) ?? 0;
           const pobB = universoRol.get(b) ?? 0;
           const pobU = union.disponible ? union.residencial!.poblacion : pobA + pobB;
-          const interseccion = Math.max(0, Math.round(pobA + pobB - pobU));
+          // inclusión-exclusión con piezas ya deduplicadas (geometría
+          // disjunta): pob(A∩B) = pob(A) + pob(B) − pob(A∪B)
+          const crudo = Math.max(0, Math.round(pobA + pobB - pobU));
+          // el % se declara contra el universo MENOR del par: una
+          // intersección no puede exceder a ninguno de sus conjuntos
+          const base = pobA <= pobB ? a : b;
+          const pobMenor = Math.min(pobA, pobB);
+          // tolerancia de redondeo de la interpolación: se acota al menor
+          const interseccion = Math.min(crudo, pobMenor);
+          const advertencia =
+            pobMenor > 0 && crudo > pobMenor * 1.005
+              ? `VALIDACIÓN: el traslape crudo (${crudo.toLocaleString("es-MX")}) excede al universo de ${ETIQUETA_ROL[base]} (${pobMenor.toLocaleString("es-MX")}) — hay doble conteo en los universos por rol; recalcula consolidado y traslapes. Este traslape NO se puede exportar.`
+              : undefined;
+          if (advertencia) {
+            console.error("[traslapes] validación:", advertencia);
+          }
           resultados.push({
             roles: [a, b],
             poblacion: interseccion,
-            pctBase: pobA > 0 ? Math.round((1000 * interseccion) / pobA) / 10 : 0,
-            base: a,
-            poblacionBase: pobA,
+            pctBase:
+              pobMenor > 0
+                ? Math.round((1000 * interseccion) / pobMenor) / 10
+                : 0,
+            base,
+            poblacionBase: pobMenor,
+            ...(advertencia ? { advertencia } : {}),
           });
         }
       }
@@ -414,7 +438,7 @@ export default function ResumenProyecto({
               >
                 <span
                   className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: colorSurvey(s.rol, i), opacity: sel[s.id] ? 1 : 0.35 }}
+                  style={{ backgroundColor: colorCapaEstable(s.rol, nombreDe(s)), opacity: sel[s.id] ? 1 : 0.35 }}
                 />
                 {nombreDe(s)}
                 <span className="text-zinc-600">{ETIQUETA_ROL[s.rol]}</span>
@@ -490,7 +514,7 @@ export default function ResumenProyecto({
                     <td className="max-w-[260px] truncate px-3 py-2">
                       <span
                         className="mr-1.5 inline-block h-2 w-2 rounded-full"
-                        style={{ backgroundColor: colorSurvey(s.rol, i) }}
+                        style={{ backgroundColor: colorCapaEstable(s.rol, nombreDe(s)) }}
                       />
                       {nombreDe(s)}
                     </td>
@@ -596,8 +620,14 @@ export default function ResumenProyecto({
                 <span className="text-white">{fmt(t.poblacion)} personas</span>{" "}
                 <span className="text-zinc-500">
                   ({t.pctBase.toLocaleString("es-MX")}% del universo de{" "}
-                  {ETIQUETA_ROL[t.base]}, {fmt(t.poblacionBase)})
+                  {ETIQUETA_ROL[t.base]} —el menor del par, {fmt(t.poblacionBase)}—
+                  que también está en el otro territorio)
                 </span>
+                {t.advertencia && (
+                  <span className="mt-1 block text-[10px] text-amber-400">
+                    ⚠ {t.advertencia}
+                  </span>
+                )}
               </div>
             ))}
             {fechaTraslapes && (

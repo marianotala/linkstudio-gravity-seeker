@@ -6,6 +6,7 @@
 // reanudar sin repagar consultas. Todo vía Supabase con RLS de equipo.
 
 import { matchersDe, terminoQueCaptura } from "./filtro-nombre";
+import { marcaNormalizada, masEspecifica } from "./marcas";
 import { createClient } from "./supabase/client";
 import { calcularUniversosCliente } from "./universos-lotes";
 import type {
@@ -46,6 +47,24 @@ export const PALETAS_ROL: Record<RolLevantamiento, string[]> = {
 export function colorSurvey(rol: RolLevantamiento, indice: number): string {
   const paleta = PALETAS_ROL[rol];
   return paleta[indice % paleta.length];
+}
+
+/** Color ESTABLE por capa: hash del nombre normalizado sobre la paleta
+ * del rol. La misma marca recibe el MISMO color en todas las plazas,
+ * mapas y exports del proyecto — los mapas de Monterrey y Cancún son
+ * comparables entre sí (auditoría 30-sep). */
+export function colorCapaEstable(rol: RolLevantamiento, nombre: string): string {
+  const paleta = PALETAS_ROL[rol];
+  const clave = nombre
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+  let h = 5381;
+  for (let i = 0; i < clave.length; i++) {
+    h = ((h << 5) + h + clave.charCodeAt(i)) | 0; // djb2
+  }
+  return paleta[Math.abs(h) % paleta.length];
 }
 
 /** Un run activo del Planner: surveys por etiqueta de capa (null =
@@ -153,6 +172,9 @@ export async function guardarPuntosPlanner(
           // giro de Google: materia prima de la depuración por
           // coherencia de tipos y de futuros análisis
           types: (p.types ?? []).slice(0, 8),
+          // agrupador de marca + estatus del negocio (auditoría 30-sep)
+          marca: marcaNormalizada(p.nombre, p.termino),
+          business_status: p.businessStatus ?? null,
           // trazabilidad del rescate manual (panel de descartados)
           ...(p.rescatado ? { origen: "rescatado_manual" } : {}),
         },
@@ -421,6 +443,7 @@ export function puntoAPoi(r: PuntoSurvey): Poi {
     lat: r.lat,
     lng: r.lng,
     types: (r.metadata?.types as string[] | undefined) ?? [],
+    businessStatus: (r.metadata?.business_status as string | null) ?? null,
     rescatado: r.metadata?.origen === "rescatado_manual" || undefined,
     distancia: r.metadata?.distancia_m ?? 0,
     origenIdx: r.metadata?.origen_idx ?? 0,
@@ -851,6 +874,112 @@ export async function rescatarDescartados(
 }
 
 // ------------------------------------------------------------------
+// DEDUPE ENTRE CAPAS — el dedupe por place_id existe DENTRO de cada
+// corrida; entre capas del mismo proyecto un punto podía vivir dos
+// veces (capa "pizza" y capa "little caesars"). Regla: el punto se
+// queda en la capa de marca MÁS ESPECÍFICA (etiqueta que coincide con
+// su marca > etiqueta más específica > la primera) y sale de las demás.
+// ------------------------------------------------------------------
+
+export async function deduplicarEntreSurveys(
+  surveys: { id: string; nombre: string; etiqueta: string | null }[],
+  onEstado?: (texto: string) => void
+): Promise<{ eliminados: number; detalle: string[] }> {
+  if (surveys.length < 2) {
+    throw new Error("Se necesitan al menos 2 capas para deduplicar");
+  }
+  const supabase = createClient();
+  onEstado?.("Cargando los puntos de las capas…");
+  interface Ocurrencia {
+    surveyId: string;
+    etiqueta: string | null;
+    placeId: string;
+    marca: string;
+  }
+  const porClave = new Map<string, Ocurrencia[]>();
+  const registrar = (clave: string, o: Ocurrencia) => {
+    porClave.set(clave, [...(porClave.get(clave) ?? []), o]);
+  };
+  for (const s of surveys) {
+    const crudos = await cargarPuntosCrudosSurvey(s.id);
+    for (const p of crudos) {
+      const o: Ocurrencia = {
+        surveyId: s.id,
+        etiqueta: s.etiqueta,
+        placeId: p.place_id,
+        marca:
+          (p.metadata?.marca as string) ||
+          marcaNormalizada(p.nombre, (p.metadata?.termino as string) || null),
+      };
+      registrar(`id:${p.place_id}`, o);
+      registrar(`c:${p.lat.toFixed(4)},${p.lng.toFixed(4)}`, o);
+    }
+  }
+
+  // ganador por clave: etiqueta == marca del punto > etiqueta más
+  // específica > la primera capa
+  const eliminarDe = new Map<string, Set<string>>(); // surveyId → placeIds
+  let eliminados = 0;
+  porClave.forEach((lista) => {
+    const distintos = new Set(lista.map((o) => `${o.surveyId}:${o.placeId}`));
+    if (distintos.size < 2) return;
+    const surveysInvolucrados = new Set(lista.map((o) => o.surveyId));
+    if (surveysInvolucrados.size < 2) return; // duplicado interno: no es de aquí
+    const puntaje = (o: Ocurrencia) => {
+      const et = normalizarComparableSeguro(o.etiqueta ?? "");
+      if (et && et === o.marca) return 3;
+      if (et && (o.marca.startsWith(et) || et.startsWith(o.marca))) return 2;
+      return 1;
+    };
+    const ganador = [...lista].sort((a, b) => {
+      const d = puntaje(b) - puntaje(a);
+      if (d !== 0) return d;
+      const ea = a.etiqueta ?? "";
+      const eb = b.etiqueta ?? "";
+      if (ea !== eb) return masEspecifica(ea, eb) ? -1 : 1;
+      return 0;
+    })[0];
+    for (const o of lista) {
+      if (o.surveyId === ganador.surveyId) continue;
+      const set = eliminarDe.get(o.surveyId) ?? new Set<string>();
+      if (!set.has(o.placeId)) {
+        set.add(o.placeId);
+        eliminados++;
+      }
+      eliminarDe.set(o.surveyId, set);
+    }
+  });
+
+  if (eliminados === 0) return { eliminados: 0, detalle: [] };
+  const detalle: string[] = [];
+  const nombreDe = new Map(surveys.map((s) => [s.id, s.nombre]));
+  for (const [surveyId, placeIds] of Array.from(eliminarDe.entries())) {
+    onEstado?.(
+      `Quitando ${placeIds.size.toLocaleString("es-MX")} duplicados de "${nombreDe.get(surveyId)}"…`
+    );
+    const ids = Array.from(placeIds);
+    for (let i = 0; i < ids.length; i += 150) {
+      const { error } = await supabase
+        .from("survey_points")
+        .delete()
+        .eq("survey_id", surveyId)
+        .in("place_id", ids.slice(i, i + 150));
+      if (error) {
+        throw new Error(`No se pudieron quitar duplicados: ${error.message}`);
+      }
+    }
+    detalle.push(`${nombreDe.get(surveyId)}: −${placeIds.size}`);
+  }
+  await marcarSurveysModificados(Array.from(eliminarDe.keys()));
+  return { eliminados, detalle };
+}
+
+/** normalizarComparable tolerante a vacío (para etiquetas null). */
+function normalizarComparableSeguro(s: string): string {
+  return s ? marcaNormalizada(s) : "";
+}
+
+// ------------------------------------------------------------------
 // DIVIDIR EN CAPAS POR MARCA — reparación de un survey MEZCLADO (varios
 // términos en un solo levantamiento, p. ej. corrido con "separar en
 // capas" apagado): crea un survey por término, REASIGNA los puntos ya
@@ -884,9 +1013,6 @@ export async function dividirSurveyEnCapas(
     throw new Error("No pude leer el levantamiento a dividir");
   }
   const cfg = (s.configuracion ?? {}) as Record<string, unknown>;
-  if (cfg.etiqueta) {
-    throw new Error("Este levantamiento ya es una capa (tiene etiqueta)");
-  }
 
   onEstado?.("Cargando los puntos del levantamiento…");
   const crudos = await cargarPuntosCrudosSurvey(surveyId);
@@ -901,7 +1027,7 @@ export async function dividirSurveyEnCapas(
     terminoQueCaptura(nombre, matchers);
 
   // agrupar por término (registrado > inferido > Revisar)
-  const grupos = new Map<string, PuntoSurvey[]>();
+  let grupos = new Map<string, PuntoSurvey[]>();
   let ambiguos = 0;
   for (const p of crudos) {
     let termino = (p.metadata?.termino as string | null) || null;
@@ -912,9 +1038,30 @@ export async function dividirSurveyEnCapas(
     }
     grupos.set(termino, [...(grupos.get(termino) ?? []), p]);
   }
+  // sin términos que separen (capa de categoría, o capa "pizza" con
+  // varias cadenas adentro): agrupar por MARCA NORMALIZADA — marcas
+  // con menos de 3 puntos caen a "Otros"
+  if (grupos.size < 2) {
+    const porMarca = new Map<string, PuntoSurvey[]>();
+    for (const p of crudos) {
+      const m = marcaNormalizada(p.nombre, (p.metadata?.termino as string) || null);
+      porMarca.set(m, [...(porMarca.get(m) ?? []), p]);
+    }
+    const nuevas = new Map<string, PuntoSurvey[]>();
+    const otros: PuntoSurvey[] = [];
+    porMarca.forEach((lista, m) => {
+      if (lista.length >= 3) nuevas.set(m, lista);
+      else otros.push(...lista);
+    });
+    if (nuevas.size >= 2) {
+      ambiguos = 0;
+      if (otros.length > 0) nuevas.set("Otros", otros);
+      grupos = nuevas;
+    }
+  }
   if (grupos.size < 2) {
     throw new Error(
-      "Todos los puntos son del mismo término — no hay nada que dividir"
+      "Todos los puntos son de la misma marca/término — no hay nada que dividir"
     );
   }
 

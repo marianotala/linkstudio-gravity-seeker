@@ -76,6 +76,7 @@ export default function AdminCostos() {
   const [ocupadoId, setOcupadoId] = useState<string | null>(null);
   const [config, setConfig] = useState<Record<string, string>>({});
   const [guardandoConfig, setGuardandoConfig] = useState(false);
+  const [marcandoAntiguos, setMarcandoAntiguos] = useState(false);
   const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
 
   const cargar = useCallback(async () => {
@@ -146,6 +147,37 @@ export default function AdminCostos() {
       });
     } finally {
       setOcupadoId(null);
+    }
+  }
+
+  /** Marca en masa los universos calculados ANTES del fix de geometría
+   * disjunta (29-sep) como desactualizados — recalculables con ⟳. */
+  async function marcarUniversosAntiguos() {
+    setMarcandoAntiguos(true);
+    setMensaje(null);
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc(
+        "admin_marcar_universos_antiguos",
+        { p_antes: "2026-09-29T20:00:00Z" }
+      );
+      if (error) throw new Error(error.message);
+      const n = Number(data);
+      setMensaje(
+        n < 0
+          ? { tipo: "error", texto: "Tu usuario no tiene rol admin." }
+          : {
+              tipo: "ok",
+              texto: `${n.toLocaleString("es-MX")} levantamientos marcados como "universos desactualizados" — en cada proyecto, el botón ⟳ Universo (en ámbar) los recalcula con la maquinaria corregida.`,
+            }
+      );
+    } catch (e) {
+      setMensaje({
+        tipo: "error",
+        texto: e instanceof Error ? e.message : "No se pudo marcar",
+      });
+    } finally {
+      setMarcandoAntiguos(false);
     }
   }
 
@@ -455,6 +487,16 @@ export default function AdminCostos() {
           className="mt-3 rounded-md bg-cian px-4 py-2 font-display text-xs font-extrabold text-fondo transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           {guardandoConfig ? "Guardando…" : "Guardar configuración"}
+        </button>
+        <button
+          onClick={marcarUniversosAntiguos}
+          disabled={marcandoAntiguos}
+          title="Los universos calculados ANTES del fix de geometría disjunta (29-sep-2026) pueden traer doble conteo: esto los marca como desactualizados en todos los proyectos para recalcularlos con ⟳ Universo"
+          className="ml-2 mt-3 rounded-md border border-amber-400/60 bg-amber-400/10 px-4 py-2 font-mono text-xs text-amber-400 transition-colors hover:bg-amber-400/20 disabled:opacity-40"
+        >
+          {marcandoAntiguos
+            ? "Marcando…"
+            : "Recalcular universos antiguos (pre-fix 29-sep)"}
         </button>
         {mensaje && (
           <p

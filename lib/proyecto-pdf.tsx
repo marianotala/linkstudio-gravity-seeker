@@ -37,8 +37,10 @@ import {
   fmt,
   ordenarTacticas,
   registrarFuentes,
+  abreviarCiudad,
   segmentosEdades,
   segmentosNse,
+  textoPdf,
 } from "./plan-pdf";
 import { CLAVES_TACTICAS, TACTICAS, type TacticaClave } from "./tacticas";
 import type { Poi, RolLevantamiento, Universos } from "./types";
@@ -61,8 +63,12 @@ export interface TraslapeProyecto {
   etiquetaA: string;
   etiquetaB: string;
   poblacion: number;
+  /** % del universo BASE — el MENOR del par (una intersección jamás
+   * excede a ninguno de sus conjuntos). */
   pctBase: number;
   poblacionBase: number;
+  /** Nombre del universo base del % (el menor del par). */
+  etiquetaBase: string;
   /** true cuando es el par propios × competencia (el dato estrella). */
   esConquista: boolean;
 }
@@ -359,7 +365,7 @@ function BloqueDemografico({ u }: { u: Universos | null }) {
       {edades && (
         <View style={{ marginTop: 10 }}>
           <BarraApilada
-            titulo="Edades · % del universo 18+"
+            titulo="Edades · % del universo 18+ (25-64: estimación con estructura nacional)"
             segmentos={edades}
             width={CONT - 28}
           />
@@ -621,7 +627,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
         )}
         {edades && (
           <View style={{ marginTop: 14 }}>
-            <BarraApilada titulo="Edades · % del universo 18+ consolidado" segmentos={edades} width={CONT} />
+            <BarraApilada titulo="Edades · % del universo 18+ consolidado (25-64: estimación con estructura nacional)" segmentos={edades} width={CONT} />
           </View>
         )}
         <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 12 }}>
@@ -763,10 +769,10 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                   TRASLAPE PROPIOS × COMPETENCIA — LA AUDIENCIA DE CONQUISTA
                 </Text>
                 <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 15, color: BLANCO }}>
-                  {fmt(traslapeEstrella.poblacion)} personas ({traslapeEstrella.pctBase.toLocaleString("es-MX")}%) de tu territorio también están en zona de competencia.
+                  {fmt(traslapeEstrella.poblacion)} personas — el {traslapeEstrella.pctBase.toLocaleString("es-MX")}% del universo de {traslapeEstrella.etiquetaBase} — están en ambos territorios.
                 </Text>
                 <Text style={{ fontFamily: "Inter", fontSize: 8, color: GRIS, marginTop: 4 }}>
-                  Base: universo de {traslapeEstrella.etiquetaA} ({fmt(traslapeEstrella.poblacionBase)} personas). Cálculo por inclusión-exclusión sobre el censo.
+                  % sobre el universo de {traslapeEstrella.etiquetaBase} ({fmt(traslapeEstrella.poblacionBase)} personas, el menor del par). Cálculo por inclusión-exclusión sobre el censo.
                 </Text>
               </View>
             )}
@@ -774,7 +780,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
               <Text key={i} style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, marginTop: 6 }}>
                 Traslape {t.etiquetaA} × {t.etiquetaB}:{" "}
                 <Text style={{ color: TINTA }}>{fmt(t.poblacion)} personas</Text>{" "}
-                ({t.pctBase.toLocaleString("es-MX")}% del universo de {t.etiquetaA}).
+                ({t.pctBase.toLocaleString("es-MX")}% del universo de {t.etiquetaBase}, el menor del par).
               </Text>
             ))}
           </View>
@@ -1154,16 +1160,65 @@ export function nombreArchivoPlanProyecto(
   return `Gravity_Plan_${c}${t ? `_${t}` : ""}_${f}.pdf`;
 }
 
+/**
+ * Sanea TODO el texto libre del plan para react-pdf en un solo punto
+ * (nombres de POIs, capas, pantallas y ciudades): sin emojis corruptos
+ * y con las plazas abreviadas para las columnas angostas (auditoría
+ * 30-sep). Lo usan el one-pager y la presentación 16:9.
+ */
+export function sanearDatosPlan(d: PlanProyectoDatos): PlanProyectoDatos {
+  const s = textoPdf;
+  return {
+    ...d,
+    cliente: s(d.cliente),
+    titulo: d.titulo ? s(d.titulo) : d.titulo,
+    usuario: s(d.usuario),
+    capas: d.capas.map((c) => ({
+      ...c,
+      nombre: s(c.nombre),
+      pois: c.pois.map((p) => ({
+        ...p,
+        nombre: s(p.nombre),
+        direccion: s(p.direccion),
+      })),
+    })),
+    ooh: d.ooh
+      ? {
+          ...d.ooh,
+          nombre: s(d.ooh.nombre),
+          pantallas: d.ooh.pantallas.map((p) => ({
+            ...p,
+            nombre: s(p.nombre),
+            pdvs: p.pdvs.map((r) => ({ ...r, nombre: s(r.nombre) })),
+          })),
+          sinCobertura: d.ooh.sinCobertura.map(s),
+        }
+      : d.ooh,
+    detallePuntos: d.detallePuntos
+      ? Object.fromEntries(
+          Object.entries(d.detallePuntos).map(([id, filas]) => [
+            id,
+            filas.map((f) => ({
+              ...f,
+              nombre: s(f.nombre),
+              ciudad: abreviarCiudad(f.ciudad),
+            })),
+          ])
+        )
+      : d.detallePuntos,
+  };
+}
+
 /** Genera el PDF del plan de proyecto. `baseFuentes` solo en pruebas Node. */
 export async function generarPlanProyectoPdf(
   datos: PlanProyectoDatos,
   baseFuentes = ""
 ): Promise<Blob> {
   registrarFuentes(baseFuentes);
-  return pdf(<ProyectoDocumento d={datos} />).toBlob();
+  return pdf(<ProyectoDocumento d={sanearDatosPlan(datos)} />).toBlob();
 }
 
 /** Variante Node para pruebas (elemento en vez de Blob). */
 export function documentoPlanProyecto(datos: PlanProyectoDatos) {
-  return <ProyectoDocumento d={datos} />;
+  return <ProyectoDocumento d={sanearDatosPlan(datos)} />;
 }

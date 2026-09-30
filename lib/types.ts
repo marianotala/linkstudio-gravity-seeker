@@ -54,6 +54,12 @@ export interface Poi {
   estrato?: string | null;
   /** true = rescatado A MANO del panel de descartados (trazabilidad). */
   rescatado?: boolean;
+  /** true = queda a MÁS del radio de toda sucursal (con su distancia
+   * real al origen más cercano) — jamás se asigna origen por default. */
+  fueraDeRadio?: boolean;
+  /** Estatus del negocio en Google: OPERATIONAL / CLOSED_TEMPORARILY /
+   * CLOSED_PERMANENTLY (null = sin dato). */
+  businessStatus?: string | null;
   /** Solo DENUE: razón social y clase de actividad SCIAN. */
   razonSocial?: string | null;
   actividad?: string | null;

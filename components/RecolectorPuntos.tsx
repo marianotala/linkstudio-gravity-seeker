@@ -124,6 +124,7 @@ export default function RecolectorPuntos({
       const parseado = await parsearArchivo(file);
       let origenes = parseado.origenes;
       let fallidas = 0;
+      let fallidasDetalle: string[] = [];
       if (parseado.direcciones.length > 0) {
         setNota(
           `Geocodificando ${parseado.direcciones.length.toLocaleString("es-MX")} direcciones…`
@@ -137,6 +138,13 @@ export default function RecolectorPuntos({
         );
         origenes = [...origenes, ...geo.origenes];
         fallidas = geo.fallidas;
+        fallidasDetalle = geo.fallidasDetalle;
+        if (fallidasDetalle.length > 0) {
+          console.warn(
+            "[recolector] direcciones no geocodificadas:",
+            fallidasDetalle
+          );
+        }
       }
       if (origenes.length === 0) {
         setNota(parseado.deteccion);
@@ -150,7 +158,13 @@ export default function RecolectorPuntos({
       const notas = [
         `${origenes.length.toLocaleString("es-MX")} ${etiquetaPuntos} de ${file.name}`,
         ...(duplicados > 0 ? [`${duplicados} ya estaban`] : []),
-        ...(fallidas > 0 ? [`${fallidas} direcciones fallaron`] : []),
+        ...(fallidas > 0
+          ? [
+              `${fallidas} direcciones fallaron: ${fallidasDetalle
+                .slice(0, 2)
+                .join(" | ")}${fallidasDetalle.length > 2 ? ` (+${fallidasDetalle.length - 2} en consola)` : ""}`,
+            ]
+          : []),
         ...(parseado.correcciones.lngCorregidas > 0
           ? [`${parseado.correcciones.lngCorregidas} longitudes corregidas a oeste`]
           : []),

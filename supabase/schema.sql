@@ -3386,3 +3386,37 @@ $$;
 
 revoke execute on function public.descartados_conteo(uuid[]) from public, anon;
 grant execute on function public.descartados_conteo(uuid[]) to authenticated;
+
+-- Marca EN MASA los surveys cuyos universos se calcularon antes de una
+-- fecha (p. ej. el fix de geometría disjunta del 29-sep) como
+-- "universos_desactualizados". Solo admin. Aplicada en vivo como
+-- migración recalcular_universos_antiguos.
+create or replace function public.admin_marcar_universos_antiguos(p_antes timestamptz)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_n integer;
+begin
+  if not public.es_admin() then
+    return -1;
+  end if;
+  update public.surveys s
+  set configuracion = coalesce(s.configuracion, '{}'::jsonb)
+    || jsonb_build_object(
+         'universos_desactualizados', true,
+         'depurado_en', to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+       )
+  where exists (
+    select 1 from public.survey_universes u
+    where u.survey_id = s.id and u.created_at < p_antes
+  );
+  get diagnostics v_n = row_count;
+  return v_n;
+end;
+$$;
+
+revoke execute on function public.admin_marcar_universos_antiguos(timestamptz) from public, anon;
+grant execute on function public.admin_marcar_universos_antiguos(timestamptz) to authenticated;

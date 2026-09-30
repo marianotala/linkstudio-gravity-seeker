@@ -79,31 +79,94 @@ export function perfilDeGiro(pois: Poi[]): {
   };
 }
 
+/** Nombres que delatan NO-sucursal: oficinas, contact centers,
+ * proveedores, estacionamientos, CEDIS… (auditoría 30-sep). */
+const RE_NO_SUCURSAL =
+  /(contact\s*center|call\s*center|corporativ\w*|oficinas?\b|estacionamiento|parking|proveedor\w*|distribuidor\w*|empaques?\b|bodega\b|almac[eé]n|\bcedis\b|centro\s+de\s+distribuci[oó]n)/i;
+
+/** Types de acceso restringido / universo residencial ≈ 0 (aeropuertos,
+ * parques de paga tipo Kidzania, estadios…). */
+const TYPES_RESTRINGIDOS = new Set([
+  "airport",
+  "international_airport",
+  "amusement_park",
+  "theme_park",
+  "water_park",
+  "zoo",
+  "stadium",
+  "arena",
+  "convention_center",
+]);
+
+/** Geocodificación imprecisa de Google. */
+const RE_DIRECCION_IMPRECISA = /(calle no indicada|unnamed road|sin nombre)/i;
+
 /**
- * CAPA 1 — sospechosos por coherencia de types: POIs cuyo giro es
- * INCOMPATIBLE con el perfil mayoritario del censo. Solo marca cuando
- * hay señal real (el POI trae types de giro y NINGUNO coincide con el
- * núcleo); los POIs sin types (p. ej. DENUE) no se marcan.
+ * CAPA 1 — sospechosos automáticos:
+ * (a) SIEMPRE: nombres de no-sucursal (contact center, proveedor…),
+ *     lugares de acceso restringido/universo 0 por type, direcciones
+ *     imprecisas y nombres genéricos repetidos sin término de captura;
+ * (b) con masa crítica (≥8): coherencia de GIRO — POIs cuyo type es
+ *     incompatible con el perfil mayoritario del censo.
+ * Nada se borra en silencio: todo va a la lista de revisión.
  */
 export function sospechososPorTipo(pois: Poi[]): Sospechoso[] {
-  if (pois.length < 8) return []; // sin masa crítica no hay perfil
-  const { nucleo, etiqueta } = perfilDeGiro(pois);
-  if (nucleo.size === 0) return [];
-  const salida: Sospechoso[] = [];
-  for (const p of pois) {
-    const tipos = tiposDeGiro(p);
-    if (tipos.length === 0) continue;
-    if (tipos.some((t) => nucleo.has(t))) continue;
-    salida.push({
+  const salida = new Map<string, Sospechoso>();
+  const marcar = (p: Poi, razon: string, veredicto: Sospechoso["veredicto"]) => {
+    if (salida.has(p.placeId)) return;
+    salida.set(p.placeId, {
       placeId: p.placeId,
       nombre: p.nombre,
       direccion: p.direccion,
-      razon: `giro "${tipos.slice(0, 2).join(", ")}" — el censo es ${etiqueta}`,
-      veredicto: "no_pertenece",
+      razon,
+      veredicto,
       fuente: "tipos",
     });
+  };
+
+  // (a) reglas que aplican SIEMPRE, sin masa crítica
+  const frecuenciaNombre = new Map<string, number>();
+  for (const p of pois) {
+    const k = p.nombre.trim().toLowerCase();
+    frecuenciaNombre.set(k, (frecuenciaNombre.get(k) ?? 0) + 1);
   }
-  return salida;
+  for (const p of pois) {
+    if (RE_NO_SUCURSAL.test(p.nombre)) {
+      marcar(p, "no parece sucursal (oficina/contact center/proveedor)", "no_pertenece");
+      continue;
+    }
+    if ((p.types ?? []).some((t) => TYPES_RESTRINGIDOS.has(t))) {
+      marcar(p, "acceso restringido / universo residencial ≈ 0", "dudoso");
+      continue;
+    }
+    if (RE_DIRECCION_IMPRECISA.test(p.direccion)) {
+      marcar(p, "geocodificación imprecisa (calle no indicada)", "dudoso");
+      continue;
+    }
+    const frec = frecuenciaNombre.get(p.nombre.trim().toLowerCase()) ?? 0;
+    if (!p.termino && frec >= 8 && p.nombre.trim().split(/\s+/).length <= 2) {
+      marcar(p, `nombre genérico repetido (${frec} veces)`, "dudoso");
+    }
+  }
+
+  // (b) coherencia de GIRO (requiere masa crítica y perfil)
+  if (pois.length >= 8) {
+    const { nucleo, etiqueta } = perfilDeGiro(pois);
+    if (nucleo.size > 0) {
+      for (const p of pois) {
+        if (salida.has(p.placeId)) continue;
+        const tipos = tiposDeGiro(p);
+        if (tipos.length === 0) continue;
+        if (tipos.some((t) => nucleo.has(t))) continue;
+        marcar(
+          p,
+          `giro "${tipos.slice(0, 2).join(", ")}" — el censo es ${etiqueta}`,
+          "no_pertenece"
+        );
+      }
+    }
+  }
+  return Array.from(salida.values());
 }
 
 // ------------------------------------------------------------------

@@ -772,7 +772,12 @@ export function SeccionCompetencia({
   borrador,
   onBorrador,
   alGuardar,
-}: PropsBase) {
+  exclusionesSugeridas = [],
+}: PropsBase & {
+  /** Marca(s) DEL CLIENTE: se pre-cargan como exclusión — la marca
+   * propia no debe aparecer como su competencia (auditoría 30-sep). */
+  exclusionesSugeridas?: string[];
+}) {
   const origenes = borrador.puntos;
   const cfg = borrador.config;
   const radio = (cfg.radio as number) ?? 5000;
@@ -789,6 +794,22 @@ export function SeccionCompetencia({
   const [confirmando, setConfirmando] = useState(false);
   // gate de corridas grandes (umbral configurable en /admin)
   const { gate: gateCorrida, panel: panelAprobacion } = useAprobacionCorrida();
+
+  // EXCLUSIÓN DE LA MARCA DEL CLIENTE por default: sus propios puntos
+  // no son su competencia (aparecían Domino's a distancia 0). Se
+  // pre-carga UNA vez; los chips se pueden quitar a mano.
+  useEffect(() => {
+    if (cfg.exclusionesAuto === true) return;
+    if (exclusiones.length > 0 || exclusionesSugeridas.length === 0) {
+      if (exclusiones.length > 0) setCfg({ exclusionesAuto: true });
+      return;
+    }
+    setCfg({ exclusiones: exclusionesSugeridas, exclusionesAuto: true });
+    setEstado(
+      `Exclusión sugerida pre-cargada: ${exclusionesSugeridas.join(", ")} (la marca del cliente no es su competencia — quita el chip si sí la quieres censar)`
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exclusionesSugeridas.join("|")]);
 
   // depuración inteligente: aquí el survey YA está persistido al
   // terminar la corrida — la revisión aparece antes de darlo por bueno

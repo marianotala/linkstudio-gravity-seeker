@@ -42,6 +42,7 @@ import {
   generarCuadricula,
   haversine,
   normalizarComparable,
+  normalizarOrigenesPois,
 } from "@/lib/geo";
 import {
   areaTotalKm2,
@@ -1673,6 +1674,7 @@ export default function SeekerApp({
       const cola = pendiente ? pendiente.cola : direcciones;
       const listos: Origin[] = pendiente ? [...pendiente.listos] : [];
       let fallidas = pendiente ? pendiente.fallidas : 0;
+      const fallidasDetalle: string[] = [];
       const totalGlobal = listos.length + fallidas + cola.length;
 
       setOcupado(true);
@@ -1709,6 +1711,13 @@ export default function SeekerApp({
               });
             } else {
               fallidas++;
+              // TRANSPARENCIA: qué sucursal se perdió y por qué — jamás
+              // desaparece en silencio entre pulls
+              if (fallidasDetalle.length < 200) {
+                fallidasDetalle.push(
+                  `${lote[j].nombre ? lote[j].nombre + " — " : ""}${lote[j].direccion}: ${r.error ?? "sin resultado"}`
+                );
+              }
             }
           });
           procesadas = i + lote.length;
@@ -1755,9 +1764,17 @@ export default function SeekerApp({
         reportar("error", "Ninguna dirección se pudo geocodificar");
         return;
       }
+      if (fallidasDetalle.length > 0) {
+        // la lista completa queda en consola para auditoría
+        console.warn("[orígenes] direcciones no geocodificadas:", fallidasDetalle);
+      }
       const notas = [
         ...(fallidas > 0
-          ? [`${fallidas.toLocaleString("es-MX")} direcciones fallaron`]
+          ? [
+              `${fallidas.toLocaleString("es-MX")} direcciones fallaron: ${fallidasDetalle
+                .slice(0, 3)
+                .join(" | ")}${fallidasDetalle.length > 3 ? ` (+${fallidasDetalle.length - 3} en consola)` : ""}`,
+            ]
           : []),
         ...(restantes > 0
           ? [
@@ -4229,6 +4246,51 @@ export default function SeekerApp({
     }
   }
 
+  /** Radio del análisis activo (transparencia en exports). */
+  const radioExport =
+    mode === "origins"
+      ? radio
+      : mode === "census" || mode === "territorial" || mode === "cp"
+        ? radioInfluencia
+        : undefined;
+
+  /**
+   * PREPARAR EXPORT: (a) ORIGEN REAL para todas las filas — en modo
+   * orígenes se recalcula distancia y sucursal más cercana; lo que
+   * queda a más del radio se declara "fuera de radio", jamás hereda la
+   * primera sucursal; (b) municipio del catálogo de CPs cuando la fila
+   * trae cp resuelto.
+   */
+  async function prepararExport(
+    lista: Poi[]
+  ): Promise<{ pois: Poi[]; municipioPorCp?: Map<string, string> }> {
+    const pois =
+      mode === "origins" && centrosActivos.length > 0
+        ? normalizarOrigenesPois(lista, centrosActivos, radio)
+        : lista;
+    const cps = Array.from(
+      new Set(lista.map((p) => p.cp).filter(Boolean))
+    ) as string[];
+    let municipioPorCp: Map<string, string> | undefined;
+    if (cps.length > 0) {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase
+          .from("cp_colonias")
+          .select("codigo_postal, municipio")
+          .in("codigo_postal", cps.slice(0, 500));
+        municipioPorCp = new Map(
+          ((data ?? []) as { codigo_postal: string; municipio: string | null }[])
+            .filter((r) => r.municipio)
+            .map((r) => [r.codigo_postal, r.municipio!])
+        );
+      } catch {
+        // sin catálogo, el municipio cae a la dirección parseada
+      }
+    }
+    return { pois, municipioPorCp };
+  }
+
   // ---- Export plan (PDF): documento comercial con branding Gravity a
   //      partir del análisis ACTIVO, más el Export data en el mismo
   //      clic. La generación es 100% client-side (@react-pdf/renderer,
@@ -4315,6 +4377,13 @@ export default function SeekerApp({
               `Censo depurado por coherencia de giro (${depurados} ${depurados === 1 ? "punto excluido" : "puntos excluidos"} tras revisión)`,
             ]
           : []),
+        // transparencia de configuración: el radio usado, declarado
+        ...(radioExport
+          ? [
+              `Radio del análisis: ${radioExport >= 1000 ? `${radioExport / 1000} km` : `${radioExport} m`}`,
+            ]
+          : []),
+        "Universo RESIDENCIAL (población que vive en la zona): no incluye población flotante ni turismo — en plazas turísticas, complementar con la fase Footfall",
       ];
 
       const terminoPlan =
@@ -4367,11 +4436,14 @@ export default function SeekerApp({
       // dos entregables, un clic: el Export data (Excel nativo — cero
       // ambigüedad de encoding) acompaña al plan
       if (poisPlan.length > 0) {
+        const prep = await prepararExport(poisPlan);
         await exportarXlsxData(
-          poisPlan,
+          prep.pois,
           centrosActivos,
           universos,
-          capas.length > 1 ? capas : undefined
+          capas.length > 1 ? capas : undefined,
+          radioExport,
+          prep.municipioPorCp
         );
       }
       reportar("ok", "Export plan (PDF) + Export data (.xlsx) descargados");
@@ -5954,14 +6026,17 @@ export default function SeekerApp({
                 </button>
               )}
               <button
-                onClick={() =>
-                  exportarXlsxData(
-                    poisActivos,
+                onClick={async () => {
+                  const prep = await prepararExport(poisActivos);
+                  await exportarXlsxData(
+                    prep.pois,
                     centrosActivos,
                     universos,
-                    capas.length > 1 ? capas : undefined
-                  )
-                }
+                    capas.length > 1 ? capas : undefined,
+                    radioExport,
+                    prep.municipioPorCp
+                  );
+                }}
                 disabled={poisActivos.length === 0}
                 className="rounded-md border border-linea bg-panel2 px-3 py-2 text-left font-mono text-[11px] text-zinc-300 transition-colors hover:border-cian hover:text-cian disabled:opacity-30"
                 title="Excel nativo: acentos siempre correctos, columnas auto-anchas y una hoja por capa"
@@ -5970,7 +6045,16 @@ export default function SeekerApp({
                 <span className="text-zinc-600">seeker_pois.xlsx</span>
               </button>
               <button
-                onClick={() => exportarCsv(poisActivos, centrosActivos, universos)}
+                onClick={async () => {
+                  const prep = await prepararExport(poisActivos);
+                  exportarCsv(
+                    prep.pois,
+                    centrosActivos,
+                    universos,
+                    radioExport,
+                    prep.municipioPorCp
+                  );
+                }}
                 disabled={poisActivos.length === 0}
                 className="rounded-md border border-linea bg-panel2 px-3 py-2 text-left font-mono text-[11px] text-zinc-300 transition-colors hover:border-cian hover:text-cian disabled:opacity-30"
                 title="Texto plano UTF-8 con BOM (Excel, Sheets y Numbers lo abren con acentos correctos)"

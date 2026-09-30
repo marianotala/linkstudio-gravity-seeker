@@ -9,7 +9,9 @@ const NEARBY_URL = "https://places.googleapis.com/v1/places:searchNearby";
 const TEXT_URL = "https://places.googleapis.com/v1/places:searchText";
 
 const FIELD_MASK =
-  "places.id,places.displayName,places.formattedAddress,places.location,places.types";
+  // businessStatus viene en el MISMO SKU Pro que displayName/types: no
+  // sube el tier de facturación y permite reportar abierto/cerrado
+  "places.id,places.displayName,places.formattedAddress,places.location,places.types,places.businessStatus";
 
 /** Tipo de límite de Google: rate limit por minuto (pausa breve y se
  * reanuda solo) vs cuota DIARIA agotada (se reinicia a medianoche,
@@ -104,6 +106,7 @@ interface PlaceRaw {
   formattedAddress?: string;
   location?: { latitude: number; longitude: number };
   types?: string[];
+  businessStatus?: string;
 }
 
 export interface PlaceResult {
@@ -113,6 +116,8 @@ export interface PlaceResult {
   lat: number;
   lng: number;
   types: string[];
+  /** OPERATIONAL | CLOSED_TEMPORARILY | CLOSED_PERMANENTLY (si Google lo trae). */
+  businessStatus?: string | null;
 }
 
 function mapPlaces(places: PlaceRaw[] | undefined): PlaceResult[] {
@@ -125,6 +130,7 @@ function mapPlaces(places: PlaceRaw[] | undefined): PlaceResult[] {
       lat: p.location!.latitude,
       lng: p.location!.longitude,
       types: p.types ?? [],
+      businessStatus: p.businessStatus ?? null,
     }));
 }
 
