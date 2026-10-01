@@ -1,13 +1,15 @@
 "use client";
 
-// Header compartido: GravityMark + tagline, navegación Buscador/Historial,
-// estatus animado (opcional), usuario y cerrar sesión.
+// Header compartido: GravityMark + tagline, navegación global, estatus
+// animado (opcional), usuario y cerrar sesión. Migrado al sistema de
+// tokens v2: navegación y botones en sans; monospace solo para datos.
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import GravityMark from "./GravityMark";
 import NuevoPlanModal from "./NuevoPlanModal";
+import { Boton } from "./ui";
 import { createClient } from "@/lib/supabase/client";
 import type { PerfilUsuario } from "@/lib/types";
 
@@ -33,20 +35,20 @@ export default function AppHeader({ usuario, status, onNueva }: AppHeaderProps) 
   }
 
   const dotColor = !status
-    ? "bg-zinc-600"
+    ? "bg-texto-terciario"
     : status.tipo === "error"
-      ? "bg-magenta"
+      ? "bg-error"
       : status.tipo === "busy"
         ? "bg-cian dot-pulso"
         : status.tipo === "ok"
-          ? "bg-emerald-400"
-          : "bg-zinc-600";
+          ? "bg-exito"
+          : "bg-texto-terciario";
 
   const navCls = (activo: boolean) =>
-    `rounded-full border px-3 py-1 font-mono text-[11px] transition-colors ${
+    `rounded-chip px-3 py-1.5 font-body text-[13px] font-medium transition-colors duration-rapida ${
       activo
-        ? "border-cian/50 bg-cian/10 text-cian"
-        : "border-transparent text-zinc-500 hover:text-zinc-300"
+        ? "bg-superficie-hover text-texto-primario"
+        : "text-texto-secundario hover:text-texto-primario"
     }`;
 
   return (
@@ -54,10 +56,10 @@ export default function AppHeader({ usuario, status, onNueva }: AppHeaderProps) 
       <div className="flex min-w-0 items-center gap-3">
         <GravityMark size={30} />
         <div className="min-w-0">
-          <div className="font-display text-lg font-extrabold leading-tight tracking-tight text-white">
+          <div className="font-display text-lg font-bold leading-tight tracking-tight text-texto-primario">
             Gravity
           </div>
-          <div className="truncate font-mono text-[10px] tracking-wide text-zinc-500">
+          <div className="truncate font-body text-[11px] text-texto-terciario">
             Seeker — point of interest intelligence · powered by Link Studio
           </div>
         </div>
@@ -91,37 +93,39 @@ export default function AppHeader({ usuario, status, onNueva }: AppHeaderProps) 
         </nav>
       </div>
 
-      <div className="flex shrink-0 items-center gap-3">
+      <div className="flex shrink-0 items-center gap-2.5">
         {usuario && (
-          <button
+          <Boton
+            variante="primario"
+            compacto
             onClick={() => setModalPlan(true)}
-            className="rounded-full border border-violeta/50 bg-violeta/10 px-3 py-1.5 font-mono text-[11px] text-violeta transition-colors hover:bg-violeta/20"
             title="Crear un plan por cliente (Planner): organiza levantamientos y genera el plan completo"
           >
             + Nuevo plan
-          </button>
+          </Boton>
         )}
         {onNueva && (
-          <button
+          <Boton
+            variante="secundario"
+            compacto
             onClick={onNueva}
-            className="rounded-full border border-cian/50 bg-cian/10 px-3 py-1.5 font-mono text-[11px] text-cian transition-colors hover:bg-cian/20"
             title="Limpia orígenes, zonas, filtros y resultados"
           >
             + Nueva búsqueda
-          </button>
+          </Boton>
         )}
         {status && (
-          <div className="flex items-center gap-2 rounded-full border border-linea bg-panel2 px-3 py-1.5">
+          <div className="flex items-center gap-2 rounded-chip border border-linea bg-panel2 px-3 py-1.5">
             <span className={`h-2 w-2 rounded-full ${dotColor}`} />
-            <span className="max-w-[340px] truncate font-mono text-xs text-zinc-400">
+            <span className="max-w-[340px] truncate font-body text-xs text-texto-secundario">
               {status.texto}
             </span>
           </div>
         )}
         {usuario && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <span
-              className="max-w-[160px] truncate font-mono text-xs text-zinc-400"
+              className="max-w-[160px] truncate font-body text-xs text-texto-secundario"
               title={usuario.email}
             >
               {usuario.nombre ?? usuario.email}
@@ -129,12 +133,9 @@ export default function AppHeader({ usuario, status, onNueva }: AppHeaderProps) 
                 <span className="ml-1 text-violeta">· admin</span>
               )}
             </span>
-            <button
-              onClick={cerrarSesion}
-              className="rounded-md border border-linea bg-panel2 px-2.5 py-1.5 font-mono text-[11px] text-zinc-400 transition-colors hover:border-magenta hover:text-magenta"
-            >
+            <Boton variante="fantasma" compacto onClick={cerrarSesion}>
               Cerrar sesión
-            </button>
+            </Boton>
           </div>
         )}
       </div>

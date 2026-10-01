@@ -51,19 +51,19 @@ export default function ResultsTable({
         onClick={onToggle}
         className="flex w-full items-center justify-between px-4 py-2 text-left"
       >
-        <span className="font-mono text-xs uppercase tracking-widest text-zinc-400">
+        <span className="font-body text-xs font-semibold uppercase tracking-widest text-texto-secundario">
           Resultados{" "}
           <span className="text-magenta">{pois.length} POIs</span>
         </span>
-        <span className="font-mono text-xs text-zinc-500">
+        <span className="font-body text-xs text-texto-terciario">
           {colapsada ? "▲ mostrar" : "▼ ocultar"}
         </span>
       </button>
 
       {!colapsada && (
         <div className="max-h-56 overflow-y-auto border-t border-linea">
-          <table className="w-full text-left font-mono text-xs">
-            <thead className="sticky top-0 bg-panel2 text-zinc-500">
+          <table className="w-full text-left font-body text-xs">
+            <thead className="sticky top-0 bg-panel2 font-body text-texto-terciario">
               <tr>
                 <th className="px-4 py-2 font-medium">#</th>
                 <th className="px-2 py-2 font-medium">Nombre</th>
@@ -95,7 +95,7 @@ export default function ResultsTable({
                     }`}
                     title="Clic para hacer zoom en el mapa"
                   >
-                    <td className="px-4 py-1.5 text-zinc-600">{i + 1}</td>
+                    <td className="px-4 py-1.5 font-mono text-zinc-600">{i + 1}</td>
                     <td className="px-2 py-1.5">
                       {/* el punto de color indica la fuente, igual que en
                           el mapa: Google magenta, DENUE naranja, ambas verde */}
@@ -136,10 +136,10 @@ export default function ResultsTable({
                     <td className="max-w-[150px] truncate px-2 py-1.5 text-zinc-300">
                       {ciudadDeDireccion(p.direccion) || "—"}
                     </td>
-                    <td className="max-w-[130px] truncate px-2 py-1.5 text-zinc-500">
+                    <td className="max-w-[130px] truncate px-2 py-1.5 font-mono text-zinc-500">
                       {p.estrato ?? "—"}
                     </td>
-                    <td className="px-2 py-1.5 text-right text-cian">
+                    <td className="px-2 py-1.5 text-right font-mono text-cian">
                       {p.distancia}
                     </td>
                     <td
@@ -149,14 +149,14 @@ export default function ResultsTable({
                       {etiquetaOrigen(origen, p.origenIdx)}
                     </td>
                     <td
-                      className="px-2 py-1.5 text-right text-violeta"
+                      className="px-2 py-1.5 text-right font-mono text-violeta"
                       title="Universo residencial de la geocerca de este origen (Censo 2020)"
                     >
                       {poblacionPorOrigen?.[p.origenIdx] != null
                         ? poblacionPorOrigen[p.origenIdx]!.toLocaleString("es-MX")
                         : "—"}
                     </td>
-                    <td className="px-4 py-1.5 text-right text-zinc-500">
+                    <td className="px-4 py-1.5 text-right font-mono text-zinc-500">
                       {p.lat.toFixed(5)}, {p.lng.toFixed(5)}
                     </td>
                   </tr>

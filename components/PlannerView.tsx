@@ -47,6 +47,7 @@ import {
 } from "@/lib/planner";
 import { reFiltrarRun } from "@/lib/refiltrado";
 import PanelDescartados from "./PanelDescartados";
+import { MensajeError } from "./ui";
 import { ChipsTerminos } from "./PlannerRecolectar";
 import { calcularUniversosCliente } from "@/lib/universos-lotes";
 import { createClient } from "@/lib/supabase/client";
@@ -913,8 +914,8 @@ export default function PlannerView({
     <div className="flex h-screen flex-col gap-3 overflow-hidden bg-fondo p-3">
       <AppHeader usuario={usuario} />
 
-      <div className="tarjeta flex shrink-0 items-center gap-2 px-4 py-2 font-mono text-[11px]">
-        <Link href="/planes" className="text-zinc-500 transition-colors hover:text-violeta">
+      <div className="tarjeta flex shrink-0 items-center gap-2 px-4 py-2 font-body text-xs">
+        <Link href="/planes" className="text-texto-secundario transition-colors duration-rapida hover:text-violeta">
           Mis planes
         </Link>
         <span className="text-zinc-700">/</span>
@@ -938,14 +939,14 @@ export default function PlannerView({
         {/* ---------- menú lateral ---------- */}
         <aside className="tarjeta w-[300px] shrink-0 overflow-y-auto">
           <div className="border-b border-linea px-5 py-4">
-            <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-violeta">
+            <p className="font-body text-[10px] font-semibold uppercase tracking-[0.25em] text-violeta">
               Planner
             </p>
-            <h1 className="mt-1 truncate font-display text-lg font-extrabold tracking-tight text-white">
+            <h1 className="mt-1 truncate font-display text-lg font-bold tracking-tight text-texto-primario">
               {cargando ? "Cargando…" : (proyecto?.nombre_cliente ?? "Plan")}
             </h1>
             {proyecto?.titulo && (
-              <p className="mt-1 truncate font-mono text-[10px] text-zinc-500">
+              <p className="mt-1 truncate font-body text-[11px] text-texto-terciario">
                 {proyecto.titulo}
               </p>
             )}
@@ -967,13 +968,15 @@ export default function PlannerView({
                 />
                 <span className="min-w-0 flex-1">
                   <span
-                    className={`block font-display text-sm font-extrabold ${
-                      seccion === sec.clave ? "text-white" : "text-zinc-300"
+                    className={`block font-body text-[13px] font-semibold ${
+                      seccion === sec.clave
+                        ? "text-texto-primario"
+                        : "text-texto-secundario"
                     }`}
                   >
                     {sec.nombre}
                   </span>
-                  <span className="block truncate font-mono text-[10px] text-zinc-500">
+                  <span className="block truncate font-body text-[11px] text-texto-terciario">
                     {sec.descriptor}
                   </span>
                 </span>
@@ -985,7 +988,7 @@ export default function PlannerView({
               </button>
             ))}
           </nav>
-          <p className="px-5 pb-4 font-mono text-[10px] leading-relaxed text-zinc-600">
+          <p className="px-5 pb-4 font-body text-[11px] leading-relaxed text-texto-terciario">
             Los levantamientos se guardan automáticamente conforme corren:
             cerrar el navegador no pierde el avance, y los interrumpidos se
             reanudan donde quedaron sin repagar consultas.
@@ -996,7 +999,7 @@ export default function PlannerView({
         <main className="tarjeta flex min-w-0 flex-1 flex-col overflow-hidden">
           {error ? (
             <div className="m-auto max-w-md px-6 text-center">
-              <p className="font-mono text-xs text-magenta">{error}</p>
+              <MensajeError mensaje={error} />
               <Link
                 href="/planes"
                 className="mt-4 inline-block rounded-md border border-violeta bg-violeta/10 px-4 py-2 font-mono text-xs text-violeta transition-colors hover:bg-violeta/20"

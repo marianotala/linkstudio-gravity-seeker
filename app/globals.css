@@ -2,72 +2,255 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==================================================================
+   DESIGN TOKENS v2 — LA fuente de verdad visual de Seeker.
+   Todo color, radio, sombra o transición de la UI sale de aquí (vía
+   las clases de Tailwind mapeadas en tailwind.config.ts o de estas
+   variables). Cero valores mágicos en componentes migrados.
+   Los PDFs y la simbología del mapa NO consumen estos tokens (tienen
+   su propia paleta fija) — no tocar desde aquí.
+   ================================================================== */
 :root {
   color-scheme: dark;
+
+  /* ---- superficies (elevación de 3 niveles) — canales RGB para que
+     Tailwind soporte opacidades (bg-panel/60, border-linea/50…) */
+  --rgb-fondo-profundo: 11 11 16; /* #0B0B10 fondo de app */
+  --rgb-superficie-1: 19 19 27; /* #13131B tarjetas, paneles */
+  --rgb-superficie-2: 27 27 37; /* #1B1B25 modales, popups, dropdowns */
+  --rgb-superficie-hover: 33 33 45; /* #21212D */
+  --rgb-borde-sutil: 36 36 50; /* #242432 1px en tarjetas */
+  --rgb-borde-activo: 58 58 78; /* #3A3A4E */
+
+  /* ---- color semántico (sagrado: no cambia de significado) */
+  --rgb-origenes: 56 189 248; /* #38BDF8 cian */
+  --rgb-pois: 255 46 154; /* #FF2E9A magenta · acción primaria */
+  --rgb-zonas: 139 92 246; /* #8B5CF6 violeta · zonas/CP */
+  --rgb-exito: 52 211 153; /* #34D399 */
+  --rgb-alerta: 251 191 36; /* #FBBF24 */
+  --rgb-error: 248 113 113; /* #F87171 */
+
+  /* ---- texto (contraste AA sobre superficies 1 y 2) */
+  --rgb-texto-primario: 244 244 248; /* #F4F4F8 */
+  --rgb-texto-secundario: 168 168 188; /* #A8A8BC mínimo legible */
+  --rgb-texto-terciario: 110 110 130; /* #6E6E82 solo decorativo */
+
+  /* ---- tokens compuestos (para CSS directo) */
+  --fondo-profundo: rgb(var(--rgb-fondo-profundo));
+  --superficie-1: rgb(var(--rgb-superficie-1));
+  --superficie-2: rgb(var(--rgb-superficie-2));
+  --superficie-hover: rgb(var(--rgb-superficie-hover));
+  --borde-sutil: rgb(var(--rgb-borde-sutil));
+  --borde-activo: rgb(var(--rgb-borde-activo));
+  --color-origenes: rgb(var(--rgb-origenes));
+  --color-pois: rgb(var(--rgb-pois));
+  --color-zonas: rgb(var(--rgb-zonas));
+  --color-exito: rgb(var(--rgb-exito));
+  --color-alerta: rgb(var(--rgb-alerta));
+  --color-error: rgb(var(--rgb-error));
+  --texto-primario: rgb(var(--rgb-texto-primario));
+  --texto-secundario: rgb(var(--rgb-texto-secundario));
+  --texto-terciario: rgb(var(--rgb-texto-terciario));
+
+  /* El gradiente firma SOLO en: CTA principal, anillo de progreso,
+     cifras protagonistas y divisores clave. Nada más. */
+  --gradiente-firma: linear-gradient(90deg, #ff2e9a, #8b5cf6, #38bdf8);
+
+  /* ---- espaciado (grid de 8px) */
+  --esp-1: 8px;
+  --esp-2: 16px;
+  --esp-3: 24px;
+  --esp-4: 32px;
+  --esp-6: 48px;
+
+  /* ---- radios y sombras */
+  --radio-tarjeta: 12px;
+  --radio-control: 8px;
+  --radio-chip: 999px;
+  --sombra-elevada: 0 8px 24px rgba(0, 0, 0, 0.45);
+
+  /* ---- movimiento */
+  --transicion-rapida: 150ms ease;
+  --transicion-media: 250ms ease;
 }
 
 html,
 body {
   height: 100%;
-  background: #0a0a0c;
+  background: var(--fondo-profundo);
 }
 
 /* Scrollbars discretos, acorde al panel */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #26262e transparent;
+  scrollbar-color: var(--borde-sutil) transparent;
 }
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 *::-webkit-scrollbar-thumb {
-  background: #26262e;
+  background: var(--borde-sutil);
   border-radius: 4px;
 }
 *::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* Tarjetas estilo dashboard: borde suave, esquinas amplias y un glow
-   radial de color en la esquina superior derecha */
-.tarjeta {
-  border-radius: 1rem;
-  border: 1px solid #26262e;
-  background-color: #101014;
+/* ==================================================================
+   COMPONENTES BASE (Parte 2) — construidos con los tokens
+   ================================================================== */
+@layer components {
+  /* Tarjeta: superficie-1 + borde sutil + radio 12. Nunca negro plano
+     sobre negro. */
+  .tarjeta {
+    border-radius: var(--radio-tarjeta);
+    border: 1px solid var(--borde-sutil);
+    background-color: var(--superficie-1);
+  }
+  /* Superficie elevada (modales, popups, dropdowns) */
+  .tarjeta-elevada {
+    border-radius: var(--radio-tarjeta);
+    border: 1px solid var(--borde-activo);
+    background-color: var(--superficie-2);
+    box-shadow: var(--sombra-elevada);
+  }
+
+  /* ---- BOTONES: solo 3 variantes. UN primario por vista. */
+  .btn-base {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-control font-body text-[13px] font-semibold transition-colors;
+    transition-duration: 150ms;
+  }
+  .btn-primario {
+    @apply btn-base bg-magenta px-4 py-2 text-white hover:bg-magenta/85 disabled:opacity-50;
+  }
+  /* CTA principal con el gradiente firma (uno por vista, máximo) */
+  .btn-primario-firma {
+    @apply btn-base px-4 py-2 text-white disabled:opacity-50;
+    background-image: var(--gradiente-firma);
+    background-size: 130% 100%;
+    transition: background-position var(--transicion-media), opacity var(--transicion-rapida);
+  }
+  .btn-primario-firma:hover:not(:disabled) {
+    background-position: 100% 0;
+  }
+  .btn-secundario {
+    @apply btn-base border border-linea2 bg-transparent px-4 py-2 text-texto-primario hover:bg-superficie-hover disabled:opacity-50;
+  }
+  .btn-fantasma {
+    @apply btn-base px-2 py-1 text-texto-secundario hover:text-texto-primario disabled:opacity-50;
+  }
+
+  /* ---- CHIP ÚNICO: una sola anatomía (píldora, altura fija, × de
+     remover); variantes semánticas por color de borde/punto. */
+  .chip {
+    @apply inline-flex h-7 items-center gap-1.5 rounded-chip border border-linea bg-panel2 px-3 font-body text-xs text-texto-primario transition-colors;
+    transition-duration: 150ms;
+  }
+  .chip-marca {
+    @apply border-magenta/50;
+  }
+  .chip-categoria {
+    @apply border-cian/50;
+  }
+  .chip-libre {
+    @apply border-linea2;
+  }
+  .chip-exclusion {
+    @apply border-error/50;
+  }
+  .chip-exito {
+    @apply border-exito/50;
+  }
+  .chip-alerta {
+    @apply border-alerta/50;
+  }
+  .chip-punto {
+    @apply h-1.5 w-1.5 shrink-0 rounded-full;
+  }
+  .chip-remover {
+    @apply -mr-1 rounded-full px-1 text-texto-terciario transition-colors hover:text-error;
+    transition-duration: 150ms;
+  }
+
+  /* ---- CAMPO (inputs/textareas/selects) */
+  .campo {
+    @apply w-full rounded-control border border-linea bg-fondo px-3 py-2 font-body text-[13px] text-texto-primario placeholder:text-texto-terciario focus:border-linea2 focus:outline-none;
+  }
+
+  /* ---- SKELETON (cargando): superficie con shimmer sutil */
+  .skeleton {
+    @apply rounded-control;
+    background: linear-gradient(
+      100deg,
+      var(--superficie-2) 40%,
+      var(--superficie-hover) 50%,
+      var(--superficie-2) 60%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    0% {
+      background-position: 120% 0;
+    }
+    100% {
+      background-position: -80% 0;
+    }
+  }
+
+  /* ---- barras apiladas (NSE/edades): llenado animado 300ms */
+  .barra-apilada {
+    @apply flex h-2.5 overflow-hidden rounded-chip;
+    background: var(--fondo-profundo);
+  }
+  .barra-segmento {
+    animation: llenar-barra 300ms ease both;
+    transform-origin: left center;
+  }
+  @keyframes llenar-barra {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
+  }
 }
+
+/* Acentos de glow: SOLO login, estados vacíos y header (sutil). */
 .glow-cian {
   background-image: radial-gradient(
     120% 120% at 100% 0%,
-    rgba(47, 185, 232, 0.14),
+    rgb(var(--rgb-origenes) / 0.1),
     transparent 55%
   );
 }
 .glow-magenta {
   background-image: radial-gradient(
     120% 120% at 100% 0%,
-    rgba(244, 54, 138, 0.14),
+    rgb(var(--rgb-pois) / 0.1),
     transparent 55%
   );
 }
 .glow-violeta {
   background-image: radial-gradient(
     120% 120% at 100% 0%,
-    rgba(157, 92, 240, 0.14),
+    rgb(var(--rgb-zonas) / 0.1),
     transparent 55%
   );
 }
 .glow-verde {
   background-image: radial-gradient(
     120% 120% at 100% 0%,
-    rgba(52, 211, 153, 0.12),
+    rgb(var(--rgb-exito) / 0.09),
     transparent 55%
   );
 }
 .glow-ambar {
   background-image: radial-gradient(
     120% 120% at 100% 0%,
-    rgba(251, 191, 36, 0.12),
+    rgb(var(--rgb-alerta) / 0.09),
     transparent 55%
   );
 }
@@ -88,39 +271,51 @@ body {
   animation: pulso 1.1s ease-in-out infinite;
 }
 
-/* Popups de Leaflet en oscuro */
+/* Respeto a usuarios con movimiento reducido */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .barra-segmento,
+  .dot-pulso {
+    animation: none;
+  }
+}
+
+/* ==================================================================
+   MAPA (Leaflet) — la SIMBOLOGÍA del mapa no cambia de semántica;
+   solo los cromos de UI (popups, controles) consumen tokens.
+   ================================================================== */
 .leaflet-popup-content-wrapper,
 .leaflet-popup-tip {
-  background: #16161c;
-  color: #e4e4e7;
-  border: 1px solid #26262e;
+  background: var(--superficie-2);
+  color: var(--texto-primario);
+  border: 1px solid var(--borde-sutil);
 }
 .leaflet-container {
-  background: #0a0a0c;
-  font-family: var(--font-inter), sans-serif;
+  background: var(--fondo-profundo);
+  font-family: var(--fuente-cuerpo), sans-serif;
 }
 
 /* OSM estándar oscurecido: inversión + rotación de tono para que el
    mapa claro de OSM quede oscuro y neutro, acorde a Gravity. Solo se
    aplica a los tiles base, no a los markers ni overlays. */
 .tiles-osm-oscuro {
-  /* brightness bajo + contraste arriba: fondo cerca de #0a0a0c sin
-     perder la legibilidad de calles y etiquetas (validado visualmente
-     contra 0.85/0.9 y 0.55/1.2) */
+  /* brightness bajo + contraste arriba: fondo cerca del fondo profundo
+     sin perder la legibilidad de calles y etiquetas (validado
+     visualmente contra 0.85/0.9 y 0.55/1.2) */
   filter: invert(1) hue-rotate(180deg) brightness(0.68) contrast(1.12)
     saturate(0.28);
 }
 .leaflet-control-attribution {
-  background: rgba(10, 10, 12, 0.7) !important;
-  color: #71717a !important;
+  background: rgb(var(--rgb-fondo-profundo) / 0.7) !important;
+  color: var(--texto-terciario) !important;
 }
 .leaflet-control-attribution a {
-  color: #a1a1aa !important;
+  color: var(--texto-secundario) !important;
 }
 .leaflet-bar a {
-  background: #16161c !important;
-  color: #e4e4e7 !important;
-  border-color: #26262e !important;
+  background: var(--superficie-2) !important;
+  color: var(--texto-primario) !important;
+  border-color: var(--borde-sutil) !important;
 }
 
 /* Etiqueta del código postal sobre su polígono (modo Por CP) */
@@ -129,7 +324,7 @@ body {
   border: none;
   box-shadow: none;
   color: #c9a8f7;
-  text-shadow: 0 1px 3px rgba(10, 10, 12, 0.9);
+  text-shadow: 0 1px 3px rgb(var(--rgb-fondo-profundo) / 0.9);
 }
 .etiqueta-cp::before {
   display: none;
@@ -137,12 +332,12 @@ body {
 
 /* Etiqueta de distancia (km) sobre la línea pantalla→PDV (pestaña OOH) */
 .etiqueta-linea-ooh {
-  background: rgba(10, 10, 12, 0.78);
-  border: 1px solid #26262e;
-  border-radius: 999px;
+  background: rgb(var(--rgb-fondo-profundo) / 0.78);
+  border: 1px solid var(--borde-sutil);
+  border-radius: var(--radio-chip);
   box-shadow: none;
-  color: #c9c9d1;
-  font-family: var(--font-mono, monospace);
+  color: var(--texto-secundario);
+  font-family: var(--fuente-datos), monospace;
   font-size: 10px;
   padding: 1px 6px;
 }
@@ -150,7 +345,8 @@ body {
   display: none;
 }
 
-/* cluster de orígenes (listas grandes): círculo cian con conteo */
+/* cluster de orígenes (listas grandes): círculo cian con conteo.
+   SIMBOLOGÍA de mapa — colores fijos, no tokens de UI. */
 .cluster-gravity {
   display: flex;
   align-items: center;
@@ -160,7 +356,7 @@ body {
   background: rgba(47, 185, 232, 0.16);
   border: 2px solid #2fb9e8;
   color: #fff;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--fuente-datos), ui-monospace, monospace;
   font-size: 11px;
   font-weight: 600;
   box-shadow: 0 0 14px rgba(47, 185, 232, 0.35);

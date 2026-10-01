@@ -16,6 +16,7 @@ import {
   sugerirCategorias,
 } from "@/lib/categories";
 import { normalizarComparable } from "@/lib/geo";
+import { Chip } from "./ui";
 
 export interface SeleccionCategoria {
   /** Key curada o CATEGORIA_LIBRE. */
@@ -108,17 +109,17 @@ export default function CategoriaBuscador({
               ? "Categoría (opcional) · escribe para sugerencias"
               : "Categoría · escribe para sugerencias, Enter = búsqueda libre"
         }
-        className="w-full rounded-md border border-linea bg-panel2 px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-cian focus:outline-none"
+        className="campo"
       />
 
       {abierto && (sugerencias.length > 0 || textoLimpio) && (
-        <div className="absolute left-0 right-0 z-30 mt-1 max-h-72 overflow-y-auto rounded-md border border-linea bg-panel2 py-1 shadow-xl shadow-black/50">
+        <div className="tarjeta-elevada absolute left-0 right-0 z-30 mt-1 max-h-72 overflow-y-auto py-1">
           {sugerencias.map((c, i) => (
             <button
               key={c.key}
               type="button"
               onClick={() => agregar({ key: c.key })}
-              className="flex w-full items-center justify-between px-3 py-1.5 text-left font-mono text-xs text-zinc-300 transition-colors hover:bg-fondo hover:text-white"
+              className="flex w-full items-center justify-between px-3 py-1.5 text-left font-body text-xs text-texto-primario transition-colors duration-rapida hover:bg-superficie-hover"
             >
               <span>
                 {c.label}
@@ -135,7 +136,7 @@ export default function CategoriaBuscador({
             <button
               type="button"
               onClick={agregarLibre}
-              className="block w-full border-t border-linea/60 px-3 py-1.5 text-left font-mono text-xs text-zinc-400 transition-colors hover:bg-fondo hover:text-zinc-200"
+              className="block w-full border-t border-linea/60 px-3 py-1.5 text-left font-body text-xs text-texto-secundario transition-colors duration-rapida hover:bg-superficie-hover hover:text-texto-primario"
             >
               Búsqueda libre: “{textoLimpio}”
               {sugerencias.length === 0 && (
@@ -151,35 +152,27 @@ export default function CategoriaBuscador({
       <div className="mt-1.5 flex max-h-24 flex-wrap items-center gap-1.5 overflow-y-auto">
         {selecciones.map((s, idx) =>
           s.key === CATEGORIA_LIBRE ? (
-            <button
+            <Chip
               key={`${s.key}:${s.libre}`}
-              type="button"
-              onClick={() => quitar(idx)}
-              className="group inline-flex items-center gap-1.5 rounded-full border border-zinc-600 bg-zinc-700/20 px-2.5 py-0.5 font-mono text-[10px] text-zinc-400"
-              title="Búsqueda libre (sin mapeo curado) · quitar"
+              variante="libre"
+              onRemover={() => quitar(idx)}
+              title="Búsqueda libre (sin mapeo curado)"
             >
-              <span className="h-1.5 w-1.5 rounded-full bg-zinc-500" />
               libre · “{s.libre}”
-              <span className="text-zinc-600 group-hover:text-zinc-300">×</span>
-            </button>
+            </Chip>
           ) : (
-            <button
+            <Chip
               key={s.key}
-              type="button"
-              onClick={() => quitar(idx)}
-              className="group inline-flex items-center gap-1.5 rounded-full border border-[#3b82f6]/60 bg-[#3b82f6]/10 px-2.5 py-0.5 font-mono text-[10px] text-[#60a5fa]"
-              title="Mapeo curado exacto (Google Places + SCIAN de DENUE) · quitar"
+              variante="categoria"
+              onRemover={() => quitar(idx)}
+              title="Mapeo curado exacto (Google Places + SCIAN de DENUE)"
             >
-              <span className="h-1.5 w-1.5 rounded-full bg-[#3b82f6]" />
               {etiquetaSeleccion(s)}
-              <span className="text-[#60a5fa]/60 group-hover:text-[#60a5fa]">
-                ×
-              </span>
-            </button>
+            </Chip>
           )
         )}
         {selecciones.length === 0 && (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-linea px-2.5 py-0.5 font-mono text-[10px] text-zinc-600">
+          <span className="inline-flex items-center gap-1.5 rounded-chip border border-dashed border-linea px-2.5 py-0.5 font-body text-[11px] text-texto-terciario">
             {opcional
               ? "sin categoría — se busca con los términos del filtro (marca pura)"
               : "sin categoría — elige una sugerida o escribe y presiona Enter"}

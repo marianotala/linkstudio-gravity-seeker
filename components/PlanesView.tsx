@@ -10,6 +10,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AppHeader from "./AppHeader";
 import { asegurarPlanExploracion } from "@/lib/planner";
+import { EstadoVacio, MensajeError, Skeleton } from "./ui";
 import { createClient } from "@/lib/supabase/client";
 import type { PerfilUsuario, Proyecto } from "@/lib/types";
 
@@ -149,20 +150,27 @@ export default function PlanesView({
           </div>
 
           {cargando && (
-            <p className="mt-8 font-mono text-xs text-zinc-500">
-              Cargando planes…
-            </p>
+            <div className="mt-8 space-y-2" aria-label="Cargando planes">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-5/6" />
+            </div>
           )}
           {error && (
-            <p className="mt-8 font-mono text-xs text-magenta">{error}</p>
+            <div className="mt-8">
+              <MensajeError mensaje={error} onCerrar={() => setError("")} />
+            </div>
           )}
           {!cargando && !error && visibles.length === 0 && (
-            <div className="mt-8 rounded-lg border border-dashed border-linea bg-panel px-6 py-10 text-center">
-              <p className="font-mono text-xs text-zinc-500">
-                {filtro === "archivados"
-                  ? "No hay planes archivados."
-                  : "Todavía no hay planes. Crea el primero con + Nuevo plan: organiza los levantamientos de un cliente y genera el plan completo."}
-              </p>
+            <div className="mt-8">
+              <EstadoVacio
+                icono="⌖"
+                titulo={
+                  filtro === "archivados"
+                    ? "No hay planes archivados."
+                    : "Todavía no hay planes: crea el primero y organiza los levantamientos de un cliente."
+                }
+              />
             </div>
           )}
 

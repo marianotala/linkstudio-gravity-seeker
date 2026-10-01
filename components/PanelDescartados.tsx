@@ -110,7 +110,7 @@ export default function PanelDescartados<T extends DescartePoi>({
 
   return (
     <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60 p-4">
-      <div className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-linea bg-panel shadow-2xl">
+      <div className="tarjeta-elevada flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden">
         <div className="flex items-start justify-between gap-3 border-b border-linea px-5 py-3">
           <div>
             <p className="font-display text-sm font-extrabold text-white">

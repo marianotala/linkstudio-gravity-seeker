@@ -14,6 +14,7 @@ import { useState } from "react";
 import type { Universos } from "@/lib/types";
 import { clasificarNse, NIVELES_NSE } from "@/lib/nse";
 import { rangosEdadEstandar } from "@/lib/edades";
+import { CifraAnimada } from "./ui";
 
 const fmt = (n: number) => n.toLocaleString("es-MX");
 const fmtPct = (n: number) => `${n.toLocaleString("es-MX")}%`;
@@ -27,7 +28,7 @@ function Tarjeta({
 }) {
   return (
     <div className="min-w-[180px] flex-1 border-r border-linea px-4 py-2 last:border-r-0">
-      <p className="font-mono text-[9px] uppercase tracking-[0.18em] text-zinc-500">
+      <p className="font-body text-[10px] font-semibold uppercase tracking-[0.18em] text-texto-terciario">
         {etiqueta}
       </p>
       {children}
@@ -37,7 +38,8 @@ function Tarjeta({
 
 /**
  * Barra apilada horizontal + leyenda de porcentajes debajo. La usan
- * NSE y Edades para que ambas distribuciones se lean igual.
+ * NSE y Edades para que ambas distribuciones se lean igual. Llenado
+ * animado (300ms) y tooltip con el dato exacto al hover (tokens v2).
  */
 function BarraApilada({
   segmentos,
@@ -46,14 +48,19 @@ function BarraApilada({
 }) {
   return (
     <div className="mt-1.5">
-      <div className="flex h-2 w-full overflow-hidden rounded-full bg-fondo">
+      <div className="barra-apilada !h-2 w-full">
         {segmentos.map(
-          (s) =>
+          (s, i) =>
             s.pct > 0 && (
               <div
                 key={s.etiqueta}
-                style={{ width: `${s.pct}%`, backgroundColor: s.color }}
-                title={`${s.etiqueta} ${fmtPct(s.pct)}`}
+                className="barra-segmento"
+                style={{
+                  width: `${s.pct}%`,
+                  backgroundColor: s.color,
+                  animationDelay: `${i * 40}ms`,
+                }}
+                title={`${s.etiqueta}: ${fmtPct(s.pct)}`}
               />
             )
         )}
@@ -132,8 +139,8 @@ export default function UniversosPanel({
       )}
       <div className="flex items-stretch overflow-x-auto px-1 py-1.5">
         <Tarjeta etiqueta="Universo">
-          <p className="mt-0.5 font-display text-xl font-extrabold leading-none text-white">
-            {fmt(residencial.adultos18)}
+          <p className="mt-0.5 font-display text-xl font-bold leading-none text-texto-primario">
+            <CifraAnimada valor={residencial.adultos18} />
           </p>
           <p className="mt-1 truncate font-mono text-[9px] text-zinc-500">
             Total con menores: {fmt(residencial.poblacion)}

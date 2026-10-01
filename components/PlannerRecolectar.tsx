@@ -15,6 +15,7 @@ import CategoriaBuscador, {
   type SeleccionCategoria,
 } from "./CategoriaBuscador";
 import BuscadorLugar from "./BuscadorLugar";
+import { Chip } from "./ui";
 import { useAprobacionCorrida } from "./AprobacionCorrida";
 import PanelDepuracion from "./DepuracionCenso";
 import RecolectorPuntos, {
@@ -110,11 +111,10 @@ const RADIOS_CENSO = [
 const UMBRAL_CONFIRMAR_CONSULTAS = 60;
 
 const labelCls =
-  "mb-1.5 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500";
-const inputCls =
-  "w-full rounded-md border border-linea bg-panel2 px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-cian focus:outline-none";
+  "mb-1.5 block font-body text-[11px] font-medium text-texto-secundario";
+const inputCls = "campo";
 const selectCls =
-  "rounded-md border border-linea bg-panel2 px-2 py-1.5 font-mono text-[11px] text-zinc-200 focus:border-cian focus:outline-none";
+  "rounded-control border border-linea bg-panel2 px-2 py-1.5 font-body text-xs text-texto-primario focus:border-linea2 focus:outline-none";
 
 interface PropsBase {
   proyectoId: string;
@@ -243,14 +243,13 @@ export function ChipsTerminos({
       {terminos.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {terminos.map((t) => (
-            <button
+            <Chip
               key={t}
-              onClick={() => onCambiar(terminos.filter((x) => x !== t))}
-              className="group inline-flex items-center gap-1.5 rounded-full border border-magenta/50 bg-magenta/10 px-2.5 py-0.5 font-mono text-[10px] text-magenta"
+              variante="marca"
+              onRemover={() => onCambiar(terminos.filter((x) => x !== t))}
             >
               {t}
-              <span className="text-magenta/50 group-hover:text-magenta">×</span>
-            </button>
+            </Chip>
           ))}
         </div>
       )}
@@ -508,13 +507,12 @@ export function SeccionPois({
             <div>
               <label className={labelCls}>Alrededor de qué lugar</label>
               {centro ? (
-                <button
-                  onClick={() => setCfg({ censoCentro: null })}
-                  className="group inline-flex items-center gap-1.5 rounded-full border border-cian/60 bg-cian/10 px-2.5 py-1 font-mono text-[11px] text-cian"
+                <Chip
+                  variante="categoria"
+                  onRemover={() => setCfg({ censoCentro: null })}
                 >
                   {centro.nombre ?? "Centro"}
-                  <span className="text-cian/60 group-hover:text-cian">×</span>
-                </button>
+                </Chip>
               ) : (
                 <BuscadorLugar
                   onAgregar={(o) => setCfg({ censoCentro: o })}

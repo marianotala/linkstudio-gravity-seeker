@@ -1,22 +1,26 @@
 import type { Metadata } from "next";
-import { Manrope, DM_Mono, Inter } from "next/font/google";
+import { Space_Grotesk, DM_Sans, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const manrope = Manrope({
+// Tipografía con disciplina de roles (design tokens v2):
+// títulos en Space Grotesk, cuerpo/UI en DM Sans y monospace SOLO
+// para datos (números, coordenadas, códigos) en JetBrains Mono.
+const titulos = Space_Grotesk({
   subsets: ["latin"],
-  weight: ["700", "800"],
-  variable: "--font-manrope",
+  weight: ["500", "600", "700"],
+  variable: "--fuente-titulos",
 });
 
-const dmMono = DM_Mono({
+const cuerpo = DM_Sans({
   subsets: ["latin"],
-  weight: ["300", "400", "500"],
-  variable: "--font-dm-mono",
+  weight: ["400", "500", "600", "700"],
+  variable: "--fuente-cuerpo",
 });
 
-const inter = Inter({
+const datos = JetBrains_Mono({
   subsets: ["latin"],
-  variable: "--font-inter",
+  weight: ["400", "500", "600"],
+  variable: "--fuente-datos",
 });
 
 export const metadata: Metadata = {
@@ -31,7 +35,7 @@ export default function RootLayout({
   return (
     <html lang="es-MX">
       <body
-        className={`${manrope.variable} ${dmMono.variable} ${inter.variable} font-body bg-fondo text-zinc-200 antialiased`}
+        className={`${titulos.variable} ${cuerpo.variable} ${datos.variable} font-body bg-fondo text-texto-primario antialiased`}
       >
         {children}
       </body>

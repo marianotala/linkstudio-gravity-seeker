@@ -13,6 +13,7 @@ import ResultsTable from "./ResultsTable";
 import UniversosPanel from "./UniversosPanel";
 import OverlayProgreso, { type ProcesoLargo } from "./OverlayProgreso";
 import BuscadorLugar from "./BuscadorLugar";
+import { Ayuda, Chip } from "./ui";
 import { useAprobacionCorrida } from "./AprobacionCorrida";
 import GuardarEnPlanModal from "./GuardarEnPlanModal";
 import CategoriaBuscador, {
@@ -368,11 +369,11 @@ function Segmento({
 }) {
   return (
     <div className="flex min-w-0 shrink-0 flex-col gap-0.5 border-r border-linea px-4 py-0.5 last:border-r-0">
-      <span className="font-mono text-[9px] uppercase tracking-[0.22em] text-zinc-500">
+      <span className="font-body text-[10px] font-semibold uppercase tracking-[0.18em] text-texto-terciario">
         {etiqueta}
       </span>
       <span
-        className={`max-w-[300px] truncate text-sm font-semibold ${color ?? "text-white"}`}
+        className={`max-w-[300px] truncate font-body text-sm font-semibold ${color ?? "text-texto-primario"}`}
       >
         {valor}
       </span>
@@ -409,21 +410,95 @@ function Kpi({
           : ""
       }`}
     >
-      <p className="flex items-center justify-between text-xs text-zinc-400">
+      <p className="flex items-center justify-between font-body text-xs text-texto-secundario">
         {titulo}
         {onClick && (
-          <span className="font-mono text-[9px] uppercase tracking-widest text-zinc-600">
+          <span className="font-body text-[10px] font-medium text-texto-terciario">
             {activo ? "ocultar" : "ver lista"}
           </span>
         )}
       </p>
       <p
-        className={`mt-1.5 font-display text-3xl font-extrabold leading-none tracking-tight ${colorValor}`}
+        className={`mt-1.5 font-display text-3xl font-bold leading-none tracking-tight ${colorValor}`}
       >
         {valor}
       </p>
-      <p className="mt-2 truncate font-mono text-[10px] text-zinc-500">{caption}</p>
+      <p className="mt-2 truncate font-body text-[11px] text-texto-terciario">{caption}</p>
     </Tag>
+  );
+}
+
+/** Etiquetas de modo (resumen del paso 01 en el acordeón). */
+const ETIQUETA_MODO: Record<SearchMode, string> = {
+  origins: "Por orígenes",
+  zone: "Por zona",
+  census: "Censo de marca",
+  territorial: "Censo territorial",
+  cp: "Por código postal",
+};
+
+/**
+ * PASO del panel izquierdo en ACORDEÓN (tokens v2): el paso activo
+ * expandido; los demás colapsados con su resumen de estado
+ * ("02 · Orígenes — 38 listos ✓").
+ */
+function Paso({
+  numero,
+  titulo,
+  resumen,
+  listo,
+  abierto,
+  onToggle,
+  extraClase = "",
+  refSeccion,
+  children,
+}: {
+  numero?: string;
+  titulo: React.ReactNode;
+  resumen?: string;
+  listo?: boolean;
+  abierto: boolean;
+  onToggle: () => void;
+  extraClase?: string;
+  refSeccion?: React.Ref<HTMLElement>;
+  children: React.ReactNode;
+}) {
+  return (
+    <section ref={refSeccion} className={`border-b border-linea ${extraClase}`}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-2.5 px-5 py-3.5 text-left transition-colors duration-rapida hover:bg-superficie-hover/60"
+      >
+        {numero && (
+          <span className="font-mono text-[10px] font-medium text-texto-terciario">
+            {numero}
+          </span>
+        )}
+        <span className="shrink-0 font-body text-[13px] font-semibold text-texto-primario">
+          {titulo}
+        </span>
+        <span className="ml-auto flex min-w-0 items-center gap-2">
+          {!abierto && resumen && (
+            <span className="min-w-0 truncate font-mono text-[10px] text-texto-secundario">
+              {resumen}
+            </span>
+          )}
+          {listo && (
+            <span className="text-[11px] text-exito" aria-label="listo">
+              ✓
+            </span>
+          )}
+          <span
+            className={`text-[10px] text-texto-terciario transition-transform duration-rapida ${abierto ? "rotate-180" : ""}`}
+            aria-hidden
+          >
+            ▾
+          </span>
+        </span>
+      </button>
+      {abierto && <div className="px-5 pb-4">{children}</div>}
+    </section>
   );
 }
 
@@ -467,6 +542,11 @@ export default function SeekerApp({
 
   // ---- overlay de progreso sobre el mapa (procesos largos)
   const [proceso, setProceso] = useState<ProcesoLargo | null>(null);
+
+  // ---- acordeón del panel izquierdo (un paso expandido a la vez)
+  const [pasoAbierto, setPasoAbierto] = useState<string>("entrada");
+  const togglePaso = (id: string) =>
+    setPasoAbierto((prev) => (prev === id ? "" : id));
 
   // ---- escalamiento del modo por orígenes
   const detenerOrigenesRef = useRef(false);
@@ -4475,12 +4555,21 @@ export default function SeekerApp({
     }
   }
 
-  // ---- estilos compartidos
-  const inputCls =
-    "w-full rounded-md border border-linea bg-panel2 px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-cian focus:outline-none";
+  // ---- estilos compartidos (tokens v2: inputs = .campo; sub-etiquetas
+  // en sans — las MAYÚSCULAS espaciadas viven solo en encabezados)
+  const inputCls = "campo";
   const labelCls =
-    "mb-2 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500";
+    "mb-2 block font-body text-[11px] font-medium text-texto-secundario";
   const pasoCls = "border-b border-linea px-5 py-4";
+
+  // el acordeón abre solo el paso que requiere acción: confirmar una
+  // corrida grande o configurar la capa nueva viven en "Qué buscar"
+  useEffect(() => {
+    if (planOrigenes) setPasoAbierto("buscar");
+  }, [planOrigenes]);
+  useEffect(() => {
+    if (agregandoCapa) setPasoAbierto("buscar");
+  }, [agregandoCapa]);
 
   // ---- datos derivados para la barra de resumen y los KPIs
   const etiquetaCategoria = sinCategoria
@@ -4820,66 +4909,56 @@ export default function SeekerApp({
         {/* ---------- panel lateral ---------- */}
         <aside className="tarjeta w-[360px] shrink-0 overflow-y-auto">
           {/* 01 · modo */}
-          <section className={pasoCls}>
-            <label className={labelCls}>01 · Modo de búsqueda</label>
+          <Paso
+            numero="01"
+            titulo="Modo de búsqueda"
+            resumen={ETIQUETA_MODO[mode]}
+            listo
+            abierto={pasoAbierto === "modo"}
+            onToggle={() => togglePaso("modo")}
+          >
             <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => setMode("origins")}
-                className={`rounded-md border px-2 py-2 font-mono text-[11px] transition-colors ${
-                  mode === "origins"
-                    ? "border-cian bg-cian/10 text-cian"
-                    : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
-                }`}
-              >
-                Por orígenes
-              </button>
-              <button
-                onClick={() => setMode("zone")}
-                className={`rounded-md border px-2 py-2 font-mono text-[11px] transition-colors ${
-                  mode === "zone"
-                    ? "border-violeta bg-violeta/10 text-violeta"
-                    : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
-                }`}
-              >
-                Por zona
-              </button>
-              <button
-                onClick={() => setMode("census")}
-                className={`rounded-md border px-2 py-2 font-mono text-[11px] transition-colors ${
-                  mode === "census"
-                    ? "border-magenta bg-magenta/10 text-magenta"
-                    : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
-                }`}
-              >
-                Censo de marca
-              </button>
-              <button
-                onClick={() => setMode("territorial")}
-                className={`rounded-md border px-2 py-2 font-mono text-[11px] transition-colors ${
-                  mode === "territorial"
-                    ? "border-[#ff8c42] bg-[#ff8c42]/10 text-[#ff8c42]"
-                    : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
-                }`}
-              >
-                Censo territorial
-              </button>
-              <button
-                onClick={() => setMode("cp")}
-                className={`col-span-2 rounded-md border px-2 py-2 font-mono text-[11px] transition-colors ${
-                  mode === "cp"
-                    ? "border-emerald-400 bg-emerald-400/10 text-emerald-400"
-                    : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
-                }`}
-              >
-                Por código postal
-              </button>
+              {(
+                [
+                  ["origins", "border-cian bg-cian/10 text-cian", ""],
+                  ["zone", "border-violeta bg-violeta/10 text-violeta", ""],
+                  ["census", "border-magenta bg-magenta/10 text-magenta", ""],
+                  ["territorial", "border-alerta bg-alerta/10 text-alerta", ""],
+                  ["cp", "border-exito bg-exito/10 text-exito", "col-span-2"],
+                ] as const
+              ).map(([m, activoCls, extra]) => (
+                <button
+                  key={m}
+                  onClick={() => {
+                    setMode(m);
+                    setPasoAbierto("entrada");
+                  }}
+                  className={`rounded-control border px-2 py-2 font-body text-xs font-medium transition-colors duration-rapida ${extra} ${
+                    mode === m
+                      ? activoCls
+                      : "border-linea bg-panel2 text-texto-secundario hover:border-linea2"
+                  }`}
+                >
+                  {ETIQUETA_MODO[m]}
+                </button>
+              ))}
             </div>
-          </section>
+          </Paso>
 
           {/* 02 · orígenes o zona */}
           {mode === "origins" ? (
-            <section className={pasoCls}>
-              <label className={labelCls}>02 · Tus orígenes (PDVs)</label>
+            <Paso
+              numero="02"
+              titulo="Tus orígenes (PDVs)"
+              resumen={
+                origenes.length > 0
+                  ? `${origenes.length.toLocaleString("es-MX")} listos`
+                  : "sin orígenes"
+              }
+              listo={origenes.length > 0}
+              abierto={pasoAbierto === "entrada"}
+              onToggle={() => togglePaso("entrada")}
+            >
 
               {/* entrada rápida: buscar un lugar por nombre y fijarlo
                   como origen (convive con Excel/direcciones/coords) */}
@@ -5000,10 +5079,20 @@ export default function SeekerApp({
                   como levantamiento · 0 consultas
                 </button>
               )}
-            </section>
+            </Paso>
           ) : mode === "zone" ? (
-            <section className={pasoCls}>
-              <label className={labelCls}>02 · Tus zonas</label>
+            <Paso
+              numero="02"
+              titulo="Tus zonas"
+              resumen={
+                zonas.length > 0
+                  ? `${zonas.length.toLocaleString("es-MX")} ${zonas.length === 1 ? "zona" : "zonas"}`
+                  : "sin zonas"
+              }
+              listo={zonas.length > 0}
+              abierto={pasoAbierto === "entrada"}
+              onToggle={() => togglePaso("entrada")}
+            >
               <input
                 value={zonaQuery}
                 onChange={(e) => setZonaQuery(e.target.value)}
@@ -5039,10 +5128,21 @@ export default function SeekerApp({
                 Sin radio: la búsqueda se limita a los límites reales de cada
                 zona (Polanco = solo Polanco; CDMX = toda la ciudad).
               </p>
-            </section>
+            </Paso>
           ) : mode === "cp" ? (
-            <section className={pasoCls}>
-              <label className={labelCls}>02 · Tus códigos postales</label>
+            <Paso
+              numero="02"
+              titulo="Tus códigos postales"
+              resumen={(() => {
+                const n = extraerCps(cpsInput).length;
+                return n > 0
+                  ? `${n.toLocaleString("es-MX")} ${n === 1 ? "CP" : "CPs"}`
+                  : "sin CPs";
+              })()}
+              listo={extraerCps(cpsInput).length > 0}
+              abierto={pasoAbierto === "entrada"}
+              onToggle={() => togglePaso("entrada")}
+            >
               <textarea
                 value={cpsInput}
                 onChange={(e) => setCpsInput(e.target.value)}
@@ -5174,10 +5274,20 @@ export default function SeekerApp({
                 celdas de búsqueda por censo — la búsqueda corre únicamente
                 dentro del polígono real de cada CP.
               </p>
-            </section>
+            </Paso>
           ) : mode === "census" ? (
-            <section className={pasoCls}>
-              <label className={labelCls}>02 · Censo de marca</label>
+            <Paso
+              numero="02"
+              titulo="Censo de marca"
+              resumen={
+                marca
+                  ? `${marca}${ciudadQuery ? ` · ${ciudadQuery}` : ""}`
+                  : "sin marca"
+              }
+              listo={!!marca && !!zona}
+              abierto={pasoAbierto === "entrada"}
+              onToggle={() => togglePaso("entrada")}
+            >
               <input
                 value={marca}
                 onChange={(e) => setMarca(e.target.value)}
@@ -5338,10 +5448,20 @@ export default function SeekerApp({
                   )}
                 </div>
               )}
-            </section>
+            </Paso>
           ) : (
-            <section className={pasoCls}>
-              <label className={labelCls}>02 · Censo territorial (INEGI)</label>
+            <Paso
+              numero="02"
+              titulo="Censo territorial (INEGI)"
+              resumen={
+                terCategoria
+                  ? `${terCategoriaLibre || terCategoria}${terLugarQuery ? ` · ${terLugarQuery}` : ""}`
+                  : "sin categoría"
+              }
+              listo={!!terCategoria && !!terCentro}
+              abierto={pasoAbierto === "entrada"}
+              onToggle={() => togglePaso("entrada")}
+            >
               <CategoriaBuscador
                 selecciones={
                   terCategoria
@@ -5507,16 +5627,19 @@ export default function SeekerApp({
                   )}
                 </div>
               )}
-            </section>
+            </Paso>
           )}
 
           {/* capas de categoría: varias búsquedas sobre la misma
               geografía (solo zona y CP; el universo es del territorio) */}
           {(mode === "zone" || mode === "cp") && hayCapas && (
-            <section className={pasoCls}>
-              <label className={labelCls}>
-                Capas de búsqueda · {capas.length}/{MAX_CAPAS}
-              </label>
+            <Paso
+              titulo="Capas de búsqueda"
+              resumen={`${capas.length}/${MAX_CAPAS}`}
+              listo={capas.length > 0}
+              abierto={pasoAbierto === "capas"}
+              onToggle={() => togglePaso("capas")}
+            >
               {capas.map((c) => (
                 <div key={c.id} className="flex items-center gap-2 py-1">
                   <span
@@ -5584,14 +5707,20 @@ export default function SeekerApp({
                 El universo demográfico es del territorio y se comparte
                 entre capas.
               </p>
-            </section>
+            </Paso>
           )}
 
           {/* 03 · radio (solo orígenes: zona usa sus límites y el censo
               usa radio de celda + alcance del paso 02) */}
           {mode === "origins" && (
-          <section className={pasoCls}>
-            <label className={labelCls}>03 · Radio de búsqueda</label>
+          <Paso
+            numero="03"
+            titulo="Radio de búsqueda"
+            resumen={`${radio.toLocaleString("es-MX")} m`}
+            listo
+            abierto={pasoAbierto === "radio"}
+            onToggle={() => togglePaso("radio")}
+          >
             <div className="flex flex-wrap gap-2">
               {RADIOS.map((r) => (
                 <button
@@ -5620,28 +5749,50 @@ export default function SeekerApp({
                 metros (personalizado)
               </span>
             </div>
-          </section>
+          </Paso>
           )}
 
           {/* 04 · qué buscar (censo: solo exclusiones; territorial: nada,
               su categoría vive en el paso 02) */}
           {mode !== "territorial" && (
-          <section
-            ref={seccionBuscarRef}
-            className={`${pasoCls} ${agregandoCapa ? "border-l-2 border-l-emerald-400 bg-emerald-400/5" : ""}`}
+          <Paso
+            refSeccion={seccionBuscarRef}
+            extraClase={agregandoCapa ? "border-l-2 border-l-exito bg-exito/5" : ""}
+            numero={mode === "census" || mode === "zone" ? "03" : "04"}
+            titulo={
+              <>
+                {mode === "census" ? "Exclusiones" : "Qué buscar"}
+                {agregandoCapa && (
+                  <span className="ml-2 font-body text-xs font-medium text-exito">
+                    → capa nueva
+                  </span>
+                )}
+              </>
+            }
+            resumen={
+              [
+                categoriasSel.length > 0
+                  ? `${categoriasSel.length} ${categoriasSel.length === 1 ? "categoría" : "categorías"}`
+                  : null,
+                nameFilters.length > 0
+                  ? `${nameFilters.length} ${nameFilters.length === 1 ? "término" : "términos"}`
+                  : null,
+                excludes.length > 0
+                  ? `${excludes.length} ${excludes.length === 1 ? "exclusión" : "exclusiones"}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ") ||
+              (mode === "census" ? "sin exclusiones" : "todo el giro")
+            }
+            listo={
+              mode === "census"
+                ? undefined
+                : categoriasSel.length > 0 || nameFilters.length > 0
+            }
+            abierto={pasoAbierto === "buscar"}
+            onToggle={() => togglePaso("buscar")}
           >
-            <label className={labelCls}>
-              {mode === "census"
-                ? "03 · Exclusiones"
-                : mode === "zone"
-                  ? "03 · Qué buscar"
-                  : "04 · Qué buscar"}
-              {agregandoCapa && (
-                <span className="ml-2 normal-case tracking-normal text-emerald-400">
-                  → capa nueva
-                </span>
-              )}
-            </label>
             {mode !== "census" && (
             <>
             <CategoriaBuscador
@@ -5672,33 +5823,20 @@ export default function SeekerApp({
                 {nameFilters.map((t) => {
                   const exacto = esTerminoExacto(t);
                   return (
-                    <button
+                    <Chip
                       key={t}
-                      onClick={() =>
+                      variante={exacto ? "marca" : "categoria"}
+                      onRemover={() =>
                         setNameFilters(nameFilters.filter((x) => x !== t))
                       }
-                      className={`group flex items-center gap-1 rounded-full border px-2.5 py-0.5 font-mono text-[11px] ${
-                        exacto
-                          ? "border-violeta/60 bg-violeta/10 text-violeta"
-                          : "border-cian/50 bg-cian/10 text-cian"
-                      }`}
                       title={
                         exacto
-                          ? "Nombre exacto: debe EMPEZAR con el término · quitar"
-                          : "Contiene todas las palabras · quitar"
+                          ? "Nombre exacto: debe EMPEZAR con el término"
+                          : "Contiene todas las palabras"
                       }
                     >
                       {t}
-                      <span
-                        className={
-                          exacto
-                            ? "text-violeta/60 group-hover:text-violeta"
-                            : "text-cian/60 group-hover:text-cian"
-                        }
-                      >
-                        ×
-                      </span>
-                    </button>
+                    </Chip>
                   );
                 })}
               </div>
@@ -5717,15 +5855,19 @@ export default function SeekerApp({
                 </button>
               </p>
             )}
-            <p className="mt-1 font-mono text-[10px] text-zinc-600">
-              Filtro estricto por término: sin acentos ni mayúsculas, todas
-              sus palabras deben aparecer en el nombre. Con varios términos,
-              un POI pasa si cumple CUALQUIERA. Usa{" "}
-              <span className="text-zinc-400">&quot;comillas&quot;</span> para
-              nombre exacto (el nombre debe EMPEZAR con el término). Los
-              términos de inclusión multiplican consultas — el estimador de
-              costo lo refleja; las exclusiones son gratis.
-            </p>
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <Ayuda>
+                Filtro estricto por término: sin acentos ni mayúsculas, todas
+                sus palabras deben aparecer en el nombre. Con varios términos,
+                un POI pasa si cumple CUALQUIERA. Usa &quot;comillas&quot;
+                para nombre exacto (el nombre debe EMPEZAR con el término).
+                Los términos de inclusión multiplican consultas — el
+                estimador de costo lo refleja; las exclusiones son gratis.
+              </Ayuda>
+              <span className="font-body text-[11px] text-texto-terciario">
+                Filtro estricto · &quot;comillas&quot; = nombre exacto
+              </span>
+            </div>
             {(categoriasSel.length >= 2 || nameFilters.length >= 2) && (
               <label className="mt-2 flex cursor-pointer items-center gap-2 font-mono text-[11px] text-zinc-400">
                 <input
@@ -5773,15 +5915,16 @@ export default function SeekerApp({
               {excludes.length > 0 && (
                 <div className="mt-2 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
                   {excludes.map((ex) => (
-                    <button
+                    <Chip
                       key={ex}
-                      onClick={() => setExcludes(excludes.filter((x) => x !== ex))}
-                      className="group flex items-center gap-1 rounded-full border border-magenta/50 bg-magenta/10 px-2.5 py-0.5 font-mono text-[11px] text-magenta"
-                      title="Quitar exclusión"
+                      variante="exclusion"
+                      onRemover={() =>
+                        setExcludes(excludes.filter((x) => x !== ex))
+                      }
+                      title="Exclusión de marca"
                     >
                       {ex}
-                      <span className="text-magenta/60 group-hover:text-magenta">×</span>
-                    </button>
+                    </Chip>
                   ))}
                 </div>
               )}
@@ -5833,10 +5976,11 @@ export default function SeekerApp({
             )}
 
             {mode !== "census" && (
+            /* CTA principal de la vista: el único con gradiente firma */
             <button
               onClick={buscar}
               disabled={ocupado}
-              className="mt-4 w-full rounded-md bg-magenta px-3 py-2.5 font-display text-sm font-extrabold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+              className="btn-primario-firma mt-4 w-full !py-2.5 font-display text-sm font-bold"
             >
               {ocupado
                 ? "Buscando…"
@@ -5931,25 +6075,32 @@ export default function SeekerApp({
             {(pois.length > 0 ||
               contadores.excluidos > 0 ||
               contadores.descartadosPorNombre > 0) && (
-              <div className="mt-3 flex flex-wrap gap-1.5 font-mono text-[10px]">
-                <span className="rounded-full border border-magenta/50 px-2 py-0.5 text-magenta">
-                  {pois.length} POIs
-                </span>
-                <span className="rounded-full border border-linea px-2 py-0.5 text-zinc-500">
-                  {contadores.excluidos} excluidos
-                </span>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                <Chip variante="marca">
+                  <span className="font-mono">{pois.length}</span>&nbsp;POIs
+                </Chip>
+                <Chip variante="libre">
+                  <span className="font-mono">{contadores.excluidos}</span>
+                  &nbsp;excluidos
+                </Chip>
                 {descartes.length > 0 ? (
-                  <button
+                  <Chip
+                    variante="categoria"
                     onClick={() => setPanelDescAbierto(true)}
-                    className="rounded-full border border-cian/60 bg-cian/10 px-2 py-0.5 text-cian transition-colors hover:bg-cian/20"
                     title="Los descartados ya se pagaron: revísalos, búscalos y rescata los que sí sirven — 0 consultas a Google"
                   >
-                    {contadores.descartadosPorNombre} descartados · ver y rescatar
-                  </button>
+                    <span className="font-mono">
+                      {contadores.descartadosPorNombre}
+                    </span>
+                    &nbsp;descartados · ver y rescatar
+                  </Chip>
                 ) : (
-                  <span className="rounded-full border border-linea px-2 py-0.5 text-zinc-500">
-                    {contadores.descartadosPorNombre} descartados por nombre
-                  </span>
+                  <Chip variante="libre">
+                    <span className="font-mono">
+                      {contadores.descartadosPorNombre}
+                    </span>
+                    &nbsp;descartados por nombre
+                  </Chip>
                 )}
               </div>
             )}
@@ -5978,12 +6129,18 @@ export default function SeekerApp({
                 </div>
               </div>
             )}
-          </section>
+          </Paso>
           )}
 
           {/* 05 · exportar */}
-          <section className={pasoCls}>
-            <label className={labelCls}>05 · Exportar</label>
+          <Paso
+            numero="05"
+            titulo="Exportar"
+            resumen={`geocerca ${radioGeocerca} m · ${vertices} vértices`}
+            listo={poisActivos.length > 0}
+            abierto={pasoAbierto === "exportar"}
+            onToggle={() => togglePaso("exportar")}
+          >
             <div className="mb-3 grid grid-cols-2 gap-2">
               <div>
                 <span className="mb-1 block font-mono text-[10px] text-zinc-600">
@@ -6139,9 +6296,9 @@ export default function SeekerApp({
                 <span className="text-zinc-600">seeker_radios_origen.geojson</span>
               </button>
             </div>
-          </section>
+          </Paso>
 
-          <footer className="px-5 py-4 font-mono text-[10px] text-zinc-700">
+          <footer className="px-5 py-4 font-body text-[10px] text-texto-terciario">
             Gravity · Link Studio — geocercas listas para Simpli.fi, Eskimi y
             DV360.
           </footer>

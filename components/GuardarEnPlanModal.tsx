@@ -110,7 +110,7 @@ export default function GuardarEnPlanModal({
         if (e.target === e.currentTarget && !guardando) onCerrar();
       }}
     >
-      <div className="tarjeta glow-violeta w-full max-w-md px-6 py-6">
+      <div className="tarjeta-elevada w-full max-w-md px-6 py-6">
         <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-violeta">
           Planner
         </p>
