@@ -88,6 +88,8 @@ const TITULO_TACTICA: Record<RolLevantamiento, [string, string]> = {
   competencia: ["GEO-FENCE CONQUISTA", "Conquista"],
   proximidad: ["GEO-FENCE PROXIMIDAD", "Proximidad"],
   ooh: ["GEO-PDOOH · PANTALLAS × PDVS", "Geo-PDOOH"],
+  // exploración no se exporta a láminas; clave requerida por el tipo
+  exploracion: ["EXPLORACIÓN", "Exploración"],
 };
 
 const adultos = (u: Universos | null | undefined) =>

@@ -416,7 +416,10 @@ export type RolLevantamiento =
   | "poi_propio"
   | "competencia"
   | "proximidad"
-  | "ooh";
+  | "ooh"
+  /** Buscador del plan: exploración libre; sus resultados se PROMUEVEN
+   * a otra sección reasignando el rol (v2 F1). */
+  | "exploracion";
 
 export type StatusProyecto = "activo" | "archivado";
 
@@ -426,6 +429,9 @@ export interface Proyecto {
   nombre_cliente: string;
   titulo: string | null;
   creado_por: string;
+  /** 'cliente' (default) o 'exploracion': el plan personal de
+   * búsquedas libres de cada usuario (reemplaza al modo consulta). */
+  tipo?: "cliente" | "exploracion";
   status: StatusProyecto;
   created_at: string;
   updated_at: string;

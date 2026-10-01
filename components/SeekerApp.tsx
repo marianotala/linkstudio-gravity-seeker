@@ -1094,6 +1094,8 @@ export default function SeekerApp({
     }
     plannerRunRef.current = null;
     semillaPlannerRef.current = null;
+    // el plan contenedor (sección Buscador) refresca su lista
+    planner?.alGuardar?.();
   }
 
   /** Restaura la configuración de un levantamiento (reanudar o
@@ -1364,6 +1366,7 @@ export default function SeekerApp({
         "ok",
         `${origenes.length.toLocaleString("es-MX")} puntos guardados como levantamiento de ${ETIQUETA_ROL[planner.rol]} · 0 consultas a Google`
       );
+      planner.alGuardar?.();
     } catch (e) {
       reportar(
         "error",
@@ -4505,8 +4508,18 @@ export default function SeekerApp({
       : undefined;
 
   return (
-    <div className="flex h-screen flex-col gap-3 overflow-hidden bg-fondo p-3">
-      <AppHeader usuario={usuario} status={status} onNueva={nuevaBusqueda} />
+    <div
+      className={
+        planner?.embebido
+          ? // embebido en la sección Buscador del plan (v2 F1): sin
+            // header global, altura propia dentro del scroll de la sección
+            "flex h-[76vh] min-h-[560px] flex-col gap-3 overflow-hidden"
+          : "flex h-screen flex-col gap-3 overflow-hidden bg-fondo p-3"
+      }
+    >
+      {!planner?.embebido && (
+        <AppHeader usuario={usuario} status={status} onNueva={nuevaBusqueda} />
+      )}
 
       {/* contexto de Planner: este buscador guarda al proyecto */}
       {planner && (
@@ -4519,20 +4532,51 @@ export default function SeekerApp({
           </span>
           <span className="text-zinc-700">·</span>
           <span className="shrink-0 text-zinc-400">
-            Sección {ETIQUETA_ROL[planner.rol]} — cada levantamiento se guarda
-            automáticamente al plan
+            {planner.embebido
+              ? "Exploración libre — cada corrida se guarda al plan y se puede promover a otra sección"
+              : `Sección ${ETIQUETA_ROL[planner.rol]} — cada levantamiento se guarda automáticamente al plan`}
           </span>
           {notaPlanner && (
             <span className="truncate text-amber-400" title={notaPlanner}>
               · {notaPlanner}
             </span>
           )}
-          <Link
-            href={`/planner/${planner.proyectoId}`}
-            className="ml-auto shrink-0 rounded-full border border-linea bg-panel2 px-3 py-1 text-zinc-400 transition-colors hover:border-violeta hover:text-violeta"
-          >
-            ← Volver al plan
-          </Link>
+          {planner.embebido ? (
+            <span className="ml-auto flex shrink-0 items-center gap-2">
+              {status.texto && (
+                <span className="flex items-center gap-1.5 rounded-full border border-linea bg-panel2 px-2.5 py-1">
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      status.tipo === "error"
+                        ? "bg-magenta"
+                        : status.tipo === "busy"
+                          ? "bg-cian dot-pulso"
+                          : status.tipo === "ok"
+                            ? "bg-emerald-400"
+                            : "bg-zinc-600"
+                    }`}
+                  />
+                  <span className="max-w-[300px] truncate text-zinc-400">
+                    {status.texto}
+                  </span>
+                </span>
+              )}
+              <button
+                onClick={nuevaBusqueda}
+                className="rounded-full border border-cian/50 bg-cian/10 px-3 py-1 text-cian transition-colors hover:bg-cian/20"
+                title="Limpia orígenes, zonas, filtros y resultados"
+              >
+                + Nueva búsqueda
+              </button>
+            </span>
+          ) : (
+            <Link
+              href={`/planner/${planner.proyectoId}`}
+              className="ml-auto shrink-0 rounded-full border border-linea bg-panel2 px-3 py-1 text-zinc-400 transition-colors hover:border-violeta hover:text-violeta"
+            >
+              ← Volver al plan
+            </Link>
+          )}
         </div>
       )}
 

@@ -24,6 +24,12 @@ export interface ContextoPlanner {
   rol: RolLevantamiento;
   /** Nombre del cliente para el banner del buscador. */
   nombreCliente?: string;
+  /** true cuando el buscador vive EMBEBIDO dentro del plan (sección
+   * Buscador, v2 F1): sin header global ni link "volver al plan". */
+  embebido?: boolean;
+  /** Aviso al plan contenedor cuando un run se persiste/finaliza, para
+   * refrescar su lista de levantamientos. */
+  alGuardar?: () => void;
 }
 
 export const ETIQUETA_ROL: Record<RolLevantamiento, string> = {
@@ -33,6 +39,7 @@ export const ETIQUETA_ROL: Record<RolLevantamiento, string> = {
   competencia: "Competencia",
   proximidad: "Proximidad",
   ooh: "OOH",
+  exploracion: "Exploración",
 };
 
 /** Espectros de color por ROL (consistentes con la semántica de la
@@ -42,6 +49,8 @@ export const PALETAS_ROL: Record<RolLevantamiento, string[]> = {
   competencia: ["#f4368a", "#ff8c42", "#f7d154", "#c0399f", "#ff6b6b", "#f79ac0"],
   proximidad: ["#9d5cf0", "#c9a8f7", "#7a3fd1", "#b57ef5", "#d8b4fe", "#8b5cf6"],
   ooh: ["#ff8c42", "#f7d154", "#fdba74", "#fb923c", "#fde68a", "#f59e0b"],
+  // exploración: teales/esmeralda — neutral, distinto de las tácticas
+  exploracion: ["#2dd4bf", "#5eead4", "#14b8a6", "#99f6e4", "#0d9488", "#34d399"],
 };
 
 export function colorSurvey(rol: RolLevantamiento, indice: number): string {
@@ -1194,4 +1203,77 @@ export async function cargarRunParaReanudar(surveyId: string): Promise<{
     run: { runId, surveys, guardados },
     puntos,
   };
+}
+
+// ------------------------------------------------------------------
+// v2 F1 — Buscador dentro del plan: promoción y plan de exploración
+// ------------------------------------------------------------------
+
+/**
+ * PROMUEVE un levantamiento de exploración (o de cualquier sección) a
+ * otra sección del plan reasignando su ROL — los puntos, descartados y
+ * universos ya pagados se conservan tal cual: 0 consultas a Google.
+ */
+export async function moverSurveyARol(
+  surveyId: string,
+  nuevoRol: RolLevantamiento
+): Promise<void> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("surveys")
+    .select("rol, configuracion")
+    .eq("id", surveyId)
+    .single();
+  if (error || !data) {
+    throw new Error(`No se pudo leer el levantamiento: ${error?.message}`);
+  }
+  const config = (data.configuracion as Record<string, unknown>) ?? {};
+  const { error: errorUpd } = await supabase
+    .from("surveys")
+    .update({
+      rol: nuevoRol,
+      configuracion: {
+        ...config,
+        promovido_de: data.rol,
+        promovido_en: new Date().toISOString(),
+      },
+    })
+    .eq("id", surveyId);
+  if (errorUpd) {
+    throw new Error(`No se pudo mover el levantamiento: ${errorUpd.message}`);
+  }
+}
+
+/**
+ * Plan personal de EXPLORACIÓN del usuario (tipo 'exploracion'): el
+ * espacio de búsquedas libres que reemplaza al modo consulta viejo.
+ * Se crea automático la primera vez que se necesita; regresa su id.
+ */
+export async function asegurarPlanExploracion(
+  usuarioId: string
+): Promise<string> {
+  const supabase = createClient();
+  const { data } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("creado_por", usuarioId)
+    .eq("tipo", "exploracion")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (data?.id) return data.id as string;
+  const { data: nuevo, error } = await supabase
+    .from("projects")
+    .insert({
+      nombre_cliente: "Exploración",
+      titulo: "Búsquedas libres — tu espacio personal",
+      creado_por: usuarioId,
+      tipo: "exploracion",
+    })
+    .select("id")
+    .single();
+  if (error || !nuevo) {
+    throw new Error(`No se pudo crear el plan de exploración: ${error?.message}`);
+  }
+  return nuevo.id as string;
 }

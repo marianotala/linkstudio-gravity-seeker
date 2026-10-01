@@ -61,23 +61,24 @@ export default function AppHeader({ usuario, status, onNueva }: AppHeaderProps) 
             Seeker — point of interest intelligence · powered by Link Studio
           </div>
         </div>
+        {/* v2 F1: el Buscador vive dentro de cada plan (primera sección
+            del menú lateral) — Mis planes es el home */}
         <nav className="ml-4 flex gap-1">
-          <Link href="/" className={navCls(pathname === "/")}>
-            Buscador
+          <Link
+            href="/planes"
+            className={navCls(
+              pathname === "/" ||
+                pathname === "/planes" ||
+                pathname.startsWith("/planner")
+            )}
+          >
+            Mis planes
           </Link>
           <Link href="/censos" className={navCls(pathname === "/censos")}>
             Censos
           </Link>
           <Link href="/ooh" className={navCls(pathname === "/ooh")}>
             OOH
-          </Link>
-          <Link
-            href="/planes"
-            className={navCls(
-              pathname === "/planes" || pathname.startsWith("/planner")
-            )}
-          >
-            Planes
           </Link>
           <Link href="/historial" className={navCls(pathname === "/historial")}>
             Historial

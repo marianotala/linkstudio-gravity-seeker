@@ -56,6 +56,9 @@ export default function GuardarEnPlanModal({
         .from("projects")
         .select("id, nombre_cliente, titulo, creado_por, status, created_at, updated_at")
         .eq("status", "activo")
+        // los planes personales de exploración no son destino: lo
+        // explorado se promueve con "Mover a…" dentro del plan
+        .eq("tipo", "cliente")
         .order("updated_at", { ascending: false })
         .limit(100);
       const lista = ((data ?? []) as Proyecto[]) ?? [];

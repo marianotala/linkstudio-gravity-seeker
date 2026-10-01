@@ -71,7 +71,7 @@ export default function LoginPage() {
         );
         return;
       }
-      router.push("/");
+      router.push("/planes");
       router.refresh();
     } catch {
       setError("Error de conexión con Supabase. Intenta de nuevo.");

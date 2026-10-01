@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import PlannerView from "@/components/PlannerView";
 import { createClient } from "@/lib/supabase/server";
 import type { PerfilUsuario } from "@/lib/types";
@@ -29,5 +30,9 @@ export default async function PlannerPage({
     };
   }
 
-  return <PlannerView usuario={perfil} proyectoId={params.id} />;
+  return (
+    <Suspense>
+      <PlannerView usuario={perfil} proyectoId={params.id} />
+    </Suspense>
+  );
 }

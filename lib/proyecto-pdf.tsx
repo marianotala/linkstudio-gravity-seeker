@@ -139,6 +139,8 @@ const ETIQUETA_SECCION_ROL: Record<RolLevantamiento, [string, string]> = {
   competencia: ["Competencia", "Dónde está la competencia y cuánta gente comparte territorio"],
   proximidad: ["Proximidad", "El universo cerca de tus puntos de venta"],
   ooh: ["Plan OOH", "Pantallas que apoyan a los puntos de venta"],
+  // exploración nunca llega al PDF (se promueve antes); clave requerida
+  exploracion: ["Exploración", "Búsquedas exploratorias del plan"],
 };
 
 export const NOMBRE_ROL: Record<RolLevantamiento, string> = {
@@ -146,6 +148,7 @@ export const NOMBRE_ROL: Record<RolLevantamiento, string> = {
   competencia: "Competencia",
   proximidad: "Proximidad",
   ooh: "Pantallas",
+  exploracion: "Exploración",
 };
 
 const ORDEN_ROLES: RolLevantamiento[] = ["poi_propio", "competencia", "proximidad"];

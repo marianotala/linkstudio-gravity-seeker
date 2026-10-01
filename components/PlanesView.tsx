@@ -7,7 +7,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import AppHeader from "./AppHeader";
+import { asegurarPlanExploracion } from "@/lib/planner";
 import { createClient } from "@/lib/supabase/client";
 import type { PerfilUsuario, Proyecto } from "@/lib/types";
 
@@ -16,19 +18,21 @@ export default function PlanesView({
 }: {
   usuario: PerfilUsuario | null;
 }) {
+  const router = useRouter();
   const [proyectos, setProyectos] = useState<Proyecto[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
   const [filtro, setFiltro] = useState<"activos" | "archivados">("activos");
   /** id del proyecto con confirmación de borrado abierta. */
   const [confirmando, setConfirmando] = useState<string | null>(null);
+  const [abriendoExploracion, setAbriendoExploracion] = useState(false);
 
   async function cargar() {
     const supabase = createClient();
     const { data, error: e } = await supabase
       .from("projects")
       .select(
-        "id, nombre_cliente, titulo, creado_por, status, created_at, updated_at, profiles(email, nombre), surveys(count)"
+        "id, nombre_cliente, titulo, creado_por, tipo, status, created_at, updated_at, profiles(email, nombre), surveys(count)"
       )
       .order("updated_at", { ascending: false })
       .limit(300);
@@ -43,10 +47,29 @@ export default function PlanesView({
     cargar();
   }, []);
 
-  const visibles = proyectos.filter((p) =>
+  // los planes personales de exploración no saturan la lista del
+  // equipo: cada quien entra al suyo con el botón "Exploración libre"
+  const clientes = proyectos.filter((p) => (p.tipo ?? "cliente") !== "exploracion");
+  const visibles = clientes.filter((p) =>
     filtro === "activos" ? p.status === "activo" : p.status === "archivado"
   );
-  const archivados = proyectos.filter((p) => p.status === "archivado").length;
+  const archivados = clientes.filter((p) => p.status === "archivado").length;
+
+  /** Plan personal de búsquedas libres (reemplaza al modo consulta):
+   * se crea automático la primera vez y abre directo en su Buscador. */
+  async function abrirExploracion() {
+    if (!usuario) return;
+    setAbriendoExploracion(true);
+    try {
+      const id = await asegurarPlanExploracion(usuario.id);
+      router.push(`/planner/${id}?seccion=buscador`);
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "No se pudo abrir la exploración"
+      );
+      setAbriendoExploracion(false);
+    }
+  }
 
   async function cambiarStatus(p: Proyecto, status: "activo" | "archivado") {
     const supabase = createClient();
@@ -91,6 +114,16 @@ export default function PlanesView({
                 <span className="text-violeta">+ Nuevo plan</span> de arriba.
               </p>
             </div>
+            {usuario && (
+              <button
+                onClick={abrirExploracion}
+                disabled={abriendoExploracion}
+                className="shrink-0 rounded-full border border-[#2dd4bf]/50 bg-[#2dd4bf]/10 px-4 py-2 font-mono text-[11px] text-[#2dd4bf] transition-colors hover:bg-[#2dd4bf]/20 disabled:opacity-50"
+                title="Búsquedas sueltas sin cliente: tu plan personal de exploración — todo queda guardado y se puede promover a cualquier plan"
+              >
+                {abriendoExploracion ? "Abriendo…" : "⌕ Exploración libre"}
+              </button>
+            )}
             {!cargando && !error && archivados > 0 && (
               <div className="flex shrink-0 gap-1 rounded-full border border-linea bg-panel2 p-0.5">
                 {(

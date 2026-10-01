@@ -2647,19 +2647,26 @@ create table if not exists public.projects (
   nombre_cliente text not null,
   titulo text,                       -- título opcional del plan
   creado_por uuid not null references public.profiles (id) on delete cascade,
+  -- 'cliente' (default) o 'exploracion': plan personal de búsquedas
+  -- libres por usuario (v2 F1, reemplaza al modo consulta viejo)
+  tipo text not null default 'cliente'
+    check (tipo in ('cliente', 'exploracion')),
   status text not null default 'activo'
     check (status in ('activo', 'archivado')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create index if not exists projects_status_idx on public.projects (status, updated_at desc);
+create index if not exists projects_tipo_creado_idx on public.projects (creado_por, tipo);
 
 -- ---- levantamientos dentro del proyecto (la lógica llega en F2/F3)
 create table if not exists public.surveys (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects (id) on delete cascade,
   rol text not null
-    check (rol in ('poi_propio', 'competencia', 'proximidad', 'ooh')),
+    -- 'exploracion' (v2 F1): Buscador del plan, exploración libre;
+    -- sus levantamientos se PROMUEVEN a otra sección reasignando el rol
+    check (rol in ('poi_propio', 'competencia', 'proximidad', 'ooh', 'exploracion')),
   fuente text,                       -- google | denue | ambas | inventario
   configuracion jsonb not null default '{}'::jsonb, -- modo, términos, categorías, radio, geografía
   status text not null default 'en_progreso'

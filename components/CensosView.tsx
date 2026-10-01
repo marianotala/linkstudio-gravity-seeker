@@ -114,10 +114,11 @@ export default function CensosView({
                 censo territorial y aparecerá aquí automáticamente.
               </p>
               <Link
-                href="/"
+                href="/planes"
                 className="mt-4 inline-block rounded-md border border-cian bg-cian/10 px-4 py-2 font-mono text-xs text-cian transition-colors hover:bg-cian/20"
+                title="El Buscador vive dentro de cada plan (primera sección del menú)"
               >
-                Ir al buscador
+                Ir a Mis planes
               </Link>
             </div>
           )}
