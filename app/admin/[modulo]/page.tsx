@@ -1,12 +1,23 @@
 import { redirect } from "next/navigation";
-import AdminShell from "@/components/admin/AdminShell";
+import AdminShell, { type ModuloAdmin } from "@/components/admin/AdminShell";
 import { createClient } from "@/lib/supabase/server";
 import type { PerfilUsuario } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-/** /admin: hub de módulos (data, ooh, gasto, usuarios). */
-export default async function AdminPage() {
+const MODULOS: ModuloAdmin[] = ["data", "ooh", "gasto", "usuarios"];
+
+/** Deep-link por módulo: /admin/data · /admin/ooh · /admin/gasto ·
+ * /admin/usuarios — para mandar ligas directas. */
+export default async function AdminModuloPage({
+  params,
+}: {
+  params: { modulo: string };
+}) {
+  if (!MODULOS.includes(params.modulo as ModuloAdmin)) {
+    redirect("/admin");
+  }
+
   const supabase = createClient();
   const {
     data: { user },
@@ -20,8 +31,7 @@ export default async function AdminPage() {
     .single();
   const perfil = data as PerfilUsuario | null;
 
-  // Solo administradores; los demás regresan a Mis planes.
   if (perfil?.rol !== "admin") redirect("/planes");
 
-  return <AdminShell usuario={perfil} modulo={null} />;
+  return <AdminShell usuario={perfil} modulo={params.modulo as ModuloAdmin} />;
 }

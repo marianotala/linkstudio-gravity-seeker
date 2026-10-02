@@ -3427,3 +3427,75 @@ $$;
 
 revoke execute on function public.admin_marcar_universos_antiguos(timestamptz) from public, anon;
 grant execute on function public.admin_marcar_universos_antiguos(timestamptz) to authenticated;
+
+-- ------------------------------------------------------------------
+-- MÓDULO USUARIOS de /admin (reestructura en módulos): lista con
+-- último acceso (auth.users) y consumo del mes, y cambio de rol.
+-- El RLS de profiles impide cambiar roles directamente — estas RPCs
+-- (security definer) lo habilitan SOLO para administradores.
+-- ------------------------------------------------------------------
+
+create or replace function public.admin_usuarios()
+returns table (
+  user_id uuid,
+  email text,
+  nombre text,
+  rol text,
+  ultimo_acceso timestamptz,
+  creado timestamptz,
+  consultas_mes bigint,
+  gasto_mes_mxn numeric
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    p.id,
+    p.email,
+    p.nombre,
+    p.rol,
+    u.last_sign_in_at,
+    u.created_at,
+    coalesce(l.consultas, 0),
+    coalesce(l.gasto, 0)
+  from public.profiles p
+  join auth.users u on u.id = p.id
+  left join lateral (
+    select sum(consultas)::bigint as consultas, sum(costo_mxn) as gasto
+    from public.api_usage_log
+    where user_id = p.id
+      and created_at >= date_trunc('month', now())
+  ) l on true
+  where public.es_admin()
+  order by u.last_sign_in_at desc nulls last;
+$$;
+
+revoke execute on function public.admin_usuarios() from public, anon;
+grant execute on function public.admin_usuarios() to authenticated;
+
+create or replace function public.admin_set_rol(p_user uuid, p_rol text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.es_admin() then
+    return false;
+  end if;
+  if p_rol not in ('admin', 'vendedor') then
+    raise exception 'Rol inválido: %', p_rol;
+  end if;
+  -- guardarraíl: un admin no puede quitarse el rol a sí mismo (evita
+  -- dejar la plataforma sin administradores por accidente)
+  if p_user = auth.uid() and p_rol <> 'admin' then
+    raise exception 'No puedes quitarte el rol admin a ti mismo';
+  end if;
+  update public.profiles set rol = p_rol where id = p_user;
+  return found;
+end;
+$$;
+
+revoke execute on function public.admin_set_rol(uuid, text) from public, anon;
+grant execute on function public.admin_set_rol(uuid, text) to authenticated;
