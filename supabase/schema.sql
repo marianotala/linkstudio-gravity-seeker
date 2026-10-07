@@ -3539,24 +3539,32 @@ begin
 
   with centros as (
     select
+      (c.ord - 1)::int as idx,
       ST_SetSRID(
-        ST_MakePoint((c->>'lng')::float8, (c->>'lat')::float8), 4326
+        ST_MakePoint((c.val->>'lng')::float8, (c.val->>'lat')::float8), 4326
       ) as pt
-    from jsonb_array_elements(p_centros) c
-    where (c->>'lat') is not null and (c->>'lng') is not null
+    from jsonb_array_elements(p_centros) with ordinality as c(val, ord)
+    where (c.val->>'lat') is not null and (c.val->>'lng') is not null
   ),
+  -- v2: además de la cobertura, la RELACIÓN origen→CP ('origenes':
+  -- índices de p_centros que cubren cada CP) — base del desglose
+  -- tienda×CP; un CP repetido entre tiendas cercanas es correcto
   cobertura as (
-    select cp.codigo_postal, cp.entidad, cp.geom
+    select
+      cp.codigo_postal,
+      cp.entidad,
+      cp.geom,
+      array_agg(ct.idx order by ct.idx) as origenes
     from public.cp_poligonos cp
-    where exists (
-      select 1 from centros ct
-      where cp.geom && ST_Expand(ct.pt, v_deg)
-        and ST_DWithin(cp.geom::geography, ct.pt::geography, p_radio_m)
-    )
+    join centros ct
+      on cp.geom && ST_Expand(ct.pt, v_deg)
+     and ST_DWithin(cp.geom::geography, ct.pt::geography, p_radio_m)
+    group by cp.codigo_postal, cp.entidad, cp.geom
   )
   select coalesce(jsonb_agg(jsonb_build_object(
     'codigo_postal', cb.codigo_postal,
     'entidad', cb.entidad,
+    'origenes', to_jsonb(cb.origenes),
     'municipio', col.municipio,
     'colonias', to_jsonb(col.colonias),
     'total_colonias', col.total,

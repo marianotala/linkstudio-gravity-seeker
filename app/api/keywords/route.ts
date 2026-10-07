@@ -96,10 +96,15 @@ export async function POST(req: Request) {
   }
   const { marca, industria, competidores, cantidad, ciudades } = parsed.data;
 
-  // reparto: ~30% marca, ~35% industria, ~35% competencia
-  const nMarca = Math.round(cantidad * 0.3);
-  const nIndustria = Math.round(cantidad * 0.35);
-  const nCompetencia = cantidad - nMarca - nIndustria;
+  // reparto: ~30% marca, ~35% industria, ~35% competencia; SIN
+  // competidores el bulk se redistribuye 50/50 entre marca e industria
+  // (nada de grupos fantasma en el entregable)
+  const hayCompetencia = competidores.length > 0;
+  const nMarca = Math.round(cantidad * (hayCompetencia ? 0.3 : 0.5));
+  const nCompetencia = hayCompetencia
+    ? cantidad - nMarca - Math.round(cantidad * 0.35)
+    : 0;
+  const nIndustria = cantidad - nMarca - nCompetencia;
 
   const prompt = `Eres un trafficker experto en keyword/contextual targeting para DSPs (Simpli.fi, Eskimi) en México. Genera un bulk de keywords en ESPAÑOL DE MÉXICO para una campaña geolocalizada.
 
@@ -109,15 +114,14 @@ Contexto del plan:
 - Competidores: ${competidores.join(", ") || "(ninguno)"}
 ${ciudades && ciudades.length > 0 ? `- Plazas de la campaña: ${ciudades.join(", ")}` : ""}
 
-Genera EXACTAMENTE tres grupos:
+Genera EXACTAMENTE estos grupos:
 1. "marca" (~${nMarca} keywords): la marca, variantes y abreviaciones, misspellings comunes en México, y marca + intención (ciudad/plaza, "cerca de mí", "sucursal", "promociones", "menú", "precios", "a domicilio"...).
 2. "industria" (~${nIndustria} keywords): categoría genérica, productos y servicios del giro, intents transaccionales ("<producto> a domicilio", "<giro> cerca", "promociones de <producto>") y long-tail local${ciudades && ciudades.length > 0 ? " con las plazas" : ""}.
-3. "competencia" (~${nCompetencia} keywords repartidas entre TODOS los competidores listados): cada competidor con el mismo tratamiento que la marca (nombre, variantes, misspellings, + términos de intención). Si no hay competidores, deja el grupo vacío.
+${hayCompetencia ? `3. "competencia" (~${nCompetencia} keywords repartidas entre TODOS los competidores listados): cada competidor con el mismo tratamiento que la marca (nombre, variantes, misspellings, + términos de intención). Sin inventar competidores: SOLO los listados.` : `NO hay competidores en este plan: el grupo "competencia" debe ser un arreglo VACÍO ([]) — no inventes competidores.`}
 
 Reglas estrictas:
 - Todas en minúsculas, de 1 o más palabras, sin keywords de una sola letra ni genéricas inútiles sueltas ("barato", "tienda").
 - Sin duplicados dentro ni entre grupos.
-- Sin inventar competidores: SOLO los listados.
 - Sin comillas ni signos; solo letras, números y espacios (acentos permitidos).
 
 Responde ÚNICAMENTE un objeto JSON, sin texto adicional:

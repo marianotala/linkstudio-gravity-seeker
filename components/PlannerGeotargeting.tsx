@@ -10,7 +10,7 @@
 // El resultado se guarda como survey rol 'geotargeting' (reabrible y
 // re-ejecutable) y se exporta a xlsx/CSV listos para Simpli.fi/Eskimi.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import RecolectorPuntos, { type PuntoRecolectado } from "./RecolectorPuntos";
 import { Ayuda, Boton, Chip, MensajeError } from "./ui";
 import {
@@ -90,7 +90,11 @@ export default function PlannerGeotargeting({
   // ---- c) resultado
   const [cps, setCps] = useState<CpCobertura[] | null>(null);
   const [origenDesc, setOrigenDesc] = useState("");
-  const [centrosUsados, setCentrosUsados] = useState<{ lat: number; lng: number }[]>([]);
+  const [centrosUsados, setCentrosUsados] = useState<
+    { lat: number; lng: number; nombre?: string }[]
+  >([]);
+  /** Vista por origen: -1 = todos; n = resalta los CPs de esa tienda. */
+  const [origenSel, setOrigenSel] = useState(-1);
   /** Survey reabierto: Guardar actualiza en vez de crear otro. */
   const [surveyAbierto, setSurveyAbierto] = useState<string | null>(null);
 
@@ -106,6 +110,19 @@ export default function PlannerGeotargeting({
   const [kwManual, setKwManual] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [eliminando, setEliminando] = useState<string | null>(null);
+
+  const nombreOrigen = (idx: number) =>
+    centrosUsados[idx]?.nombre?.trim() || `Origen ${idx + 1}`;
+  /** CPs visibles según la vista por origen (resalta en mapa y tabla). */
+  const cpsVisibles = useMemo(() => {
+    if (!cps) return null;
+    if (origenSel < 0) return cps;
+    return cps.filter((c) => (c.origenes ?? []).includes(origenSel));
+  }, [cps, origenSel]);
+  useEffect(() => {
+    if (cpsVisibles) onCobertura(cpsVisibles);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cpsVisibles]);
 
   const totalKeywords = keywords
     ? keywords.marca.length + keywords.industria.length + keywords.competencia.length
@@ -129,15 +146,19 @@ export default function PlannerGeotargeting({
     setError("");
     setNota("");
     try {
-      let centros: { lat: number; lng: number }[];
+      let centros: { lat: number; lng: number; nombre?: string }[];
       let desc: string;
       if (fuente === "manual") {
-        centros = puntosManuales.map((p) => ({ lat: p.lat, lng: p.lng }));
+        centros = puntosManuales.map((p) => ({
+          lat: p.lat,
+          lng: p.lng,
+          nombre: p.nombre,
+        }));
         desc = `${centros.length} puntos recolectados`;
       } else {
         const mapa = await cargarPuntosSurveys([fuente]);
         const pts = mapa.get(fuente) ?? [];
-        centros = pts.map((p) => ({ lat: p.lat, lng: p.lng }));
+        centros = pts.map((p) => ({ lat: p.lat, lng: p.lng, nombre: p.nombre }));
         desc = `${centros.length} puntos de "${surveysFuente.find((s) => s.id === fuente)?.nombre ?? "levantamiento"}"`;
       }
       if (centros.length === 0) {
@@ -157,6 +178,7 @@ export default function PlannerGeotargeting({
       const resultado = await calcularCpsPorRadios(centros, radio);
       setCps(resultado);
       setCentrosUsados(centros);
+      setOrigenSel(-1);
       setOrigenDesc(desc);
       setSurveyAbierto(null);
       onCobertura(resultado);
@@ -251,12 +273,14 @@ export default function PlannerGeotargeting({
     setOrigenDesc(cfg.origen ?? "");
     setCalculando(true);
     try {
-      let centros = cfg.centros ?? [];
+      let centros: { lat: number; lng: number; nombre?: string }[] =
+        cfg.centros ?? [];
       if (cfg.origenSurveyId) {
         const mapa = await cargarPuntosSurveys([cfg.origenSurveyId]);
         centros = (mapa.get(cfg.origenSurveyId) ?? []).map((p) => ({
           lat: p.lat,
           lng: p.lng,
+          nombre: p.nombre,
         }));
       }
       if (centros.length > 0) {
@@ -266,6 +290,7 @@ export default function PlannerGeotargeting({
         );
         setCps(resultado);
         setCentrosUsados(centros.slice(0, MAX_CENTROS_GEO));
+        setOrigenSel(-1);
         onCobertura(resultado);
       } else {
         setCps(null);
@@ -419,7 +444,36 @@ export default function PlannerGeotargeting({
                 {radio >= 1000 ? `${radio / 1000} km` : `${radio} m`} · los
                 polígonos están pintados en el mapa
               </span>
+              {/* vista POR ORIGEN: el mapa y la tabla resaltan los CPs
+                  de la tienda seleccionada */}
+              {centrosUsados.length > 1 && (
+                <select
+                  value={origenSel}
+                  onChange={(e) => setOrigenSel(Number(e.target.value))}
+                  className="campo ml-auto !w-auto max-w-[280px] !py-1 text-xs"
+                  title="Vista por origen: resalta en el mapa los CPs que cubre esa tienda"
+                >
+                  <option value={-1}>
+                    Todos los orígenes ({fmt(centrosUsados.length)})
+                  </option>
+                  {centrosUsados.map((c, i) => (
+                    <option key={i} value={i}>
+                      {nombreOrigen(i)} (
+                      {fmt(
+                        cps.filter((x) => (x.origenes ?? []).includes(i)).length
+                      )}{" "}
+                      CPs)
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
+            {origenSel >= 0 && (
+              <p className="mt-1.5 font-body text-[11px] text-cian">
+                Mostrando los {fmt(cpsVisibles?.length ?? 0)} CPs que cubre “
+                {nombreOrigen(origenSel)}” — el mapa los resalta.
+              </p>
+            )}
             <div className="mt-2 max-h-48 overflow-y-auto rounded-control border border-linea">
               <table className="w-full text-left font-body text-xs">
                 <thead className="sticky top-0 bg-panel2 text-texto-terciario">
@@ -427,21 +481,28 @@ export default function PlannerGeotargeting({
                     <th className="px-3 py-1.5 font-medium">CP</th>
                     <th className="px-3 py-1.5 font-medium">Colonias principales</th>
                     <th className="px-3 py-1.5 font-medium">Municipio</th>
+                    <th className="px-3 py-1.5 text-right font-medium">Tiendas</th>
                   </tr>
                 </thead>
                 <tbody className="text-texto-primario">
-                  {cps.map((c) => (
+                  {(cpsVisibles ?? []).map((c) => (
                     <tr key={c.codigo_postal} className="border-t border-linea/60">
                       <td className="px-3 py-1.5 font-mono text-cian">
                         {c.codigo_postal}
                       </td>
-                      <td className="max-w-[360px] truncate px-3 py-1.5 text-texto-secundario">
+                      <td className="max-w-[340px] truncate px-3 py-1.5 text-texto-secundario">
                         {(c.colonias ?? []).join(" · ") || "—"}
                         {(c.total_colonias ?? 0) > 3 &&
                           ` +${(c.total_colonias ?? 0) - 3}`}
                       </td>
-                      <td className="max-w-[160px] truncate px-3 py-1.5">
+                      <td className="max-w-[150px] truncate px-3 py-1.5">
                         {c.municipio ?? "—"}
+                      </td>
+                      <td
+                        className="px-3 py-1.5 text-right font-mono text-texto-secundario"
+                        title={(c.origenes ?? []).map(nombreOrigen).join(" · ")}
+                      >
+                        {c.origenes?.length ?? "—"}
                       </td>
                     </tr>
                   ))}
@@ -507,7 +568,7 @@ export default function PlannerGeotargeting({
               +
             </Boton>
           </div>
-          {competidores.length > 0 && (
+          {competidores.length > 0 ? (
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               {competidores.map((c) => (
                 <Chip
@@ -521,6 +582,13 @@ export default function PlannerGeotargeting({
                 </Chip>
               ))}
             </div>
+          ) : (
+            <p className="mt-1.5 rounded-control border border-alerta/50 bg-alerta/10 px-3 py-2 font-body text-[11px] leading-relaxed text-alerta">
+              Sin competidores: agrégalos aquí con chips o censa la capa
+              Competencia del plan. Mientras tanto, el bulk se repartirá
+              50/50 entre Marca e Industria (sin grupo de competencia
+              fantasma en el entregable).
+            </p>
           )}
         </div>
 
@@ -642,9 +710,16 @@ export default function PlannerGeotargeting({
         </Boton>
         <Boton
           variante="secundario"
-          onClick={() => exportarGeotargetingXlsx(cps ?? [], keywords, cliente)}
+          onClick={() =>
+            exportarGeotargetingXlsx(
+              cps ?? [],
+              keywords,
+              cliente,
+              centrosUsados.map((c, i) => c.nombre ?? `Origen ${i + 1}`)
+            )
+          }
           disabled={!cps || cps.length === 0}
-          title="Un xlsx con hoja CPs (lista limpia para el DSP) + 3 hojas de keywords"
+          title="Un xlsx con hoja CPs (lista limpia + tiendas que cubren cada CP), hoja CPs_por_origen (tienda×CP para line items) y hojas de keywords por grupo (solo las pobladas)"
         >
           ⤓ Export Geo-Targeting (.xlsx)
         </Boton>
@@ -654,7 +729,11 @@ export default function PlannerGeotargeting({
             variante="fantasma"
             compacto
             onClick={() => exportarBloqueCsv(b, cps ?? [], keywords, cliente)}
-            disabled={b === "cps" ? !cps || cps.length === 0 : !keywords}
+            disabled={
+              b === "cps"
+                ? !cps || cps.length === 0
+                : !keywords || keywords[b].length === 0
+            }
           >
             ↓ CSV {b === "cps" ? "CPs" : ETIQUETA_GRUPO[b]}
           </Boton>

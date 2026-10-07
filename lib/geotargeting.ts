@@ -16,6 +16,9 @@ import type { Viewport } from "./types";
 export interface CpCobertura {
   codigo_postal: string;
   entidad: string;
+  /** Índices de los centros (tiendas) cuyos radios cubren este CP —
+   * un CP repetido entre tiendas cercanas es correcto. */
+  origenes?: number[];
   municipio: string | null;
   /** Colonias principales del catálogo (hasta 3); null sin catálogo. */
   colonias: string[] | null;
@@ -116,7 +119,7 @@ export interface ConfigGeotargeting {
   /** Survey fuente de los centros (para re-ejecutar), si aplica. */
   origenSurveyId?: string | null;
   /** Centros usados (para re-ejecutar cargas manuales; cap 500). */
-  centros?: { lat: number; lng: number }[];
+  centros?: { lat: number; lng: number; nombre?: string }[];
   /** CPs compactos (la geometría se re-consulta al reabrir, gratis). */
   cps: { cp: string; municipio: string | null }[];
   keywords?: BulkKeywords | null;
@@ -177,10 +180,15 @@ const limpiarNombre = (s: string) =>
 export async function exportarGeotargetingXlsx(
   cps: CpCobertura[],
   keywords: BulkKeywords | null,
-  cliente: string
+  cliente: string,
+  /** Nombres de los centros, alineados con CpCobertura.origenes —
+   * habilitan "tiendas_que_cubre" y la hoja CPs_por_origen. */
+  nombresOrigenes?: string[]
 ) {
   const XLSX = await import("xlsx");
   const wb = XLSX.utils.book_new();
+  const nombreDe = (idx: number) =>
+    nombresOrigenes?.[idx]?.trim() || `Origen ${idx + 1}`;
 
   const filasCps = cps.map((c) => ({
     codigo_postal: c.codigo_postal,
@@ -188,17 +196,50 @@ export async function exportarGeotargetingXlsx(
     colonias_principales: (c.colonias ?? []).join(" · "),
     total_colonias: c.total_colonias ?? "",
     entidad: c.entidad,
+    tiendas_que_cubre: c.origenes?.length ?? "",
+    tiendas: (c.origenes ?? []).map(nombreDe).join(" · "),
   }));
   const hojaCps = XLSX.utils.json_to_sheet(
     filasCps.length > 0 ? filasCps : [{ codigo_postal: "" }]
   );
-  hojaCps["!cols"] = [{ wch: 14 }, { wch: 24 }, { wch: 46 }, { wch: 13 }, { wch: 9 }];
+  hojaCps["!cols"] = [
+    { wch: 14 },
+    { wch: 24 },
+    { wch: 46 },
+    { wch: 13 },
+    { wch: 9 },
+    { wch: 16 },
+    { wch: 60 },
+  ];
   XLSX.utils.book_append_sheet(wb, hojaCps, "CPs");
 
+  // desglose tienda×CP: la base para armar line items y presupuesto
+  // por tienda en el DSP (una fila por combinación origen→CP)
+  const filasPorOrigen = cps
+    .flatMap((c) =>
+      (c.origenes ?? []).map((idx) => ({
+        idx,
+        origen: nombreDe(idx),
+        codigo_postal: c.codigo_postal,
+        municipio: c.municipio ?? "",
+        colonias_principales: (c.colonias ?? []).join(" · "),
+      }))
+    )
+    .sort(
+      (a, b) =>
+        a.idx - b.idx || a.codigo_postal.localeCompare(b.codigo_postal)
+    )
+    .map(({ idx: _idx, ...fila }) => fila);
+  if (filasPorOrigen.length > 0) {
+    const hojaOrigen = XLSX.utils.json_to_sheet(filasPorOrigen);
+    hojaOrigen["!cols"] = [{ wch: 34 }, { wch: 14 }, { wch: 24 }, { wch: 46 }];
+    XLSX.utils.book_append_sheet(wb, hojaOrigen, "CPs_por_origen");
+  }
+
+  // keywords: SOLO hojas con contenido — nada de grupos fantasma
   const hojaKw = (lista: string[], titulo: string) => {
-    const hoja = XLSX.utils.json_to_sheet(
-      (lista.length > 0 ? lista : [""]).map((k) => ({ keyword: k }))
-    );
+    if (lista.length === 0) return;
+    const hoja = XLSX.utils.json_to_sheet(lista.map((k) => ({ keyword: k })));
     hoja["!cols"] = [{ wch: 44 }];
     XLSX.utils.book_append_sheet(wb, hoja, titulo);
   };
