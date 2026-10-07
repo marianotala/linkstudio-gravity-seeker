@@ -513,6 +513,75 @@ export async function cargarPuntosCrudosSurvey(
   return filas;
 }
 
+/** NOTA METODOLÓGICA del detalle por punto (tabla, exports y PDF). */
+export const NOTA_DETALLE_PUNTO =
+  "Universo del radio individual de cada punto; los radios cercanos comparten población (la suma de individuales excede al consolidado deduplicado) — para presupuesto son PESOS RELATIVOS de cada punto, no poblaciones exclusivas.";
+
+/** Radio del detalle por punto de un levantamiento: el radio del
+ * análisis (modo orígenes) o el radio de influencia (recolección). */
+export function radioDetalleDe(cfg: Record<string, unknown> | null): number {
+  const r = Number(cfg?.radius);
+  if (Number.isFinite(r) && r > 0) return r;
+  const ri = Number(cfg?.radioInfluencia);
+  if (Number.isFinite(ri) && ri > 0) return ri;
+  return 500;
+}
+
+/**
+ * DETALLE POR PUNTO de un levantamiento: universo 18+ y NSE dominante
+ * del buffer INDIVIDUAL de cada punto, calculado con la maquinaria por
+ * lotes (PostGIS propio — 0 consultas a APIs externas) y persistido en
+ * survey_points. Corre al Calcular de las secciones (Proximidad es su
+ * caso de uso: asignación de presupuesto por PDV) y retroactivamente
+ * con el botón "Detalle por punto" — sin re-pagar nada.
+ */
+export async function calcularDetallePorPuntoSurvey(
+  surveyId: string,
+  radioM: number,
+  onEstado?: (texto: string) => void,
+  opciones?: { incluirExistentes?: boolean }
+): Promise<{ calculados: number; pendientes: number; total: number }> {
+  const { calcularUniversosPorGeocerca } = await import("./universos-lotes");
+  const { clasificarNse } = await import("./nse");
+  const crudos = await cargarPuntosCrudosSurvey(surveyId);
+  const pendientes = opciones?.incluirExistentes
+    ? crudos
+    : crudos.filter((p) => p.universo_individual == null);
+  if (pendientes.length === 0) {
+    return { calculados: 0, pendientes: 0, total: crudos.length };
+  }
+  onEstado?.(
+    `Detalle por punto · ${pendientes.length.toLocaleString("es-MX")} puntos…`
+  );
+  const porId = await calcularUniversosPorGeocerca(
+    pendientes.map((p, i) => ({
+      id: `${i}`,
+      lat: p.lat,
+      lng: p.lng,
+      radio_m: radioM,
+    })),
+    {
+      onProgreso: (lote, total) =>
+        onEstado?.(`Detalle por punto · lote ${lote + 1} de ${total}…`),
+    }
+  );
+  const nuevos = new Map<string, { universo: number; nse: string | null }>();
+  pendientes.forEach((p, i) => {
+    const g = porId.get(`${i}`);
+    if (!g) return;
+    nuevos.set(p.place_id, {
+      universo: Math.round(g.adultos18),
+      nse: clasificarNse(g.nse_proxy)?.etiqueta ?? null,
+    });
+  });
+  if (nuevos.size > 0) await guardarDetallePuntos(surveyId, nuevos);
+  return {
+    calculados: nuevos.size,
+    pendientes: pendientes.length,
+    total: crudos.length,
+  };
+}
+
 /**
  * FASE 18 — persiste el detalle por punto (universo 18+ del buffer
  * individual + NSE dominante) en survey_points, para no recalcular en

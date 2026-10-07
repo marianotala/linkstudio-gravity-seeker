@@ -69,6 +69,7 @@ import {
   eliminarDescartadosDeRun,
   ETIQUETA_ROL,
   guardarDescartados,
+  calcularDetallePorPuntoSurvey,
   guardarPuntosPlanner,
   guardarUniversosPlanner,
   guardarUniversosPorCapa,
@@ -1165,6 +1166,20 @@ export default function SeekerApp({
         await guardarUniversosPlanner(run, universosRun);
       }
       await actualizarRunPlanner(run, { status: "completado", progreso: null });
+      // DETALLE POR PUNTO (universo/NSE del radio individual de cada
+      // punto): el insumo de presupuesto por PDV — PostGIS, gratis;
+      // censos muy grandes quedan al botón retroactivo del plan
+      if (radioCapaM != null && lista.length > 0 && lista.length <= 2000) {
+        try {
+          for (const sid of Array.from(run.surveys.values())) {
+            await calcularDetallePorPuntoSurvey(sid, radioCapaM, (t) =>
+              reportar("busy", t)
+            );
+          }
+        } catch (e) {
+          console.error("Detalle por punto falló (retroactivo disponible):", e);
+        }
+      }
       // el run queda a la mano para la depuración post-censo
       ultimoRunDepRef.current = { run, radioCapaM };
       setNotaPlanner("");

@@ -30,6 +30,7 @@ import {
 import type { PuntoRecolectado } from "./RecolectorPuntos";
 import type { TacticaClave } from "@/lib/tacticas";
 import {
+  calcularDetallePorPuntoSurvey,
   cargarDescartados,
   cargarPuntosCrudosSurvey,
   cargarPuntosSurveys,
@@ -41,6 +42,8 @@ import {
   deduplicarEntreSurveys,
   geocercasDeSurvey,
   moverSurveyARol,
+  NOTA_DETALLE_PUNTO,
+  radioDetalleDe,
   rescatarDescartados,
   type DescarteGuardado,
   type PuntoSurvey,
@@ -167,6 +170,103 @@ const SECCIONES: {
 ];
 
 const fmt = (n: number) => n.toLocaleString("es-MX");
+
+/** Tabla por PDV (Proximidad): universo 18+ individual, NSE dominante
+ * y % del universo — la base de la asignación de presupuesto por
+ * tienda, ordenable por universo. */
+function TablaDetallePorPunto({
+  surveyId,
+  refresco,
+}: {
+  surveyId: string;
+  refresco: number;
+}) {
+  const [filas, setFilas] = useState<PuntoSurvey[] | null>(null);
+  const [desc, setDesc] = useState(true);
+  useEffect(() => {
+    let vivo = true;
+    setFilas(null);
+    (async () => {
+      const crudos = await cargarPuntosCrudosSurvey(surveyId);
+      if (vivo) setFilas(crudos);
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [surveyId, refresco]);
+
+  if (filas === null) {
+    return (
+      <p className="font-body text-[11px] text-texto-terciario">
+        Cargando detalle por punto…
+      </p>
+    );
+  }
+  const conDato = filas.filter((f) => f.universo_individual != null);
+  if (conDato.length === 0) {
+    return (
+      <p className="font-body text-[11px] text-texto-terciario">
+        Sin detalle por punto todavía — usa el botón «Detalle por punto» del
+        levantamiento (PostGIS propio, gratis, sin re-pagar consultas).
+      </p>
+    );
+  }
+  const suma = conDato.reduce((t, f) => t + (f.universo_individual ?? 0), 0);
+  const orden = [...filas].sort((a, b) =>
+    desc
+      ? (b.universo_individual ?? -1) - (a.universo_individual ?? -1)
+      : (a.universo_individual ?? Number.MAX_SAFE_INTEGER) -
+        (b.universo_individual ?? Number.MAX_SAFE_INTEGER)
+  );
+  return (
+    <div>
+      <div className="max-h-56 overflow-y-auto rounded-control border border-linea">
+        <table className="w-full text-left font-body text-xs">
+          <thead className="sticky top-0 bg-panel2 text-texto-terciario">
+            <tr>
+              <th className="px-3 py-1.5 font-medium">PDV</th>
+              <th className="px-3 py-1.5 text-right font-medium">
+                <button
+                  onClick={() => setDesc((d) => !d)}
+                  className="hover:text-texto-primario"
+                  title="Ordenar por universo"
+                >
+                  Universo 18+ individual {desc ? "▾" : "▴"}
+                </button>
+              </th>
+              <th className="px-3 py-1.5 text-right font-medium">NSE</th>
+              <th className="px-3 py-1.5 text-right font-medium">% del universo</th>
+            </tr>
+          </thead>
+          <tbody className="text-texto-primario">
+            {orden.map((f) => (
+              <tr key={f.place_id} className="border-t border-linea/60">
+                <td className="max-w-[280px] truncate px-3 py-1.5">{f.nombre}</td>
+                <td className="px-3 py-1.5 text-right font-mono text-cian">
+                  {f.universo_individual != null
+                    ? fmt(f.universo_individual)
+                    : "—"}
+                </td>
+                <td className="px-3 py-1.5 text-right font-mono text-violeta">
+                  {f.nse_dominante ?? "—"}
+                </td>
+                <td className="px-3 py-1.5 text-right font-mono text-texto-secundario">
+                  {f.universo_individual != null && suma > 0
+                    ? `${((100 * f.universo_individual) / suma).toLocaleString("es-MX", { maximumFractionDigits: 1 })}%`
+                    : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-1 font-body text-[10px] leading-relaxed text-texto-terciario">
+        Suma de individuales: <span className="font-mono">{fmt(suma)}</span> ·{" "}
+        {NOTA_DETALLE_PUNTO}
+      </p>
+    </div>
+  );
+}
 
 export default function PlannerView({
   usuario,
@@ -844,16 +944,25 @@ export default function PlannerView({
   /** Export data del levantamiento como Excel NATIVO (.xlsx) — cero
    * ambigüedad de encoding; el CSV con BOM queda como alternativa. */
   async function exportarXlsxSurvey(s: SurveyFila) {
-    const pts = await puntosParaExport(s);
+    // crudos: traen el detalle por punto (universo/NSE del radio
+    // individual) — la base de la asignación de presupuesto por PDV
+    const crudos = await cargarPuntosCrudosSurvey(s.id);
+    const sumaInd = crudos.reduce((t, r) => t + (r.universo_individual ?? 0), 0);
     const XLSX = await import("xlsx");
     const wb = XLSX.utils.book_new();
-    const filas = pts.map((p) => ({
-      nombre: p.nombre,
-      direccion: p.direccion ?? "",
-      lat: p.lat,
-      lng: p.lng,
-      cp: p.cp ?? "",
-      categoria: p.categoria ?? "",
+    const filas = crudos.map((r) => ({
+      nombre: r.nombre,
+      direccion: r.direccion ?? "",
+      lat: r.lat,
+      lng: r.lng,
+      cp: r.cp ?? "",
+      categoria: r.categoria ?? "",
+      universo_18_radio_individual: r.universo_individual ?? null,
+      nse_dominante: r.nse_dominante ?? "",
+      pct_del_universo:
+        r.universo_individual != null && sumaInd > 0
+          ? Math.round((10000 * r.universo_individual) / sumaInd) / 100
+          : null,
     }));
     const hoja = XLSX.utils.json_to_sheet(filas);
     hoja["!cols"] = [
@@ -863,22 +972,36 @@ export default function PlannerView({
       { wch: 11 },
       { wch: 8 },
       { wch: 22 },
+      { wch: 22 },
+      { wch: 13 },
+      { wch: 15 },
     ];
     XLSX.utils.book_append_sheet(wb, hoja, "Puntos");
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet([{ Nota: NOTA_DETALLE_PUNTO }]),
+      "Metodología"
+    );
     XLSX.writeFile(wb, `seeker_${nombreArchivo(s)}.xlsx`);
   }
 
   async function exportarCsvSurvey(s: SurveyFila) {
-    const pts = await puntosParaExport(s);
+    const crudos = await cargarPuntosCrudosSurvey(s.id);
+    const sumaInd = crudos.reduce((t, r) => t + (r.universo_individual ?? 0), 0);
     const filas = [
-      "nombre,direccion,lat,lng,categoria",
-      ...pts.map((p) =>
+      "nombre,direccion,lat,lng,categoria,universo_18_radio_individual,nse_dominante,pct_del_universo",
+      ...crudos.map((r) =>
         [
-          campoCsv(p.nombre),
-          campoCsv(p.direccion ?? ""),
-          p.lat,
-          p.lng,
-          campoCsv(p.categoria ?? ""),
+          campoCsv(r.nombre),
+          campoCsv(r.direccion ?? ""),
+          r.lat,
+          r.lng,
+          campoCsv(r.categoria ?? ""),
+          r.universo_individual ?? "",
+          campoCsv(r.nse_dominante ?? ""),
+          r.universo_individual != null && sumaInd > 0
+            ? Math.round((10000 * r.universo_individual) / sumaInd) / 100
+            : "",
         ].join(",")
       ),
     ];
@@ -907,6 +1030,36 @@ export default function PlannerView({
       JSON.stringify(fc, null, 2),
       "application/geo+json"
     );
+  }
+
+  /** DETALLE POR PUNTO retroactivo: llena universo_individual y
+   * nse_dominante de los puntos que falten — PostGIS, gratis. */
+  const [detallando, setDetallando] = useState<{ id: string; texto: string } | null>(null);
+  const [refrescoDetalle, setRefrescoDetalle] = useState(0);
+  async function detallePorPunto(s: SurveyFila) {
+    setDetallando({ id: s.id, texto: "calculando…" });
+    try {
+      const r = await calcularDetallePorPuntoSurvey(
+        s.id,
+        radioDetalleDe(s.configuracion),
+        (t) => setDetallando({ id: s.id, texto: t })
+      );
+      setAvisoDivision({
+        tipo: "ok",
+        texto:
+          r.pendientes === 0
+            ? `“${nombreDe(s)}” ya tiene el detalle por punto completo (${fmt(r.total)} puntos).`
+            : `Detalle por punto de “${nombreDe(s)}”: ${fmt(r.calculados)} de ${fmt(r.pendientes)} puntos con universo 18+ y NSE de su radio individual — 0 consultas a Google.`,
+      });
+      setRefrescoDetalle((n) => n + 1);
+    } catch (e) {
+      setAvisoDivision({
+        tipo: "error",
+        texto: e instanceof Error ? e.message : "No se pudo calcular el detalle",
+      });
+    } finally {
+      setDetallando(null);
+    }
   }
 
   /** Reclasificar un levantamiento a otra sección ("Mover a…"):
@@ -1532,6 +1685,18 @@ export default function PlannerView({
                                         </button>
                                       </>
                                     )}
+                                    {s.rol !== "ooh" && s.rol !== "geotargeting" && (
+                                      <button
+                                        onClick={() => detallePorPunto(s)}
+                                        disabled={detallando !== null}
+                                        className="rounded border border-linea bg-panel2 px-2 py-0.5 text-[10px] text-zinc-400 hover:border-cian hover:text-cian disabled:opacity-50"
+                                        title="Universo 18+ y NSE del radio INDIVIDUAL de cada punto (la base del presupuesto por PDV) — PostGIS propio, gratis, sin re-pagar consultas"
+                                      >
+                                        {detallando?.id === s.id
+                                          ? `⟳ ${detallando.texto}`
+                                          : "Detalle por punto"}
+                                      </button>
+                                    )}
                                     <button
                                       onClick={() => recalcularUniverso(s)}
                                       disabled={recalculando !== null}
@@ -1631,6 +1796,23 @@ export default function PlannerView({
                   </div>
                 )}
               </div>
+
+              {/* detalle por PDV (Proximidad): presupuesto por tienda */}
+              {seccion === "proximidad" && surveySeleccionado && (
+                <div className="shrink-0 px-5 pt-3">
+                  <p className="mb-1.5 font-body text-[10px] font-semibold uppercase tracking-[0.2em] text-texto-terciario">
+                    Detalle por PDV de “{nombreDe(surveySeleccionado)}”
+                    <span className="ml-2 font-normal normal-case tracking-normal">
+                      universo del radio individual — base de la asignación de
+                      presupuesto por tienda
+                    </span>
+                  </p>
+                  <TablaDetallePorPunto
+                    surveyId={surveySeleccionado.id}
+                    refresco={refrescoDetalle}
+                  />
+                </div>
+              )}
 
               {/* universo del levantamiento seleccionado */}
               {universoSeleccionado && surveySeleccionado && (

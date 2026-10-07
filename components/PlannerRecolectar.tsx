@@ -16,6 +16,7 @@ import CategoriaBuscador, {
 } from "./CategoriaBuscador";
 import BuscadorLugar from "./BuscadorLugar";
 import { Chip } from "./ui";
+import { calcularDetallePorPuntoSurvey } from "@/lib/planner";
 import { useAprobacionCorrida } from "./AprobacionCorrida";
 import PanelDepuracion from "./DepuracionCenso";
 import RecolectorPuntos, {
@@ -182,6 +183,14 @@ async function guardarListaComoSurvey(args: {
   await guardarPuntosPlanner(run, puntos);
   await guardarUniversosPlanner(run, u);
   await actualizarRunPlanner(run, { status: "completado", progreso: null });
+  // DETALLE POR PUNTO (universo 18+ y NSE del buffer individual): el
+  // insumo de presupuesto por PDV — PostGIS propio, gratis, no fatal
+  try {
+    const surveyId = run.surveys.values().next().value!;
+    await calcularDetallePorPuntoSurvey(surveyId, radioM, onEstado);
+  } catch (e) {
+    console.error("Detalle por punto falló (retroactivo disponible):", e);
+  }
   if (!u.disponible) {
     throw new Error(
       `Levantamiento guardado, pero los universos no estuvieron disponibles: ${u.mensaje ?? ""}`
@@ -1192,6 +1201,19 @@ export function SeccionCompetencia({
       // dónde buscar, no el territorio de la capa)
       await guardarUniversosPorCapa(elRun, lista, radio, setEstado);
       await actualizarRunPlanner(elRun, { status: "completado", progreso: null });
+
+      // DETALLE POR PUNTO por capa (universo/NSE del radio individual):
+      // corre al Calcular; censos muy grandes quedan al botón
+      // retroactivo "Detalle por punto" (sin re-pagar nada)
+      if (lista.length <= 2000) {
+        try {
+          for (const sid of Array.from(elRun.surveys.values())) {
+            await calcularDetallePorPuntoSurvey(sid, radio, setEstado);
+          }
+        } catch (e) {
+          console.error("Detalle por punto falló (retroactivo disponible):", e);
+        }
+      }
 
       // DESCARTADOS: ya se pagaron — se persisten para el panel de
       // rescate y el re-filtrado sin consultas nuevas (retención 30 días)

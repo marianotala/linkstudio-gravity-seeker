@@ -19,6 +19,7 @@ import {
   ETIQUETA_ROL,
   geocercasDeSurvey,
   guardarDetallePuntos,
+  NOTA_DETALLE_PUNTO,
   puntoAPoi,
   type PuntoSurvey,
 } from "@/lib/planner";
@@ -330,8 +331,11 @@ export default function ExportarProyecto({
       // APIs) SOLO para los puntos sin dato y se persiste en
       // survey_points para no recalcular en cada export.
       const detallePuntos: Record<string, FilaDetallePunto[]> = {};
-      if (formato === "slides") {
+      {
         for (const s of normales) {
+          // slides: detalle de TODAS las capas; one-pager: Proximidad
+          // (su tabla por PDV es el entregable de presupuestación)
+          if (formato !== "slides" && s.rol !== "proximidad") continue;
           const crudos = crudosPorSurvey.get(s.id) ?? [];
           if (crudos.length === 0) continue;
           const radioIndividual =
@@ -602,6 +606,9 @@ export default function ExportarProyecto({
             : [];
         })(),
         "Universo RESIDENCIAL (población que vive en la zona): no incluye población flotante ni turismo — en plazas turísticas, complementar con la fase Footfall",
+        ...(Object.keys(detallePuntos).length > 0
+          ? [`Detalle por punto: ${NOTA_DETALLE_PUNTO}`]
+          : []),
         ...(geoResumen
           ? [
               `Geo-Targeting: ${geoResumen.cps.toLocaleString("es-MX")} CPs de cobertura (polígonos de Correos de México, intersección local)${geoResumen.keywords > 0 ? ` · bulk de ${geoResumen.keywords.toLocaleString("es-MX")} keywords generadas por IA con el contexto del plan — PROPUESTA EDITABLE, no data de volumen de búsqueda` : ""}`,
@@ -748,6 +755,10 @@ export default function ExportarProyecto({
             ((s.configuracion?.origenes as Origin[]) ??
               (s.configuracion?.centers as Origin[]) ??
               []) as Origin[];
+          const sumaInd = crudos.reduce(
+            (t, r) => t + (r.universo_individual ?? 0),
+            0
+          );
           const filas = crudos.map((r) => {
             const p = puntoAPoi(r);
             return {
@@ -764,6 +775,11 @@ export default function ExportarProyecto({
               Origen: origenes[p.origenIdx]?.nombre ?? "",
               "Universo 18+ (radio individual)": r.universo_individual ?? null,
               "NSE dominante": r.nse_dominante ?? "",
+              // base directa de la repartición de presupuesto por PDV
+              "% del universo (peso relativo)":
+                r.universo_individual != null && sumaInd > 0
+                  ? Math.round((10000 * r.universo_individual) / sumaInd) / 100
+                  : null,
             };
           });
           XLSX.utils.book_append_sheet(
@@ -773,6 +789,18 @@ export default function ExportarProyecto({
           );
         }
       }
+
+      // nota metodológica del detalle por punto (traslape de radios)
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet([
+          { Nota: NOTA_DETALLE_PUNTO },
+          {
+            Nota: "El % del universo se calcula por levantamiento: universo individual del punto / suma de individuales de su capa.",
+          },
+        ]),
+        "Metodología"
+      );
 
       const limpio =
         cliente

@@ -161,6 +161,11 @@ const FILAS_PROPIOS = 12;
 const FILAS_PANTALLAS = 12;
 const MAX_SIN_COBERTURA = 12;
 const EJEMPLOS_PROXIMIDAD = 6;
+// tabla de detalle por PDV en el one-pager (Proximidad): el entregable
+// de presupuestación — top N por universo, el resto al Export data
+const FILAS_DETALLE_PROX = 20;
+const NOTA_TRASLAPE_DETALLE =
+  "Universo del radio individual de cada punto; los radios cercanos comparten población (la suma de individuales excede al consolidado deduplicado) — para presupuesto son pesos relativos, no poblaciones exclusivas.";
 const ALTO_MAPA_OOH = Math.round((CONT * 7) / 16);
 
 // ------------------------------------------------------------------
@@ -438,6 +443,16 @@ function estimarAltura(d: PlanProyectoDatos, titulo: string): number {
   if (proximidad.length > 0) {
     h += 26 + 60 + altoBloqueDemografico(universoDeRol(d, "proximidad"));
     h += proximidad.length * 20 + 34; // filas por capa + línea de ejemplos
+    // tabla de detalle por PDV (si el plan trae el detalle calculado)
+    const detProx = proximidad.reduce(
+      (t, c) =>
+        t +
+        (d.detallePuntos?.[c.id]?.filter((f) => f.universo != null).length ?? 0),
+      0
+    );
+    if (detProx > 0) {
+      h += 24 + Math.min(detProx, FILAS_DETALLE_PROX) * 14 + 46;
+    }
   }
   if (d.ooh) {
     h += 26 + 60 + 78; // separador + sección + cifras del cruce
@@ -830,6 +845,70 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                 .join(" · ")}
               .
             </Text>
+
+            {/* DETALLE POR PDV: universo del radio individual + % del
+                universo — la base de la asignación de presupuesto */}
+            {(() => {
+              const filasDet = proximidad
+                .flatMap((c) => d.detallePuntos?.[c.id] ?? [])
+                .filter((f) => f.universo != null);
+              if (filasDet.length === 0) return null;
+              const suma = filasDet.reduce((t, f) => t + (f.universo ?? 0), 0);
+              const top = [...filasDet]
+                .sort((a, b) => (b.universo ?? 0) - (a.universo ?? 0))
+                .slice(0, FILAS_DETALLE_PROX);
+              return (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={labelCol}>
+                    DETALLE POR PDV — BASE DE PRESUPUESTO ({fmt(filasDet.length)} PUNTOS)
+                  </Text>
+                  <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 3 }}>
+                    <Text style={[celdaTh, { flex: 1 }]}>PDV</Text>
+                    <Text style={[celdaTh, { width: 74 }]}>CIUDAD</Text>
+                    <Text style={[celdaTh, { width: 76, textAlign: "right" }]}>UNIVERSO 18+</Text>
+                    <Text style={[celdaTh, { width: 34, textAlign: "right" }]}>NSE</Text>
+                    <Text style={[celdaTh, { width: 70, textAlign: "right" }]}>% DEL UNIVERSO</Text>
+                  </View>
+                  {top.map((f, i) => (
+                    <View
+                      key={`${f.nombre}-${i}`}
+                      style={{
+                        flexDirection: "row",
+                        paddingTop: 2.5,
+                        paddingBottom: 2.5,
+                        backgroundColor: i % 2 === 1 ? PANEL : undefined,
+                      }}
+                    >
+                      <Text style={[celdaTd, { flex: 1, color: BLANCO }]}>
+                        {f.nombre.length > 42 ? f.nombre.slice(0, 41) + "…" : f.nombre}
+                      </Text>
+                      <Text style={[celdaTd, { width: 74, color: GRIS }]}>
+                        {f.ciudad.length > 13 ? f.ciudad.slice(0, 12) + "…" : f.ciudad}
+                      </Text>
+                      <Text style={[celdaTd, { width: 76, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
+                        {f.universo != null ? fmt(f.universo) : "—"}
+                      </Text>
+                      <Text style={[celdaTd, { width: 34, textAlign: "right", fontFamily: "DMMono", color: VIOLETA }]}>
+                        {f.nse ?? "—"}
+                      </Text>
+                      <Text style={[celdaTd, { width: 70, textAlign: "right", fontFamily: "DMMono", color: GRIS }]}>
+                        {f.universo != null && suma > 0
+                          ? `${((100 * f.universo) / suma).toLocaleString("es-MX", { maximumFractionDigits: 1 })}%`
+                          : "—"}
+                      </Text>
+                    </View>
+                  ))}
+                  {filasDet.length > top.length && (
+                    <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 5 }}>
+                      +{fmt(filasDet.length - top.length)} PDVs más — detalle completo con % del universo en el Export data (Excel).
+                    </Text>
+                  )}
+                  <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 5, lineHeight: 1.45 }}>
+                    {NOTA_TRASLAPE_DETALLE}
+                  </Text>
+                </View>
+              );
+            })()}
           </View>
         )}
 
