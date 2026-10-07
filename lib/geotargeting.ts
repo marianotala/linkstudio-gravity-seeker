@@ -402,6 +402,26 @@ export function exportarGeoJsonPorOrigen(
   );
 }
 
+/** Cobertura agrupada por tienda, con el nombre de archivo slugificado
+ * (dos sucursales homónimas no se pisan dentro de un ZIP). */
+function coberturaPorTienda(
+  cps: CpCobertura[],
+  nombresOrigenes: string[]
+): { archivo: string; propios: CpCobertura[] }[] {
+  const nombreDe = nombreOrigenDe(nombresOrigenes);
+  const usados = new Set<string>();
+  const salida: { archivo: string; propios: CpCobertura[] }[] = [];
+  for (let idx = 0; idx < nombresOrigenes.length; idx++) {
+    const propios = cps.filter((c) => (c.origenes ?? []).includes(idx));
+    if (propios.length === 0) continue;
+    let archivo = slugTienda(nombreDe(idx));
+    if (usados.has(archivo)) archivo = `${archivo}-${idx + 1}`;
+    usados.add(archivo);
+    salida.push({ archivo, propios });
+  }
+  return salida;
+}
+
 /** geotargeting_[plan]_origenes.zip — UN .geojson por tienda (solo con
  * los CPs que ESA tienda cubre), nombrado por la tienda slugificada. */
 export async function exportarZipPorOrigen(
@@ -411,27 +431,97 @@ export async function exportarZipPorOrigen(
 ) {
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();
-  const nombreDe = nombreOrigenDe(nombresOrigenes);
-  const usados = new Set<string>();
-  for (let idx = 0; idx < nombresOrigenes.length; idx++) {
-    const propios = cps.filter((c) => (c.origenes ?? []).includes(idx));
-    if (propios.length === 0) continue;
-    let archivo = slugTienda(nombreDe(idx));
-    // dos sucursales con el mismo nombre no se pisan dentro del ZIP
-    if (usados.has(archivo)) archivo = `${archivo}-${idx + 1}`;
-    usados.add(archivo);
+  for (const t of coberturaPorTienda(cps, nombresOrigenes)) {
     zip.file(
-      `${archivo}.geojson`,
-      JSON.stringify(featureCollectionCobertura(propios, nombresOrigenes))
+      `${t.archivo}.geojson`,
+      JSON.stringify(featureCollectionCobertura(t.propios, nombresOrigenes))
     );
   }
   const blob = await zip.generateAsync({ type: "blob" });
   descargarBlob(`geotargeting_${limpiarNombre(plan)}_origenes.zip`, blob);
 }
 
+// ------------------------------------------------------------------
+// Formatos de salida por DSP (extensible): cada DSP serializa la
+// lista de CPs a su formato de carga masiva. Hoy: Simpli.fi. Si
+// Eskimi u otro pide formato propio, se agrega aquí otra variante y
+// los mismos exports (global / por tienda / paquete) lo sirven.
+// ------------------------------------------------------------------
+
+export type FormatoDsp = "simplifi";
+
+/** Código de país ISO-3166 alpha-3 que piden los bulk uploads. */
+const PAIS_ISO3 = "MEX";
+
+const SERIALIZADORES_DSP: Record<
+  FormatoDsp,
+  {
+    etiqueta: string;
+    /** Sufijo de archivo ("simplifi" → geotargeting_x_simplifi.csv). */
+    sufijo: string;
+    mime: string;
+    /** Serializa la lista de CPs al formato EXACTO que el DSP traga. */
+    contenido: (cps: CpCobertura[]) => string;
+  }
+> = {
+  // Carga masiva de Simpli.fi: una línea por CP en formato
+  // "codigo_postal,ISO3" ("44100,MEX") — sin encabezado, sin comillas,
+  // sin columnas extra, sin BOM. Los CPs son texto del catálogo, así
+  // que los ceros iniciales se preservan ("01080,MEX").
+  simplifi: {
+    etiqueta: "Simpli.fi",
+    sufijo: "simplifi",
+    mime: "text/csv;charset=utf-8",
+    contenido: (cps) =>
+      cps.map((c) => `${c.codigo_postal},${PAIS_ISO3}`).join("\n"),
+  },
+};
+
+/** Contenido del bulk de un DSP (para ZIPs y pruebas). */
+export function contenidoDsp(formato: FormatoDsp, cps: CpCobertura[]): string {
+  return SERIALIZADORES_DSP[formato].contenido(cps);
+}
+
+/** geotargeting_[plan]_simplifi.csv — el bulk global listo para subir
+ * al DSP sin editar nada. */
+export function exportarCsvDsp(
+  formato: FormatoDsp,
+  cps: CpCobertura[],
+  plan: string
+) {
+  const s = SERIALIZADORES_DSP[formato];
+  descargarBlob(
+    `geotargeting_${limpiarNombre(plan)}_${s.sufijo}.csv`,
+    new Blob([s.contenido(cps)], { type: s.mime })
+  );
+}
+
+/** geotargeting_[plan]_simplifi_origenes.zip — UN CSV por tienda con
+ * SUS CPs, para crear el line item de cada sucursal subiendo su
+ * archivo. */
+export async function exportarZipDspPorOrigen(
+  formato: FormatoDsp,
+  cps: CpCobertura[],
+  plan: string,
+  nombresOrigenes: string[]
+) {
+  const s = SERIALIZADORES_DSP[formato];
+  const JSZip = (await import("jszip")).default;
+  const zip = new JSZip();
+  for (const t of coberturaPorTienda(cps, nombresOrigenes)) {
+    zip.file(`${t.archivo}.csv`, s.contenido(t.propios));
+  }
+  const blob = await zip.generateAsync({ type: "blob" });
+  descargarBlob(
+    `geotargeting_${limpiarNombre(plan)}_${s.sufijo}_origenes.zip`,
+    blob
+  );
+}
+
 /** ZIP integral del proyecto: cobertura global + por origen + un
- * .geojson por tienda en origenes/ — todo el geo-targeting en UNA
- * descarga desde el Export data. */
+ * .geojson por tienda en origenes/ + los bulks CSV de Simpli.fi
+ * (global y por tienda) — todo el geo-targeting en UNA descarga
+ * desde el Export data. */
 export async function exportarZipProyectoGeo(
   cps: CpCobertura[],
   plan: string,
@@ -444,22 +534,20 @@ export async function exportarZipProyectoGeo(
     `${base}_cobertura.geojson`,
     JSON.stringify(featureCollectionCobertura(cps, nombresOrigenes))
   );
+  zip.file(`${base}_simplifi.csv`, contenidoDsp("simplifi", cps));
   if (nombresOrigenes.length > 0) {
     zip.file(
       `${base}_por_origen.geojson`,
       JSON.stringify(featureCollectionPorOrigen(cps, nombresOrigenes))
     );
-    const nombreDe = nombreOrigenDe(nombresOrigenes);
-    const usados = new Set<string>();
-    for (let idx = 0; idx < nombresOrigenes.length; idx++) {
-      const propios = cps.filter((c) => (c.origenes ?? []).includes(idx));
-      if (propios.length === 0) continue;
-      let archivo = slugTienda(nombreDe(idx));
-      if (usados.has(archivo)) archivo = `${archivo}-${idx + 1}`;
-      usados.add(archivo);
+    for (const t of coberturaPorTienda(cps, nombresOrigenes)) {
       zip.file(
-        `origenes/${archivo}.geojson`,
-        JSON.stringify(featureCollectionCobertura(propios, nombresOrigenes))
+        `origenes/${t.archivo}.geojson`,
+        JSON.stringify(featureCollectionCobertura(t.propios, nombresOrigenes))
+      );
+      zip.file(
+        `simplifi_origenes/${t.archivo}.csv`,
+        contenidoDsp("simplifi", t.propios)
       );
     }
   }

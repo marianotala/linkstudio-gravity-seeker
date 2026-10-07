@@ -18,9 +18,11 @@ import {
   CANTIDADES_KEYWORDS,
   costoEstimadoKeywordsUsd,
   exportarBloqueCsv,
+  exportarCsvDsp,
   exportarGeoJsonCobertura,
   exportarGeoJsonPorOrigen,
   exportarGeotargetingXlsx,
+  exportarZipDspPorOrigen,
   exportarZipPorOrigen,
   generarBulkKeywords,
   guardarSurveyGeotargeting,
@@ -843,6 +845,31 @@ export default function PlannerGeotargeting({
           title="ZIP con UN .geojson por tienda (solo los CPs que esa tienda cubre), nombrados por tienda"
         >
           ⤓ ZIP GeoJSON por tienda
+        </Boton>
+        {/* formato operativo del DSP: bulk de CPs que Simpli.fi traga
+            sin editar ("44100,MEX" por línea, ceros iniciales intactos) */}
+        <Boton
+          variante="secundario"
+          onClick={() => exportarCsvDsp("simplifi", cps ?? [], cliente)}
+          disabled={!cps || cps.length === 0}
+          title='Bulk de CPs para Simpli.fi: una línea por CP en formato "44100,MEX" — sin encabezado ni columnas extra, se sube tal cual al DSP'
+        >
+          ⤓ CSV Simpli.fi
+        </Boton>
+        <Boton
+          variante="secundario"
+          onClick={() =>
+            exportarZipDspPorOrigen(
+              "simplifi",
+              cps ?? [],
+              cliente,
+              centrosUsados.map((c, i) => c.nombre ?? `Origen ${i + 1}`)
+            )
+          }
+          disabled={!cps || cps.length === 0 || centrosUsados.length === 0}
+          title="ZIP con UN CSV Simpli.fi por tienda (solo sus CPs) — el bulk de cada line item por sucursal"
+        >
+          ⤓ ZIP Simpli.fi por tienda
         </Boton>
         {(["cps", "marca", "industria", "competencia"] as const).map((b) => (
           <Boton

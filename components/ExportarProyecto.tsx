@@ -1215,7 +1215,7 @@ export default function ExportarProyecto({
           <button
             onClick={exportarGeoJsonProyecto}
             disabled={ocupado !== null}
-            title="ZIP con los .geojson del geo-targeting: cobertura global (un polígono por CP), por origen (tienda×CP) y un archivo por tienda — los polígonos van en GeoJSON, nunca en celdas de Excel"
+            title="ZIP del geo-targeting: .geojson de cobertura global, por origen y por tienda + los CSV bulk de Simpli.fi (global y uno por tienda, formato CP,MEX) — los polígonos van en GeoJSON, nunca en celdas de Excel"
             className="rounded-md border border-linea bg-panel2 px-5 py-2.5 font-display text-xs font-extrabold text-zinc-300 transition-colors hover:border-teal-400 hover:text-teal-400 disabled:opacity-40"
           >
             GeoJSON Geo-Targeting (ZIP)
