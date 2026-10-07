@@ -70,17 +70,6 @@ const PlannerMapa = dynamic(() => import("./PlannerMapa"), {
   ),
 });
 
-// el Buscador completo del modo consulta, EMBEBIDO como primera
-// sección del plan (v2 F1): sus corridas son levantamientos rol
-// 'exploracion', promovibles a cualquier sección sin re-pagar
-const SeekerEmbebido = dynamic(() => import("./SeekerApp"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-[76vh] min-h-[560px] items-center justify-center font-mono text-xs text-zinc-600">
-      Cargando el buscador…
-    </div>
-  ),
-});
 
 type SeccionPlanner = RolLevantamiento | "exportar" | "resumen";
 
@@ -115,10 +104,12 @@ const SECCIONES: {
     detalle: "",
   },
   {
-    clave: "exploracion",
-    nombre: "Buscador",
-    descriptor: "Exploración libre — promueve resultados a una sección",
-    color: "#2dd4bf",
+    // FUSIÓN: "Buscador" y "Puntos de interés" son la misma sección —
+    // una sola puerta para buscar lugar, cargar Excel/CSV y censar
+    clave: "poi_propio",
+    nombre: "Puntos de interés",
+    descriptor: "Busca, carga y censa — por lugar, archivo o categorías",
+    color: "#2fb9e8",
     activa: true,
     fase: "",
     detalle: "",
@@ -137,15 +128,6 @@ const SECCIONES: {
     nombre: "Competencia",
     descriptor: "Qué hay alrededor de tus orígenes",
     color: "#f4368a",
-    activa: true,
-    fase: "",
-    detalle: "",
-  },
-  {
-    clave: "poi_propio",
-    nombre: "Puntos de interés",
-    descriptor: "Busca, carga y censa los puntos del plan",
-    color: "#2fb9e8",
     activa: true,
     fase: "",
     detalle: "",
@@ -184,18 +166,15 @@ export default function PlannerView({
   const [surveys, setSurveys] = useState<SurveyFila[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
-  // v2 F1: el Buscador es la primera sección y el default; con
-  // ?seccion=buscador (redirects del modo consulta viejo) se fuerza
-  // aunque plan_state recuerde otra sección
+  // FUSIÓN: Puntos de interés es la primera sección y el default.
+  // ?seccion=buscador|exploracion (ligas del Buscador viejo) redirige
+  // a la sección fusionada aunque plan_state recuerde otra.
   const searchParams = useSearchParams();
   const forzarBuscador =
     searchParams.get("seccion") === "buscador" ||
     searchParams.get("seccion") === "exploracion" ||
-    // params legados del modo consulta (reabrir búsqueda/censo)
-    searchParams.get("cargar") !== null ||
-    searchParams.get("duplicar") !== null ||
-    searchParams.get("censo") !== null;
-  const [seccion, setSeccion] = useState<SeccionPlanner>("exploracion");
+    searchParams.get("seccion") === "poi";
+  const [seccion, setSeccion] = useState<SeccionPlanner>("poi_propio");
   /** Visibilidad por survey en el mapa (default: visible). */
   const [visibles, setVisibles] = useState<Record<string, boolean>>({});
   /** Tácticas marcadas del proyecto (persisten en plan_state; null =
@@ -279,7 +258,14 @@ export default function PlannerView({
         tacticas?: TacticaClave[];
         borradores?: Record<string, BorradorSeccion>;
       };
-      if (estado.seccion && !forzarBuscador) setSeccion(estado.seccion);
+      if (estado.seccion && !forzarBuscador) {
+        // plan_state guardado antes de la fusión Buscador+POIs
+        setSeccion(
+          (estado.seccion as string) === "exploracion"
+            ? "poi_propio"
+            : estado.seccion
+        );
+      }
       if (estado.visibles) setVisibles(estado.visibles);
       if (estado.tacticas) setTacticasPlan(estado.tacticas);
       if (estado.borradores) setBorradores(estado.borradores);
@@ -353,7 +339,14 @@ export default function PlannerView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surveys, visibles]);
 
-  const porRol = (rol: RolLevantamiento) => surveys.filter((s) => s.rol === rol);
+  // FUSIÓN: los levantamientos de exploración viven en Puntos de
+  // interés (los existentes se migraron a 'poi_propio' en BD; este
+  // fallback cubre cualquier rezagado sin perder nada)
+  const porRol = (rol: RolLevantamiento) =>
+    surveys.filter(
+      (s) =>
+        s.rol === rol || (rol === "poi_propio" && s.rol === "exploracion")
+    );
   const nombreDe = (s: SurveyFila) =>
     (s.configuracion?.nombre as string) ?? ETIQUETA_ROL[s.rol];
   const puntosDe = (s: SurveyFila) => s.survey_points?.[0]?.count ?? 0;
@@ -853,9 +846,10 @@ export default function PlannerView({
     );
   }
 
-  /** v2 F1 — PROMOVER un levantamiento del Buscador (exploración) a
-   * otra sección: reasigna el rol conservando puntos, descartados y
-   * universos ya pagados (0 consultas a Google). */
+  /** Reclasificar un levantamiento a otra sección ("Mover a…"):
+   * reasigna el rol conservando puntos, descartados y universos ya
+   * pagados (0 consultas a Google) — lo valioso del Buscador, ahora
+   * disponible en las tres secciones normales. */
   const [promoviendo, setPromoviendo] = useState<string | null>(null);
   async function promoverSurvey(s: SurveyFila, rol: RolLevantamiento) {
     setPromoviendo(s.id);
@@ -1044,39 +1038,20 @@ export default function PlannerView({
           ) : (
             <>
               {/* interfaz inline de la sección (recolectar → calcular)
-                  + lista de levantamientos guardados. El Buscador
-                  (exploración) trae su propio mapa, así que su sección
-                  ocupa todo el alto y no pinta el mapa del proyecto. */}
-              <div
-                className={
-                  seccion === "exploracion"
-                    ? "min-h-0 flex-1 overflow-y-auto px-5 py-3"
-                    : "max-h-[62%] shrink-0 overflow-y-auto border-b border-linea px-5 py-3"
-                }
-              >
+                  + lista de levantamientos guardados */}
+              <div className="max-h-[62%] shrink-0 overflow-y-auto border-b border-linea px-5 py-3">
                 <div className="mb-3">
                   <h2 className="font-display text-base font-extrabold tracking-tight text-white">
                     {activa.nombre}
                   </h2>
                   <p className="font-mono text-[10px] text-zinc-500">
                     {filasSeccion.length > 0
-                      ? `${filasSeccion.length} ${filasSeccion.length === 1 ? "levantamiento guardado" : "levantamientos guardados"}${seccion === "exploracion" ? " · promuévelos a una sección con «Mover a»" : " · el mapa pinta lo recolectado y todos los visibles del proyecto"}`
+                      ? `${filasSeccion.length} ${filasSeccion.length === 1 ? "levantamiento guardado" : "levantamientos guardados"} · el mapa pinta lo recolectado y todos los visibles del proyecto`
                       : activa.descriptor}
                   </p>
                 </div>
 
-                {seccion === "exploracion" ? (
-                  <SeekerEmbebido
-                    usuario={usuario}
-                    planner={{
-                      proyectoId,
-                      rol: "exploracion",
-                      nombreCliente: proyecto?.nombre_cliente,
-                      embebido: true,
-                      alGuardar: cargar,
-                    }}
-                  />
-                ) : seccion === "poi_propio" ? (
+                {seccion === "poi_propio" ? (
                   <SeccionPois
                     proyectoId={proyectoId}
                     color={activa.color}
@@ -1360,7 +1335,10 @@ export default function PlannerView({
                                     className="inline-flex gap-1"
                                     onClick={(e) => e.stopPropagation()}
                                   >
-                                    {s.rol === "exploracion" && (
+                                    {/* reclasificar sin re-pagar: el rol
+                                        cambia, los puntos/descartados/
+                                        universos se conservan tal cual */}
+                                    {s.rol !== "ooh" && (
                                       <select
                                         value=""
                                         disabled={promoviendo !== null}
@@ -1369,23 +1347,27 @@ export default function PlannerView({
                                             .value as RolLevantamiento;
                                           if (rol) promoverSurvey(s, rol);
                                         }}
-                                        className="cursor-pointer rounded border border-emerald-400/60 bg-emerald-400/10 px-1.5 py-0.5 text-[10px] text-emerald-400 hover:bg-emerald-400/20 disabled:opacity-50"
-                                        title="Promueve este levantamiento a una sección del plan: reasigna el rol conservando puntos, descartados y universos ya pagados (0 consultas)"
+                                        className="cursor-pointer rounded border border-exito/60 bg-exito/10 px-1.5 py-0.5 text-[10px] text-exito hover:bg-exito/20 disabled:opacity-50"
+                                        title="Reclasifica este levantamiento a otra sección del plan: cambia el rol conservando puntos, descartados y universos ya pagados (0 consultas)"
                                       >
                                         <option value="" disabled>
                                           {promoviendo === s.id
                                             ? "Moviendo…"
                                             : "Mover a…"}
                                         </option>
-                                        <option value="proximidad">
-                                          Proximidad
-                                        </option>
-                                        <option value="competencia">
-                                          Competencia
-                                        </option>
-                                        <option value="poi_propio">
-                                          Puntos de interés
-                                        </option>
+                                        {(
+                                          [
+                                            ["poi_propio", "Puntos de interés"],
+                                            ["proximidad", "Proximidad"],
+                                            ["competencia", "Competencia"],
+                                          ] as const
+                                        )
+                                          .filter(([r]) => r !== s.rol)
+                                          .map(([r, etiqueta]) => (
+                                            <option key={r} value={r}>
+                                              {etiqueta}
+                                            </option>
+                                          ))}
                                       </select>
                                     )}
                                     {s.rol !== "ooh" &&
@@ -1533,7 +1515,7 @@ export default function PlannerView({
               </div>
 
               {/* universo del levantamiento seleccionado */}
-              {seccion !== "exploracion" && universoSeleccionado && surveySeleccionado && (
+              {universoSeleccionado && surveySeleccionado && (
                 <div className="shrink-0 px-5 pt-3">
                   <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
                     Universo de “{nombreDe(surveySeleccionado)}”
@@ -1545,9 +1527,7 @@ export default function PlannerView({
                 </div>
               )}
 
-              {/* mapa del proyecto: todos los levantamientos visibles
-                  (el Buscador embebido trae su propio mapa) */}
-              {seccion !== "exploracion" && (
+              {/* mapa del proyecto: todos los levantamientos visibles */}
               <div className="relative m-4 min-h-0 flex-1 overflow-hidden rounded-lg border border-linea">
                 <PlannerMapa capas={capasMapa} foco={foco} />
                 {capasMapa.length > 0 && (
@@ -1568,7 +1548,6 @@ export default function PlannerView({
                   </div>
                 )}
               </div>
-              )}
             </>
           )}
         </main>

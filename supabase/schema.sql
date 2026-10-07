@@ -2664,8 +2664,10 @@ create table if not exists public.surveys (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects (id) on delete cascade,
   rol text not null
-    -- 'exploracion' (v2 F1): Buscador del plan, exploración libre;
-    -- sus levantamientos se PROMUEVEN a otra sección reasignando el rol
+    -- 'exploracion' es LEGADO (fusión Buscador+POIs, oct-2026): los
+    -- existentes se migraron a 'poi_propio' con traza en
+    -- configuracion.fusionado_de y el código ya no lo crea; sigue
+    -- permitido solo para no romper inserts en vuelo
     check (rol in ('poi_propio', 'competencia', 'proximidad', 'ooh', 'exploracion')),
   fuente text,                       -- google | denue | ambas | inventario
   configuracion jsonb not null default '{}'::jsonb, -- modo, términos, categorías, radio, geografía

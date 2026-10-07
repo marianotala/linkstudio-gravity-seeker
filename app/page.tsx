@@ -4,11 +4,12 @@ import { createClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 /**
- * v2 F1 — todo vive en planes: "/" (el modo consulta viejo) redirige a
- * Mis planes. Los links legados que reabrían una búsqueda o un censo
- * (?cargar / ?duplicar / ?censo) siguen funcionando: van al Buscador
- * del plan personal de Exploración del usuario (creado automático),
- * con los mismos parámetros — nada se pierde.
+ * Todo vive en planes: "/" (el modo consulta viejo) redirige a Mis
+ * planes. Los links legados que reabrían una búsqueda o un censo
+ * (?cargar / ?duplicar / ?censo) siguen funcionando: van al buscador
+ * completo de la sección Puntos de interés del plan personal de
+ * Exploración (creado automático), con los mismos parámetros — nada
+ * se pierde.
  */
 export default async function Home({
   searchParams,
@@ -57,12 +58,14 @@ export default async function Home({
     redirect("/planes");
   }
 
-  const qs = new URLSearchParams({ seccion: "buscador" });
+  const qs = new URLSearchParams();
   for (const k of legados) {
     qs.set(k, searchParams[k] as string);
   }
   if (searchParams.actualizar === "1") {
     qs.set("actualizar", "1");
   }
-  redirect(`/planner/${planId}?${qs.toString()}`);
+  // el buscador completo con contexto del plan (rol poi_propio) lee
+  // estos parámetros y reabre la búsqueda/censo tal cual
+  redirect(`/planner/${planId}/levantar/poi_propio?${qs.toString()}`);
 }

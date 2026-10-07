@@ -10,8 +10,6 @@ const ROLES_F2: RolLevantamiento[] = [
   "poi_propio",
   "competencia",
   "proximidad",
-  // v2 F1: el Buscador del plan en pantalla completa (reanudar/re-correr)
-  "exploracion",
 ];
 
 /** Levantamiento dentro de un plan: el MISMO buscador del modo

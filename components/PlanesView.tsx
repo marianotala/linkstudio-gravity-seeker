@@ -63,7 +63,9 @@ export default function PlanesView({
     setAbriendoExploracion(true);
     try {
       const id = await asegurarPlanExploracion(usuario.id);
-      router.push(`/planner/${id}?seccion=buscador`);
+      // abre directo en Puntos de interés (la sección fusionada de
+      // búsqueda/carga/censo, default del plan)
+      router.push(`/planner/${id}`);
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "No se pudo abrir la exploración"
