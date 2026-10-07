@@ -110,6 +110,15 @@ export default function ResumenProyecto({
   const nombreDe = (s: SurveyResumen) =>
     (s.configuracion?.nombre as string) ?? ETIQUETA_ROL[s.rol];
   const puntosDe = (s: SurveyResumen) => s.survey_points?.[0]?.count ?? 0;
+  // geotargeting no tiene survey_points: su "tamaño" son sus CPs
+  const cpsDe = (s: SurveyResumen) =>
+    ((s.configuracion?.cps as unknown[]) ?? []).length;
+  const tamanoDe = (s: SurveyResumen) =>
+    s.rol === "geotargeting" ? cpsDe(s) : puntosDe(s);
+  const tamanoEtiqueta = (s: SurveyResumen) =>
+    s.rol === "geotargeting"
+      ? `${fmt(cpsDe(s))} CPs`
+      : `${fmt(puntosDe(s))} puntos`;
   const universoDe = (s: SurveyResumen): Universos | null =>
     s.survey_universes?.[0]?.resultados ?? null;
 
@@ -147,20 +156,29 @@ export default function ResumenProyecto({
   }, [proyectoId]);
 
   // selección default: la composición del consolidado guardado, o
-  // todos los surveys COMPLETADOS
+  // todos los surveys COMPLETADOS. Un survey creado DESPUÉS del último
+  // consolidado entra seleccionado por default (el usuario aún no
+  // decidió sobre él — p. ej. una capa Geo-Targeting recién guardada).
   useEffect(() => {
     if (seleccion !== null || surveys.length === 0) return;
     const guardados = new Set(consolidado?.survey_ids.map((x) => x.id) ?? []);
+    const fechaCons = consolidado
+      ? new Date(consolidado.created_at).getTime()
+      : 0;
     const inicial: Record<string, boolean> = {};
     for (const s of surveys) {
       inicial[s.id] =
-        guardados.size > 0 ? guardados.has(s.id) : s.status === "completado";
+        guardados.size > 0
+          ? guardados.has(s.id) ||
+            (s.status === "completado" &&
+              new Date(s.created_at).getTime() > fechaCons)
+          : s.status === "completado";
     }
     setSeleccion(inicial);
   }, [surveys, consolidado, seleccion]);
 
   const sel = seleccion ?? {};
-  const seleccionados = surveys.filter((s) => sel[s.id] && puntosDe(s) > 0);
+  const seleccionados = surveys.filter((s) => sel[s.id] && tamanoDe(s) > 0);
 
   /** Último cambio real de un survey: su creación o, si su censo fue
    * DEPURADO después (puntos excluidos), la fecha de esa depuración. */
@@ -189,16 +207,18 @@ export default function ResumenProyecto({
       if (crudosCache[s.id]) return crudosCache[s.id];
       const modo = (s.configuracion?.mode as string) ?? "census";
       // cp/zone/orígenes-con-config no necesitan puntos para su
-      // geometría; COMPETENCIA siempre los necesita (su territorio son
+      // geometría (geotargeting tampoco: sus geocercas salen de sus
+      // CPs); COMPETENCIA siempre los necesita (su territorio son
       // SUS puntos, no los orígenes donde se buscó)
       const necesitaPuntos =
-        modo === "census" ||
+        s.rol !== "geotargeting" &&
+        (modo === "census" ||
         modo === "territorial" ||
         modo === "ooh" ||
         s.rol === "competencia" ||
         (modo === "origins" &&
           !((s.configuracion?.origenes as unknown[])?.length ?? 0) &&
-          !((s.configuracion?.centers as unknown[])?.length ?? 0));
+          !((s.configuracion?.centers as unknown[])?.length ?? 0)));
       if (!necesitaPuntos) return [];
       const crudos = await cargarPuntosCrudosSurvey(s.id);
       setCrudosCache((prev) => ({ ...prev, [s.id]: crudos }));
@@ -422,7 +442,7 @@ export default function ResumenProyecto({
         </p>
         <div className="flex flex-wrap gap-1.5">
           {surveys
-            .filter((s) => puntosDe(s) > 0)
+            .filter((s) => tamanoDe(s) > 0)
             .map((s, i) => (
               <button
                 key={s.id}
@@ -434,7 +454,7 @@ export default function ResumenProyecto({
                     ? "border-zinc-500 bg-fondo text-zinc-200"
                     : "border-linea bg-panel2 text-zinc-600 hover:text-zinc-400"
                 }`}
-                title={`${ETIQUETA_ROL[s.rol]} · ${fmt(puntosDe(s))} puntos${s.status !== "completado" ? " · " + s.status : ""}`}
+                title={`${ETIQUETA_ROL[s.rol]} · ${tamanoEtiqueta(s)}${s.status !== "completado" ? " · " + s.status : ""}`}
               >
                 <span
                   className="h-2 w-2 rounded-full"
@@ -504,7 +524,7 @@ export default function ResumenProyecto({
                 <tr>
                   <th className="px-3 py-2 font-medium">Levantamiento</th>
                   <th className="px-3 py-2 font-medium">Rol</th>
-                  <th className="px-3 py-2 text-right font-medium">Puntos</th>
+                  <th className="px-3 py-2 text-right font-medium">Puntos / CPs</th>
                   <th className="px-3 py-2 text-right font-medium">Universo 18+ individual</th>
                 </tr>
               </thead>
@@ -519,7 +539,9 @@ export default function ResumenProyecto({
                       {nombreDe(s)}
                     </td>
                     <td className="px-3 py-2 text-zinc-500">{ETIQUETA_ROL[s.rol]}</td>
-                    <td className="px-3 py-2 text-right text-cian">{fmt(puntosDe(s))}</td>
+                    <td className="px-3 py-2 text-right text-cian">
+                      {tamanoEtiqueta(s)}
+                    </td>
                     <td className="px-3 py-2 text-right text-violeta">
                       {universoDe(s)?.disponible
                         ? fmt(universoDe(s)!.residencial!.adultos18)

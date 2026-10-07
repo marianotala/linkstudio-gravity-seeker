@@ -126,6 +126,9 @@ export interface PlanProyectoDatos {
   /** Geo-Targeting del plan (CPs de cobertura + bulk de keywords):
    * alimenta el sustento de la táctica de targeting. */
   geoTargeting?: { cps: number; keywords: number } | null;
+  /** Sección de táctica Geo-Targeting (cuando su capa está en el
+   * consolidado) — mapa de polígonos de CP + cifras + keywords. */
+  geoSeccion?: GeoSeccionProyecto | null;
 }
 
 export interface FilaDetallePunto {
@@ -135,6 +138,25 @@ export interface FilaDetallePunto {
   universo: number | null;
   /** Nivel NSE dominante de su zona (letra; null = sin dato). */
   nse: string | null;
+}
+
+/** Sección de táctica Geo-Targeting: cobertura de CPs + keywords. */
+export interface GeoSeccionProyecto {
+  nombre: string;
+  /** Radio de cobertura en metros. */
+  radio: number;
+  /** Descripción del origen ("57 puntos de Suburbia MTY"). */
+  origen: string;
+  /** Total de CPs de la cobertura. */
+  cps: number;
+  /** Municipios con más CPs (top), con su conteo. */
+  municipios: { municipio: string; cps: number }[];
+  /** Universo de la UNIÓN de los polígonos de CP (survey_universes). */
+  universo: Universos | null;
+  /** Conteo de keywords por grupo (null sin bulk generado). */
+  keywords: { marca: number; industria: number; competencia: number } | null;
+  /** Mapa de los polígonos de CP (dataURL) o null. */
+  mapaDataUrl?: string | null;
 }
 
 const ETIQUETA_SECCION_ROL: Record<RolLevantamiento, [string, string]> = {
@@ -167,6 +189,14 @@ const FILAS_DETALLE_PROX = 20;
 const NOTA_TRASLAPE_DETALLE =
   "Universo del radio individual de cada punto; los radios cercanos comparten población (la suma de individuales excede al consolidado deduplicado) — para presupuesto son pesos relativos, no poblaciones exclusivas.";
 const ALTO_MAPA_OOH = Math.round((CONT * 7) / 16);
+/** Teal de la capa Geo-Targeting (misma familia que la app). */
+const TEAL = "#2dd4bf";
+const MAX_MUNICIPIOS_GEO = 5;
+
+const radioTextoGeo = (m: number) => (m >= 1000 ? `${m / 1000} km` : `${m} m`);
+const totalKeywordsGeo = (
+  k: { marca: number; industria: number; competencia: number } | null
+) => (k ? k.marca + k.industria + k.competencia : 0);
 
 // ------------------------------------------------------------------
 // Lecturas automáticas
@@ -463,6 +493,15 @@ function estimarAltura(d: PlanProyectoDatos, titulo: string): number {
     if (d.ooh.sinCobertura.length > 0)
       h += 26 + Math.min(d.ooh.sinCobertura.length, MAX_SIN_COBERTURA) * 13 + 18;
   }
+  if (d.geoSeccion) {
+    h += 26 + 60 + 22; // separador + sección + lectura
+    h += altoBloqueDemografico(d.geoSeccion.universo);
+    h += 78; // fila de cifras
+    if (d.geoSeccion.mapaDataUrl) h += ALTO_MAPA_OOH + 18;
+    if (d.geoSeccion.municipios.length > 0) h += 22; // municipios top
+    if (d.geoSeccion.keywords) h += 48; // tarjeta del bulk
+    h += 24; // nota de exports
+  }
 
   // inteligencia territorial: comparativo por capa (filas con aire) +
   // hallazgos a lo ancho
@@ -525,6 +564,12 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
     conteosRol.push({
       rol: "ooh",
       texto: `${NOMBRE_ROL.ooh}: ${fmt(d.ooh.pantallas.length)}`,
+    });
+  }
+  if (d.geoSeccion) {
+    conteosRol.push({
+      rol: "geotargeting",
+      texto: `${NOMBRE_ROL.geotargeting}: ${fmt(d.geoSeccion.cps)} CPs`,
     });
   }
 
@@ -1015,6 +1060,97 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
           </View>
         )}
 
+        {/* ---------- 4e · Geo-Targeting (cobertura de CPs + keywords) ---------- */}
+        {d.geoSeccion && (
+          <View style={{ marginBottom: 26 }}>
+            <SeparadorSeccion />
+            <Seccion
+              etiqueta={ETIQUETA_SECCION_ROL.geotargeting[0]}
+              titulo={ETIQUETA_SECCION_ROL.geotargeting[1]}
+            />
+            <Text style={lectura}>
+              {fmt(d.geoSeccion.cps)} códigos postales cuyo polígono
+              intersecta los radios de {radioTextoGeo(d.geoSeccion.radio)}{" "}
+              alrededor de {d.geoSeccion.origen} — la lista va directo al DSP
+              (keyword/contextual targeting por CP).
+            </Text>
+            <BloqueDemografico u={d.geoSeccion.universo} />
+            <View style={{ flexDirection: "row", marginBottom: 12 }}>
+              <Cifra valor={fmt(d.geoSeccion.cps)} descriptor="CPs de cobertura" />
+              <Cifra
+                valor={radioTextoGeo(d.geoSeccion.radio)}
+                descriptor="Radio por PDV"
+              />
+              <Cifra
+                valor={
+                  d.geoSeccion.municipios.length > 0
+                    ? fmt(d.geoSeccion.municipios.length)
+                    : "—"
+                }
+                descriptor="Municipios principales"
+              />
+              <Cifra
+                valor={
+                  totalKeywordsGeo(d.geoSeccion.keywords) > 0
+                    ? fmt(totalKeywordsGeo(d.geoSeccion.keywords))
+                    : "—"
+                }
+                descriptor="Keywords (propuesta IA)"
+              />
+            </View>
+            {d.geoSeccion.mapaDataUrl && (
+              /* eslint-disable-next-line jsx-a11y/alt-text */
+              <Image
+                src={d.geoSeccion.mapaDataUrl}
+                style={{ width: CONT, height: ALTO_MAPA_OOH, borderRadius: 8, objectFit: "cover", marginBottom: 12 }}
+              />
+            )}
+            {d.geoSeccion.municipios.length > 0 && (
+              <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, marginBottom: 6, lineHeight: 1.5 }}>
+                Municipios con más cobertura:{" "}
+                {d.geoSeccion.municipios
+                  .map((m) => `${m.municipio} (${fmt(m.cps)} CPs)`)
+                  .join(" · ")}
+                .
+              </Text>
+            )}
+            {d.geoSeccion.keywords && (
+              <View
+                style={{
+                  backgroundColor: PANEL,
+                  borderLeftWidth: 3,
+                  borderLeftColor: TEAL,
+                  borderRadius: 6,
+                  paddingTop: 9,
+                  paddingBottom: 9,
+                  paddingLeft: 14,
+                  paddingRight: 14,
+                  marginTop: 2,
+                }}
+              >
+                <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 7, letterSpacing: 1.8, color: TEAL, marginBottom: 4 }}>
+                  BULK DE KEYWORDS — PROPUESTA IA EDITABLE
+                </Text>
+                <Text style={{ fontFamily: "Inter", fontSize: 9, color: TINTA, lineHeight: 1.5 }}>
+                  {fmt(totalKeywordsGeo(d.geoSeccion.keywords))} keywords en{" "}
+                  {d.geoSeccion.keywords.competencia > 0 ? "3" : "2"} grupos:
+                  marca {fmt(d.geoSeccion.keywords.marca)} · industria{" "}
+                  {fmt(d.geoSeccion.keywords.industria)}
+                  {d.geoSeccion.keywords.competencia > 0
+                    ? ` · competencia ${fmt(d.geoSeccion.keywords.competencia)}`
+                    : ""}{" "}
+                  — generadas con el contexto del plan; no son data de volumen
+                  de búsqueda.
+                </Text>
+              </View>
+            )}
+            <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 8 }}>
+              Lista completa de CPs, bulk de keywords y polígonos (.geojson)
+              en el Export data del proyecto.
+            </Text>
+          </View>
+        )}
+
         {/* ---------- 5 · inteligencia territorial: una fila por capa
             bien diferenciada (nombre + rol + color) con su universo
             REAL y sus barras alineadas para comparación vertical ---------- */}
@@ -1295,6 +1431,17 @@ export function sanearDatosPlan(d: PlanProyectoDatos): PlanProyectoDatos {
           ])
         )
       : d.detallePuntos,
+    geoSeccion: d.geoSeccion
+      ? {
+          ...d.geoSeccion,
+          nombre: s(d.geoSeccion.nombre),
+          origen: s(d.geoSeccion.origen),
+          municipios: d.geoSeccion.municipios.map((m) => ({
+            ...m,
+            municipio: s(m.municipio),
+          })),
+        }
+      : d.geoSeccion,
   };
 }
 

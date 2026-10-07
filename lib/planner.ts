@@ -675,6 +675,16 @@ export function geocercasDeSurvey(
   const modo = (cfg.mode as string) ?? "census";
   const pref = survey.id.slice(0, 8);
 
+  // GEO-TARGETING: su territorio es la UNIÓN de sus polígonos de CP —
+  // mismas geocercas del modo "Por CP" (interpolación areal por lotes
+  // + techo de sanidad con la maquinaria existente)
+  if (survey.rol === "geotargeting") {
+    return (((cfg.cps as { cp: string }[]) ?? []))
+      .map((c) => c.cp)
+      .filter(Boolean)
+      .map((cp) => ({ id: `${pref}:${cp}`, cp }));
+  }
+
   if (modo === "cp") {
     return ((cfg.cps as string[]) ?? []).map((cp) => ({
       id: `${pref}:${cp}`,

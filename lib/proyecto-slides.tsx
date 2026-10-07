@@ -96,6 +96,10 @@ const TITULO_TACTICA: Record<RolLevantamiento, [string, string]> = {
 const adultos = (u: Universos | null | undefined) =>
   u?.disponible ? (u.residencial?.adultos18 ?? 0) : 0;
 
+/** Teal de la capa Geo-Targeting (misma familia que la app). */
+const TEAL = "#2dd4bf";
+const radioTextoGeo = (m: number) => (m >= 1000 ? `${m / 1000} km` : `${m} m`);
+
 // ------------------------------------------------------------------
 // Piezas de lámina
 // ------------------------------------------------------------------
@@ -406,6 +410,9 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
       return `${NOMBRE_ROL[rol]}: ${fmt(total)}${detalle}`;
     });
   if (d.ooh) conteosRol.push(`${NOMBRE_ROL.ooh}: ${fmt(d.ooh.pantallas.length)}`);
+  if (d.geoSeccion) {
+    conteosRol.push(`${NOMBRE_ROL.geotargeting}: ${fmt(d.geoSeccion.cps)} CPs`);
+  }
 
   // ---- detalle por punto de un rol (FASE 18): filas con universo y
   //      NSE del buffer individual; en Conquista agrupado por marca
@@ -500,6 +507,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
   const totalLaminas =
     2 + // portada + resumen
     laminasTactica.length +
+    (d.geoSeccion ? 1 : 0) +
     (comparables.length >= 2 ? 1 : 0) +
     (d.traslapes.length > 0 ? 1 : 0) +
     1 + // siguientes pasos
@@ -942,6 +950,116 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
             </View>
           </Lamina>
         )
+      )}
+
+      {/* ============ Ln · GEO-TARGETING (CPs + keywords) ============ */}
+      {d.geoSeccion && (
+        <Lamina cliente={d.cliente} n={n()} total={totalLaminas}>
+          <View style={{ flexDirection: "row" }}>
+            <MapaTactica
+              dataUrl={d.geoSeccion.mapaDataUrl}
+              leyenda={[
+                {
+                  color: TEAL,
+                  texto: `Polígonos de CP (${fmt(d.geoSeccion.cps)})`,
+                },
+              ]}
+            />
+            <View style={{ width: DER_W, marginLeft: DER_X }}>
+              <TituloLamina
+                etiqueta={TITULO_TACTICA.geotargeting[0]}
+                titulo={TITULO_TACTICA.geotargeting[1]}
+              />
+              <View style={{ flexDirection: "row", marginBottom: 7 }}>
+                <CifraLamina
+                  valor={fmt(d.geoSeccion.cps)}
+                  descriptor="CPs de cobertura"
+                />
+                <CifraLamina
+                  valor={radioTextoGeo(d.geoSeccion.radio)}
+                  descriptor="Radio por PDV"
+                />
+                <CifraLamina
+                  valor={
+                    d.geoSeccion.universo
+                      ? fmt(adultos(d.geoSeccion.universo))
+                      : "—"
+                  }
+                  descriptor="Universo 18+ de la capa"
+                />
+              </View>
+              <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, marginBottom: 7, lineHeight: 1.5 }}>
+                Códigos postales cuyo polígono intersecta los radios alrededor
+                de {d.geoSeccion.origen} — la lista va directo al DSP
+                (keyword/contextual targeting por CP).
+              </Text>
+              {segmentosNse(d.geoSeccion.universo) && (
+                <View style={{ marginBottom: 6 }}>
+                  <BarraApilada
+                    titulo="NSE (proxy censal, no AMAI)"
+                    segmentos={segmentosNse(d.geoSeccion.universo)!}
+                    width={DER_W}
+                  />
+                </View>
+              )}
+              {segmentosEdades(d.geoSeccion.universo) && (
+                <View style={{ marginBottom: 6 }}>
+                  <BarraApilada
+                    titulo="Edades · % del universo 18+ (25-64: estimación con estructura nacional)"
+                    segmentos={segmentosEdades(d.geoSeccion.universo)!}
+                    width={DER_W}
+                  />
+                </View>
+              )}
+              {d.geoSeccion.municipios.length > 0 && (
+                <Text style={{ fontFamily: "Inter", fontSize: 8, color: GRIS, marginBottom: 7, lineHeight: 1.5 }}>
+                  Municipios con más cobertura:{" "}
+                  {d.geoSeccion.municipios
+                    .map((m) => `${m.municipio} (${fmt(m.cps)})`)
+                    .join(" · ")}
+                  .
+                </Text>
+              )}
+              {d.geoSeccion.keywords && (
+                <View
+                  style={{
+                    backgroundColor: PANEL,
+                    borderLeftWidth: 2.5,
+                    borderLeftColor: TEAL,
+                    borderRadius: 6,
+                    paddingTop: 7,
+                    paddingBottom: 7,
+                    paddingLeft: 10,
+                    paddingRight: 10,
+                  }}
+                >
+                  <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 6.5, letterSpacing: 1.4, color: TEAL, marginBottom: 3 }}>
+                    BULK DE KEYWORDS — PROPUESTA IA EDITABLE
+                  </Text>
+                  <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: TINTA, lineHeight: 1.5 }}>
+                    {fmt(
+                      d.geoSeccion.keywords.marca +
+                        d.geoSeccion.keywords.industria +
+                        d.geoSeccion.keywords.competencia
+                    )}{" "}
+                    keywords en{" "}
+                    {d.geoSeccion.keywords.competencia > 0 ? "3" : "2"} grupos:
+                    marca {fmt(d.geoSeccion.keywords.marca)} · industria{" "}
+                    {fmt(d.geoSeccion.keywords.industria)}
+                    {d.geoSeccion.keywords.competencia > 0
+                      ? ` · competencia ${fmt(d.geoSeccion.keywords.competencia)}`
+                      : ""}{" "}
+                    — no son data de volumen de búsqueda.
+                  </Text>
+                </View>
+              )}
+              <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS_OSCURO, marginTop: 7 }}>
+                CPs, keywords y polígonos (.geojson) completos en el Export
+                data del proyecto.
+              </Text>
+            </View>
+          </View>
+        </Lamina>
       )}
 
       {/* ============ Ln · COMPARATIVO DE CAPAS ============ */}

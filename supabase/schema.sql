@@ -3573,7 +3573,11 @@ begin
       'east', ST_XMax(cb.geom), 'west', ST_XMin(cb.geom)
     ),
     'geometria', case when p_incluir_geometria
-      then ST_AsGeoJSON(ST_SimplifyPreserveTopology(cb.geom, 0.0004), 5)::jsonb end
+      -- ST_MakeValid: geometrías sin self-intersections para los
+      -- exports GeoJSON (carga directa en DSP/GIS)
+      then ST_AsGeoJSON(
+        ST_SimplifyPreserveTopology(ST_MakeValid(cb.geom), 0.0004), 5
+      )::jsonb end
   ) order by cb.codigo_postal), '[]'::jsonb)
   into v_cps
   from cobertura cb

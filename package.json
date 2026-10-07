@@ -14,6 +14,7 @@
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.3",
     "@turf/simplify": "^7.4.0",
+    "jszip": "^3.10.2",
     "leaflet": "^1.9.4",
     "next": "^14.2.32",
     "papaparse": "^5.5.3",

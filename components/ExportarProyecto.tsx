@@ -29,6 +29,12 @@ import {
 } from "@/lib/universos-lotes";
 import { clasificarNse } from "@/lib/nse";
 import { ciudadDeDireccion } from "@/lib/geo";
+import {
+  exportarZipProyectoGeo,
+  reconstruirCobertura,
+  type ConfigGeotargeting,
+  type CpCobertura,
+} from "@/lib/geotargeting";
 import { CLAVES_TACTICAS, TACTICAS, type TacticaClave } from "@/lib/tacticas";
 import { createClient } from "@/lib/supabase/client";
 import type {
@@ -41,6 +47,7 @@ import type {
 import type {
   CapaPlanProyecto,
   FilaDetallePunto,
+  GeoSeccionProyecto,
   OohProyecto,
   TraslapeProyecto,
 } from "@/lib/proyecto-pdf";
@@ -86,7 +93,6 @@ export default function ExportarProyecto({
   tituloProyecto,
   usuario,
   surveys,
-  geoResumen,
   tacticas,
   onTacticas,
   irAResumen,
@@ -96,8 +102,6 @@ export default function ExportarProyecto({
   tituloProyecto: string | null;
   usuario: PerfilUsuario | null;
   surveys: SurveyExportar[];
-  /** Geo-Targeting del plan (CPs + keywords) para el sustento del PDF. */
-  geoResumen?: { cps: number; keywords: number } | null;
   tacticas: TacticaClave[] | null;
   onTacticas: (t: TacticaClave[]) => void;
   irAResumen: () => void;
@@ -116,6 +120,13 @@ export default function ExportarProyecto({
   const nombreDe = (s: SurveyExportar) =>
     (s.configuracion?.nombre as string) ?? ETIQUETA_ROL[s.rol];
   const puntosDe = (s: SurveyExportar) => s.survey_points?.[0]?.count ?? 0;
+  // geotargeting no tiene survey_points: su "tamaño" son sus CPs
+  const cpsDe = (s: SurveyExportar) =>
+    ((s.configuracion?.cps as unknown[]) ?? []).length;
+  const tamanoDe = (s: SurveyExportar) =>
+    s.rol === "geotargeting" ? cpsDe(s) : puntosDe(s);
+  const tamanoEtiqueta = (s: SurveyExportar) =>
+    s.rol === "geotargeting" ? `${fmt(cpsDe(s))} CPs` : fmt(puntosDe(s));
   const universoDe = (s: SurveyExportar): Universos | null =>
     s.survey_universes?.[0]?.resultados ?? null;
   /** Mismo color estable que el mapa del proyecto: hash del NOMBRE de
@@ -158,9 +169,37 @@ export default function ExportarProyecto({
   const seleccionados = useMemo(() => {
     if (!consolidado) return [];
     const ids = new Set(consolidado.survey_ids.map((x) => x.id));
-    return surveys.filter((s) => ids.has(s.id) && puntosDe(s) > 0);
+    return surveys.filter((s) => ids.has(s.id) && tamanoDe(s) > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [consolidado, surveys]);
+
+  /** Survey geotargeting que protagoniza la sección del PDF: el más
+   * reciente de los SELECCIONADOS en el consolidado. El sustento de la
+   * táctica de targeting usa cualquiera del plan (aunque no esté en el
+   * consolidado — sigue siendo contexto real). */
+  const geoSeleccionado = useMemo(
+    () =>
+      seleccionados
+        .filter((s) => s.rol === "geotargeting" && cpsDe(s) > 0)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [seleccionados]
+  );
+  const geoResumen = useMemo(() => {
+    const cfg = surveys
+      .filter((s) => s.rol === "geotargeting" && cpsDe(s) > 0)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .map((s) => s.configuracion as unknown as ConfigGeotargeting)[0];
+    if (!cfg) return null;
+    const kw = cfg.keywords;
+    return {
+      cps: cfg.cps.length,
+      keywords: kw
+        ? kw.marca.length + kw.industria.length + kw.competencia.length
+        : 0,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [surveys]);
 
   const desactualizado = useMemo(() => {
     if (!consolidado) return false;
@@ -183,13 +222,14 @@ export default function ExportarProyecto({
   // tácticas: default por las capas presentes en el proyecto, hasta que
   // el vendedor toque el selector (persistido en plan_state)
   const rolesPresentes = new Set(
-    surveys.filter((s) => puntosDe(s) > 0).map((s) => s.rol)
+    surveys.filter((s) => tamanoDe(s) > 0).map((s) => s.rol)
   );
   const tacticasDefault: TacticaClave[] = [
     ...(rolesPresentes.has("poi_propio") ? (["poi"] as TacticaClave[]) : []),
     ...(rolesPresentes.has("competencia") ? (["conquista"] as TacticaClave[]) : []),
     ...(rolesPresentes.has("proximidad") ? (["proximidad"] as TacticaClave[]) : []),
     ...(rolesPresentes.has("ooh") ? (["pdooh"] as TacticaClave[]) : []),
+    ...(rolesPresentes.has("geotargeting") ? (["targeting"] as TacticaClave[]) : []),
   ];
   const tacticasSel = tacticas ?? tacticasDefault;
   const alternarTactica = (clave: TacticaClave) =>
@@ -247,7 +287,9 @@ export default function ExportarProyecto({
     setError("");
     setOcupado("Cargando los puntos del proyecto…");
     try {
-      const normales = seleccionados.filter((s) => s.rol !== "ooh");
+      const normales = seleccionados.filter(
+        (s) => s.rol !== "ooh" && s.rol !== "geotargeting"
+      );
       const oohSurvey = seleccionados.find((s) => s.rol === "ooh") ?? null;
 
       // crudos: traen el detalle por punto persistido (FASE 18)
@@ -430,6 +472,58 @@ export default function ExportarProyecto({
         if (u.disponible) universoRol.ooh = u;
       }
 
+      // ---- sección GEO-TARGETING: cobertura reconstruida (gratis) +
+      //      universo de la capa (survey_universes o calculado aquí)
+      let geoSeccion: GeoSeccionProyecto | null = null;
+      let coberturaGeo: CpCobertura[] = [];
+      if (geoSeleccionado) {
+        setOcupado("Reconstruyendo la cobertura Geo-Targeting…");
+        const cfgGeo =
+          geoSeleccionado.configuracion as unknown as ConfigGeotargeting;
+        coberturaGeo = (await reconstruirCobertura(cfgGeo)).cps;
+        const conteoMun = new Map<string, number>();
+        for (const c of coberturaGeo) {
+          if (c.municipio) {
+            conteoMun.set(c.municipio, (conteoMun.get(c.municipio) ?? 0) + 1);
+          }
+        }
+        let uGeo = universoDe(geoSeleccionado);
+        if (!uGeo?.disponible) {
+          setOcupado("Universo de la capa Geo-Targeting…");
+          const u = await calcularUniversosCliente(
+            geocercasDeSurvey(geoSeleccionado, []),
+            `unión de ${cfgGeo.cps.length} CPs de cobertura (geo-targeting, interpolación areal)`,
+            {
+              onProgreso: (lote, total) =>
+                setOcupado(
+                  `Universo Geo-Targeting · lote ${lote + 1} de ${total}…`
+                ),
+            }
+          );
+          if (u.disponible) uGeo = u;
+        }
+        const kwGeo = cfgGeo.keywords;
+        geoSeccion = {
+          nombre: nombreDe(geoSeleccionado),
+          radio: cfgGeo.radio,
+          origen: cfgGeo.origen || "los PDVs del plan",
+          cps: coberturaGeo.length || cfgGeo.cps.length,
+          municipios: Array.from(conteoMun.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([municipio, n]) => ({ municipio, cps: n })),
+          universo: uGeo?.disponible ? uGeo : null,
+          keywords: kwGeo
+            ? {
+                marca: kwGeo.marca.length,
+                industria: kwGeo.industria.length,
+                competencia: kwGeo.competencia.length,
+              }
+            : null,
+          mapaDataUrl: null,
+        };
+      }
+
       setOcupado("Capturando mapas…");
       const [
         { generarPlanProyectoPdf, nombreArchivoPlanProyecto },
@@ -542,6 +636,20 @@ export default function ExportarProyecto({
         mapasRol.ooh = ooh?.mapaDataUrl ?? null;
       }
 
+      // mapa de la sección Geo-Targeting: los polígonos de CP reales
+      // (la captura ya sabe pintarlos — mismo camino del modo CP)
+      if (geoSeccion) {
+        const poligonos = coberturaGeo.filter((c) => c.geometria);
+        if (poligonos.length > 0) {
+          setOcupado("Capturando el mapa Geo-Targeting…");
+          geoSeccion.mapaDataUrl = await capturarMapaPlan({
+            pois: [],
+            cps: poligonos,
+            ...dimsSlot,
+          });
+        }
+      }
+
       // traslapes guardados → etiquetas legibles. VALIDACIÓN: una
       // intersección jamás excede a ninguno de sus conjuntos — si la
       // pieza guardada lo viola (cálculo pre-fix), no llega al PDF
@@ -645,6 +753,7 @@ export default function ExportarProyecto({
         mapasRol,
         detallePuntos,
         geoTargeting: geoResumen ?? null,
+        geoSeccion,
       };
       if (formato === "slides") {
         descargarBlob(
@@ -671,7 +780,7 @@ export default function ExportarProyecto({
 
   // ---------------- Export data del proyecto (Excel) ----------------
   async function exportarDataProyecto() {
-    const conPuntos = surveys.filter((s) => puntosDe(s) > 0);
+    const conPuntos = surveys.filter((s) => tamanoDe(s) > 0);
     if (conPuntos.length === 0) return;
     setError("");
     setOcupado("Armando el Excel del proyecto…");
@@ -684,7 +793,8 @@ export default function ExportarProyecto({
         Levantamiento: nombreDe(s),
         Rol: ETIQUETA_ROL[s.rol],
         Status: s.status,
-        Puntos: puntosDe(s),
+        Puntos:
+          s.rol === "geotargeting" ? `${cpsDe(s)} CPs` : puntosDe(s),
         "Universo 18+": universoDe(s)?.residencial?.adultos18 ?? null,
         Fecha: new Date(s.created_at).toLocaleDateString("es-MX"),
         "En el consolidado": consolidado?.survey_ids.some((x) => x.id === s.id)
@@ -710,6 +820,66 @@ export default function ExportarProyecto({
 
       for (const s of conPuntos) {
         setOcupado(`Armando el Excel · ${nombreDe(s)}…`);
+        if (s.rol === "geotargeting") {
+          // hoja Geo-Targeting: lista de CPs lista para el DSP, con el
+          // contexto reconstruido localmente (colonias, tiendas) cuando
+          // el origen sigue vivo — los polígonos van en los .geojson,
+          // nunca en celdas de Excel
+          const cfgGeo = s.configuracion as unknown as ConfigGeotargeting;
+          let filasGeo: Record<string, unknown>[];
+          try {
+            const { cps: cobertura, centros } =
+              await reconstruirCobertura(cfgGeo);
+            const nombreOrigen = (i: number) =>
+              centros[i]?.nombre?.trim() || `Origen ${i + 1}`;
+            filasGeo = cobertura.map((c) => ({
+              codigo_postal: c.codigo_postal,
+              municipio: c.municipio ?? "",
+              colonias_principales: (c.colonias ?? []).join(" · "),
+              entidad: c.entidad,
+              tiendas_que_cubre: c.origenes?.length ?? "",
+              tiendas: (c.origenes ?? []).map(nombreOrigen).join(" · "),
+              universo_18: c.universo_18 ?? "",
+            }));
+          } catch {
+            // sin reconstrucción: los CPs compactos de la config
+            filasGeo = cfgGeo.cps.map((c) => ({
+              codigo_postal: c.cp,
+              municipio: c.municipio ?? "",
+              universo_18: c.universo_18 ?? "",
+            }));
+          }
+          const hojaGeo = XLSX.utils.json_to_sheet(
+            filasGeo.length > 0 ? filasGeo : [{ codigo_postal: "" }]
+          );
+          hojaGeo["!cols"] = [
+            { wch: 14 },
+            { wch: 24 },
+            { wch: 46 },
+            { wch: 9 },
+            { wch: 16 },
+            { wch: 60 },
+            { wch: 12 },
+          ];
+          XLSX.utils.book_append_sheet(wb, hojaGeo, nombreHoja("Geo-Targeting"));
+          // los grupos de keywords del plan, solo los poblados
+          const kwGeo = cfgGeo.keywords;
+          if (kwGeo) {
+            for (const [grupo, lista] of [
+              ["Keywords_Marca", kwGeo.marca],
+              ["Keywords_Industria", kwGeo.industria],
+              ["Keywords_Competencia", kwGeo.competencia],
+            ] as const) {
+              if (lista.length === 0) continue;
+              const hojaKw = XLSX.utils.json_to_sheet(
+                lista.map((k) => ({ keyword: k }))
+              );
+              hojaKw["!cols"] = [{ wch: 44 }];
+              XLSX.utils.book_append_sheet(wb, hojaKw, nombreHoja(grupo));
+            }
+          }
+          continue;
+        }
         if (s.rol === "ooh") {
           const crudos = await cargarPuntosCrudosSurvey(s.id);
           const filas = crudos.map((p) => ({
@@ -825,9 +995,43 @@ export default function ExportarProyecto({
     }
   }
 
+  /** ZIP con TODOS los .geojson del geo-targeting (cobertura global +
+   * por origen + un archivo por tienda) — una sola descarga. */
+  async function exportarGeoJsonProyecto() {
+    const geo = surveys
+      .filter((s) => s.rol === "geotargeting" && cpsDe(s) > 0)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+    if (!geo) return;
+    setError("");
+    setOcupado("Reconstruyendo los polígonos de CP (local, gratis)…");
+    try {
+      const cfg = geo.configuracion as unknown as ConfigGeotargeting;
+      const { cps, centros } = await reconstruirCobertura(cfg);
+      if (!cps.some((c) => c.geometria)) {
+        setError(
+          "No se pudieron reconstruir los polígonos de CP — reabre el geo-targeting en su sección y vuelve a guardar."
+        );
+        return;
+      }
+      await exportarZipProyectoGeo(
+        cps,
+        cliente,
+        centros.map((c, i) => c.nombre?.trim() || `Origen ${i + 1}`)
+      );
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? `No se pudo generar el ZIP GeoJSON: ${e.message}`
+          : "No se pudo generar el ZIP GeoJSON"
+      );
+    } finally {
+      setOcupado(null);
+    }
+  }
+
   const listoParaPdf =
     !!consolidado?.resultados?.disponible && seleccionados.length > 0;
-  const totalPuntos = surveys.reduce((t, s) => t + puntosDe(s), 0);
+  const totalPuntos = surveys.reduce((t, s) => t + tamanoDe(s), 0);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -914,7 +1118,7 @@ export default function ExportarProyecto({
                 />
                 {nombreDe(s)}
                 <span className="text-zinc-600">
-                  {ETIQUETA_ROL[s.rol]} · {fmt(puntosDe(s))}
+                  {ETIQUETA_ROL[s.rol]} · {tamanoEtiqueta(s)}
                 </span>
               </span>
             ))}
@@ -1002,11 +1206,21 @@ export default function ExportarProyecto({
         <button
           onClick={exportarDataProyecto}
           disabled={totalPuntos === 0 || ocupado !== null}
-          title="Excel con una hoja por levantamiento + hoja resumen"
+          title="Excel con una hoja por levantamiento + hoja resumen (incluye la hoja Geo-Targeting cuando el plan tiene esa capa)"
           className="rounded-md border border-linea bg-panel2 px-5 py-2.5 font-display text-xs font-extrabold text-zinc-300 transition-colors hover:border-emerald-400 hover:text-emerald-400 disabled:opacity-40"
         >
           Export data del proyecto (Excel)
         </button>
+        {geoResumen && (
+          <button
+            onClick={exportarGeoJsonProyecto}
+            disabled={ocupado !== null}
+            title="ZIP con los .geojson del geo-targeting: cobertura global (un polígono por CP), por origen (tienda×CP) y un archivo por tienda — los polígonos van en GeoJSON, nunca en celdas de Excel"
+            className="rounded-md border border-linea bg-panel2 px-5 py-2.5 font-display text-xs font-extrabold text-zinc-300 transition-colors hover:border-teal-400 hover:text-teal-400 disabled:opacity-40"
+          >
+            GeoJSON Geo-Targeting (ZIP)
+          </button>
+        )}
         {ocupado && (
           <span className="font-mono text-[11px] text-cian">⟳ {ocupado}</span>
         )}

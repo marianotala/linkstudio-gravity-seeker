@@ -18,11 +18,15 @@ import {
   CANTIDADES_KEYWORDS,
   costoEstimadoKeywordsUsd,
   exportarBloqueCsv,
+  exportarGeoJsonCobertura,
+  exportarGeoJsonPorOrigen,
   exportarGeotargetingXlsx,
+  exportarZipPorOrigen,
   generarBulkKeywords,
   guardarSurveyGeotargeting,
   MAX_CENTROS_GEO,
   RADIOS_GEOTARGETING,
+  reconstruirCobertura,
   type BulkKeywords,
   type ConfigGeotargeting,
   type CpCobertura,
@@ -30,6 +34,10 @@ import {
 } from "@/lib/geotargeting";
 import { cargarPuntosSurveys } from "@/lib/planner";
 import { createClient } from "@/lib/supabase/client";
+import {
+  calcularUniversosCliente,
+  calcularUniversosPorGeocerca,
+} from "@/lib/universos-lotes";
 
 const fmt = (n: number) => n.toLocaleString("es-MX");
 
@@ -86,6 +94,8 @@ export default function PlannerGeotargeting({
   const [calculando, setCalculando] = useState(false);
   const [error, setError] = useState("");
   const [nota, setNota] = useState("");
+  /** Progreso de cálculos largos (universo por CP / de la capa). */
+  const [estado, setEstado] = useState("");
 
   // ---- c) resultado
   const [cps, setCps] = useState<CpCobertura[] | null>(null);
@@ -141,6 +151,31 @@ export default function PlannerGeotargeting({
       .map(([m]) => m);
   }, [cps]);
 
+  /** Llena universo_18 de cada CP (interpolación areal censal LOCAL,
+   * gratis — la misma maquinaria por lotes del modo CP). */
+  async function conUniversoPorCp(lista: CpCobertura[]): Promise<CpCobertura[]> {
+    const faltantes = lista.filter((c) => c.universo_18 == null);
+    if (faltantes.length === 0) return lista;
+    try {
+      const mapa = await calcularUniversosPorGeocerca(
+        faltantes.map((c) => ({ id: c.codigo_postal, cp: c.codigo_postal })),
+        {
+          onProgreso: (l, t) =>
+            setEstado(`Universo 18+ por CP · lote ${l + 1} de ${t} (local, gratis)…`),
+        }
+      );
+      return lista.map((c) => ({
+        ...c,
+        universo_18: c.universo_18 ?? mapa.get(c.codigo_postal)?.adultos18 ?? null,
+      }));
+    } catch {
+      // el universo es complemento: la cobertura ya está completa
+      return lista;
+    } finally {
+      setEstado("");
+    }
+  }
+
   async function calcular() {
     setCalculando(true);
     setError("");
@@ -186,6 +221,9 @@ export default function PlannerGeotargeting({
         setError(
           "Ningún CP intersecta esos radios. Si la zona debería tener CPs, probablemente falta cargar los polígonos de esa entidad en Admin → Data de geolocalización."
         );
+      } else {
+        // población por CP: habilita el peso de cada CP en el entregable
+        setCps(await conUniversoPorCp(resultado));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudieron calcular los CPs");
@@ -229,7 +267,11 @@ export default function PlannerGeotargeting({
         origen: origenDesc,
         origenSurveyId: fuente !== "manual" ? fuente : null,
         centros: fuente === "manual" ? centrosUsados : undefined,
-        cps: cps.map((c) => ({ cp: c.codigo_postal, municipio: c.municipio })),
+        cps: cps.map((c) => ({
+          cp: c.codigo_postal,
+          municipio: c.municipio,
+          universo_18: c.universo_18 ?? null,
+        })),
         keywords,
         kwParams: {
           marca: marca.trim(),
@@ -240,7 +282,40 @@ export default function PlannerGeotargeting({
         },
         generado_en: new Date().toISOString(),
       };
-      await guardarSurveyGeotargeting(proyectoId, config, surveyAbierto);
+      const surveyId = await guardarSurveyGeotargeting(
+        proyectoId,
+        config,
+        surveyAbierto
+      );
+      setSurveyAbierto(surveyId);
+      // universo de la CAPA (unión deduplicada de los polígonos de CP,
+      // local y gratis) → survey_universes: así el Resumen, el
+      // consolidado y el PDF la tratan como cualquier levantamiento
+      try {
+        const u = await calcularUniversosCliente(
+          cps.map((c) => ({ id: c.codigo_postal, cp: c.codigo_postal })),
+          `unión de ${cps.length} CPs de cobertura (geo-targeting, interpolación areal)`,
+          {
+            onProgreso: (l, t) =>
+              setEstado(`Universo de la capa · lote ${l + 1} de ${t} (local, gratis)…`),
+          }
+        );
+        if (u.disponible) {
+          const supabase = createClient();
+          await supabase
+            .from("survey_universes")
+            .delete()
+            .eq("survey_id", surveyId);
+          await supabase.from("survey_universes").insert({
+            survey_id: surveyId,
+            resultados: { ...u, porAgeb: undefined, agebsGeo: undefined },
+          });
+        }
+      } catch {
+        // el universo de la capa se puede recalcular desde el Resumen
+      } finally {
+        setEstado("");
+      }
       setNota(
         surveyAbierto
           ? "Geo-Targeting actualizado en el plan."
@@ -273,25 +348,15 @@ export default function PlannerGeotargeting({
     setOrigenDesc(cfg.origen ?? "");
     setCalculando(true);
     try {
-      let centros: { lat: number; lng: number; nombre?: string }[] =
-        cfg.centros ?? [];
-      if (cfg.origenSurveyId) {
-        const mapa = await cargarPuntosSurveys([cfg.origenSurveyId]);
-        centros = (mapa.get(cfg.origenSurveyId) ?? []).map((p) => ({
-          lat: p.lat,
-          lng: p.lng,
-          nombre: p.nombre,
-        }));
-      }
-      if (centros.length > 0) {
-        const resultado = await calcularCpsPorRadios(
-          centros.slice(0, MAX_CENTROS_GEO),
-          cfg.radio
-        );
+      // re-corre los radios si el origen sigue vivo; si no, reconstruye
+      // las geometrías desde los códigos guardados (todo local, gratis)
+      const { cps: resultado, centros } = await reconstruirCobertura(cfg);
+      if (resultado.length > 0) {
         setCps(resultado);
-        setCentrosUsados(centros.slice(0, MAX_CENTROS_GEO));
+        setCentrosUsados(centros);
         setOrigenSel(-1);
         onCobertura(resultado);
+        setCps(await conUniversoPorCp(resultado));
       } else {
         setCps(null);
         setNota("El origen de este geo-targeting ya no existe: vuelve a calcular.");
@@ -349,6 +414,9 @@ export default function PlannerGeotargeting({
         <p className="rounded-control border border-exito/50 bg-exito/10 px-3.5 py-2 font-body text-xs text-texto-primario">
           {nota}
         </p>
+      )}
+      {estado && (
+        <p className="font-mono text-[11px] text-cian">⟳ {estado}</p>
       )}
 
       {/* ---------- 1 · cobertura de CPs ---------- */}
@@ -482,6 +550,12 @@ export default function PlannerGeotargeting({
                     <th className="px-3 py-1.5 font-medium">Colonias principales</th>
                     <th className="px-3 py-1.5 font-medium">Municipio</th>
                     <th className="px-3 py-1.5 text-right font-medium">Tiendas</th>
+                    <th
+                      className="px-3 py-1.5 text-right font-medium"
+                      title="Adultos 18+ del CP — interpolación areal censal local (gratis)"
+                    >
+                      Universo 18+
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="text-texto-primario">
@@ -503,6 +577,9 @@ export default function PlannerGeotargeting({
                         title={(c.origenes ?? []).map(nombreOrigen).join(" · ")}
                       >
                         {c.origenes?.length ?? "—"}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono text-violeta">
+                        {c.universo_18 != null ? fmt(c.universo_18) : "—"}
                       </td>
                     </tr>
                   ))}
@@ -722,6 +799,50 @@ export default function PlannerGeotargeting({
           title="Un xlsx con hoja CPs (lista limpia + tiendas que cubren cada CP), hoja CPs_por_origen (tienda×CP para line items) y hojas de keywords por grupo (solo las pobladas)"
         >
           ⤓ Export Geo-Targeting (.xlsx)
+        </Boton>
+        {/* GeoJSON: archivos .geojson aparte (nunca geometrías en celdas
+            de Excel) — polígonos reales WGS84 listos para el DSP */}
+        <Boton
+          variante="secundario"
+          onClick={() =>
+            exportarGeoJsonCobertura(
+              cps ?? [],
+              cliente,
+              centrosUsados.map((c, i) => c.nombre ?? `Origen ${i + 1}`)
+            )
+          }
+          disabled={!cps || cps.length === 0}
+          title="FeatureCollection con un polígono por CP de la cobertura (WGS84) — ábrelo en geojson.io o cárgalo al DSP"
+        >
+          ⤓ GeoJSON cobertura
+        </Boton>
+        <Boton
+          variante="secundario"
+          onClick={() =>
+            exportarGeoJsonPorOrigen(
+              cps ?? [],
+              cliente,
+              centrosUsados.map((c, i) => c.nombre ?? `Origen ${i + 1}`)
+            )
+          }
+          disabled={!cps || cps.length === 0 || centrosUsados.length === 0}
+          title="Un Feature por tienda×CP (el mismo CP se repite por cada tienda que lo cubre) — la base para line items por tienda"
+        >
+          ⤓ GeoJSON por origen
+        </Boton>
+        <Boton
+          variante="secundario"
+          onClick={() =>
+            exportarZipPorOrigen(
+              cps ?? [],
+              cliente,
+              centrosUsados.map((c, i) => c.nombre ?? `Origen ${i + 1}`)
+            )
+          }
+          disabled={!cps || cps.length === 0 || centrosUsados.length === 0}
+          title="ZIP con UN .geojson por tienda (solo los CPs que esa tienda cubre), nombrados por tienda"
+        >
+          ⤓ ZIP GeoJSON por tienda
         </Boton>
         {(["cps", "marca", "industria", "competencia"] as const).map((b) => (
           <Boton

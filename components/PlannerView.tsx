@@ -49,6 +49,7 @@ import {
   type PuntoSurvey,
 } from "@/lib/planner";
 import { reFiltrarRun } from "@/lib/refiltrado";
+import { circlePolygon } from "@/lib/geo";
 import PanelDescartados from "./PanelDescartados";
 import PlannerGeotargeting, {
   type SurveyGeoGuardado,
@@ -1032,6 +1033,35 @@ export default function PlannerView({
     );
   }
 
+  /** BUFFERS de proximidad: un Polygon circular por punto con su radio
+   * de influencia — la geocerca real que se carga al DSP. */
+  async function exportarGeoJsonBuffersSurvey(s: SurveyFila) {
+    const crudos = await cargarPuntosCrudosSurvey(s.id);
+    const radioM = radioDetalleDe(s.configuracion);
+    const fc = {
+      type: "FeatureCollection",
+      features: crudos.map((p) => ({
+        type: "Feature",
+        properties: {
+          nombre: p.nombre,
+          direccion: p.direccion ?? null,
+          radio_m: radioM,
+          universo_18_radio_individual: p.universo_individual ?? null,
+          nse_dominante: p.nse_dominante ?? null,
+        },
+        geometry: {
+          type: "Polygon",
+          coordinates: [circlePolygon({ lat: p.lat, lng: p.lng }, radioM, 48)],
+        },
+      })),
+    };
+    descargarTexto(
+      `seeker_${nombreArchivo(s)}_buffers.geojson`,
+      JSON.stringify(fc, null, 2),
+      "application/geo+json"
+    );
+  }
+
   /** DETALLE POR PUNTO retroactivo: llena universo_individual y
    * nse_dominante de los puntos que falten — PostGIS, gratis. */
   const [detallando, setDetallando] = useState<{ id: string; texto: string } | null>(null);
@@ -1225,9 +1255,7 @@ export default function PlannerView({
             // se promueve a una sección (Mover a…)
             <ResumenProyecto
               proyectoId={proyectoId}
-              surveys={surveys.filter(
-                (s) => s.rol !== "exploracion" && s.rol !== "geotargeting"
-              )}
+              surveys={surveys.filter((s) => s.rol !== "exploracion")}
             />
           ) : seccion === "exportar" ? (
             <ExportarProyecto
@@ -1235,25 +1263,7 @@ export default function PlannerView({
               cliente={proyecto?.nombre_cliente ?? "Cliente"}
               tituloProyecto={proyecto?.titulo ?? null}
               usuario={usuario}
-              surveys={surveys.filter(
-                (s) => s.rol !== "exploracion" && s.rol !== "geotargeting"
-              )}
-              geoResumen={(() => {
-                const geo = porRol("geotargeting")
-                  .map((x) => x.configuracion as unknown as ConfigGeotargeting)
-                  .filter((c) => (c?.cps?.length ?? 0) > 0)
-                  .sort((a, b) =>
-                    (b.generado_en ?? "").localeCompare(a.generado_en ?? "")
-                  )[0];
-                if (!geo) return null;
-                const kw = geo.keywords;
-                return {
-                  cps: geo.cps.length,
-                  keywords: kw
-                    ? kw.marca.length + kw.industria.length + kw.competencia.length
-                    : 0,
-                };
-              })()}
+              surveys={surveys.filter((s) => s.rol !== "exploracion")}
               tacticas={tacticasPlan}
               onTacticas={setTacticasPlan}
               irAResumen={() => setSeccion("resumen")}
@@ -1682,6 +1692,15 @@ export default function PlannerView({
                                           title="GeoJSON de puntos, listo para DSPs"
                                         >
                                           GeoJSON
+                                        </button>
+                                        <button
+                                          onClick={() =>
+                                            exportarGeoJsonBuffersSurvey(s)
+                                          }
+                                          className="rounded border border-linea bg-panel2 px-2 py-0.5 text-[10px] text-zinc-400 hover:border-emerald-400 hover:text-emerald-400"
+                                          title="GeoJSON de BUFFERS: un círculo por punto con su radio de influencia (la geocerca real del DSP) + universo 18+ individual"
+                                        >
+                                          Buffers
                                         </button>
                                       </>
                                     )}
