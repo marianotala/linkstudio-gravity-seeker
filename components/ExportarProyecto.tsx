@@ -30,7 +30,9 @@ import {
 import { clasificarNse } from "@/lib/nse";
 import { ciudadDeDireccion } from "@/lib/geo";
 import {
+  cpDsp,
   exportarZipProyectoGeo,
+  NOTA_PESOS_GEO,
   reconstruirCobertura,
   type ConfigGeotargeting,
   type CpCobertura,
@@ -834,6 +836,7 @@ export default function ExportarProyecto({
               centros[i]?.nombre?.trim() || `Origen ${i + 1}`;
             filasGeo = cobertura.map((c) => ({
               codigo_postal: c.codigo_postal,
+              cp_dsp: cpDsp(c.codigo_postal),
               municipio: c.municipio ?? "",
               colonias_principales: (c.colonias ?? []).join(" · "),
               entidad: c.entidad,
@@ -845,6 +848,7 @@ export default function ExportarProyecto({
             // sin reconstrucción: los CPs compactos de la config
             filasGeo = cfgGeo.cps.map((c) => ({
               codigo_postal: c.cp,
+              cp_dsp: cpDsp(c.cp),
               municipio: c.municipio ?? "",
               universo_18: c.universo_18 ?? "",
             }));
@@ -854,6 +858,7 @@ export default function ExportarProyecto({
           );
           hojaGeo["!cols"] = [
             { wch: 14 },
+            { wch: 12 },
             { wch: 24 },
             { wch: 46 },
             { wch: 9 },
@@ -968,6 +973,9 @@ export default function ExportarProyecto({
           {
             Nota: "El % del universo se calcula por levantamiento: universo individual del punto / suma de individuales de su capa.",
           },
+          ...(conPuntos.some((s) => s.rol === "geotargeting")
+            ? [{ Nota: `Geo-Targeting: ${NOTA_PESOS_GEO}` }]
+            : []),
         ]),
         "Metodología"
       );
@@ -1016,7 +1024,8 @@ export default function ExportarProyecto({
       await exportarZipProyectoGeo(
         cps,
         cliente,
-        centros.map((c, i) => c.nombre?.trim() || `Origen ${i + 1}`)
+        centros.map((c, i) => c.nombre?.trim() || `Origen ${i + 1}`),
+        centros.map((c) => c.universo_18 ?? null)
       );
     } catch (e) {
       setError(

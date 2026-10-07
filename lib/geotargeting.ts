@@ -6,9 +6,29 @@
 // Anthropic vive SOLO en el servidor, vía /api/keywords).
 
 import { postJson } from "./busqueda-cliente";
-import { cargarPuntosSurveys } from "./planner";
+import { cargarPuntosCrudosSurvey } from "./planner";
 import { createClient } from "@/lib/supabase/client";
 import type { Viewport } from "./types";
+
+/** Código de país ISO-3166 alpha-3 que piden los bulk uploads de DSP. */
+const PAIS_ISO3 = "MEX";
+
+/** CP en formato listo para DSP: "44510,MEX" — los códigos son texto
+ * del catálogo, así que "01080,MEX" conserva su cero inicial. */
+export const cpDsp = (codigo: string) => `${codigo},${PAIS_ISO3}`;
+
+/** Centro (tienda/PDV) de un geo-targeting. universo_18 es el universo
+ * individual del radio del PDV (detalle por punto de Proximidad). */
+export interface CentroGeo {
+  lat: number;
+  lng: number;
+  nombre?: string;
+  universo_18?: number | null;
+}
+
+/** Nota metodológica de los universos del entregable Geo-Targeting. */
+export const NOTA_PESOS_GEO =
+  "Los universos por CP y por origen se traslapan entre tiendas/códigos cercanos — son pesos relativos para ponderar presupuesto, no poblaciones exclusivas; el total deduplicado vive en el Resumen del proyecto.";
 
 // ------------------------------------------------------------------
 // CPs por radios (PostGIS local, 0 consultas a APIs externas)
@@ -123,7 +143,7 @@ export interface ConfigGeotargeting {
   /** Survey fuente de los centros (para re-ejecutar), si aplica. */
   origenSurveyId?: string | null;
   /** Centros usados (para re-ejecutar cargas manuales; cap 500). */
-  centros?: { lat: number; lng: number; nombre?: string }[];
+  centros?: CentroGeo[];
   /** CPs compactos (la geometría se re-consulta al reabrir, gratis).
    * universo_18 se persiste para no repetir la interpolación. */
   cps: { cp: string; municipio: string | null; universo_18?: number | null }[];
@@ -177,10 +197,17 @@ const limpiarNombre = (s: string) =>
     .replace(/^_+|_+$/g, "")
     .slice(0, 40) || "geotargeting";
 
+/** Celda de universo de la tienda: el dato, o la instrucción para
+ * obtenerlo — nunca un vacío silencioso. */
+const AVISO_SIN_DETALLE = "calcular detalle en Proximidad";
+
 /**
- * Export Geo-Targeting (.xlsx): hoja CPs (uno por fila, listos para
- * pegar en el DSP + contexto) y hojas Keywords_Marca / _Industria /
- * _Competencia (una keyword por fila).
+ * Export Geo-Targeting (.xlsx). Hojas en orden operativo:
+ * 1) CPs_por_origen — la hoja de trabajo (una fila por tienda×CP, con
+ *    universo de la tienda Y del CP, autosuficiente sin VLOOKUPs);
+ * 2) "CPs_unicos (resumen)" — la lista deduplicada, base analítica;
+ * 3) Keywords_* (solo grupos con contenido);
+ * 4) Notas — la honestidad metodológica de los pesos.
  */
 export async function exportarGeotargetingXlsx(
   cps: CpCobertura[],
@@ -188,15 +215,56 @@ export async function exportarGeotargetingXlsx(
   cliente: string,
   /** Nombres de los centros, alineados con CpCobertura.origenes —
    * habilitan "tiendas_que_cubre" y la hoja CPs_por_origen. */
-  nombresOrigenes?: string[]
+  nombresOrigenes?: string[],
+  /** Universo individual 18+ de cada tienda (detalle por punto de
+   * Proximidad), alineado con los centros; null = sin calcular. */
+  universosOrigenes?: (number | null)[]
 ) {
   const XLSX = await import("xlsx");
   const wb = XLSX.utils.book_new();
   const nombreDe = (idx: number) =>
     nombresOrigenes?.[idx]?.trim() || `Origen ${idx + 1}`;
 
+  // 1) desglose tienda×CP PRIMERO: la base para armar line items y
+  // presupuesto por tienda en el DSP, con los dos universos en línea
+  const filasPorOrigen = cps
+    .flatMap((c) =>
+      (c.origenes ?? []).map((idx) => ({
+        idx,
+        fila: {
+          origen: nombreDe(idx),
+          universo_origen_18: universosOrigenes?.[idx] ?? AVISO_SIN_DETALLE,
+          codigo_postal: c.codigo_postal,
+          cp_dsp: cpDsp(c.codigo_postal),
+          municipio: c.municipio ?? "",
+          colonias_principales: (c.colonias ?? []).join(" · "),
+          universo_cp_18: c.universo_18 ?? "",
+        },
+      }))
+    )
+    .sort(
+      (a, b) =>
+        a.idx - b.idx || a.fila.codigo_postal.localeCompare(b.fila.codigo_postal)
+    )
+    .map((x) => x.fila);
+  if (filasPorOrigen.length > 0) {
+    const hojaOrigen = XLSX.utils.json_to_sheet(filasPorOrigen);
+    hojaOrigen["!cols"] = [
+      { wch: 34 },
+      { wch: 18 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 24 },
+      { wch: 46 },
+      { wch: 14 },
+    ];
+    XLSX.utils.book_append_sheet(wb, hojaOrigen, "CPs_por_origen");
+  }
+
+  // 2) lista deduplicada (resumen analítico)
   const filasCps = cps.map((c) => ({
     codigo_postal: c.codigo_postal,
+    cp_dsp: cpDsp(c.codigo_postal),
     municipio: c.municipio ?? "",
     colonias_principales: (c.colonias ?? []).join(" · "),
     total_colonias: c.total_colonias ?? "",
@@ -210,6 +278,7 @@ export async function exportarGeotargetingXlsx(
   );
   hojaCps["!cols"] = [
     { wch: 14 },
+    { wch: 12 },
     { wch: 24 },
     { wch: 46 },
     { wch: 13 },
@@ -218,32 +287,9 @@ export async function exportarGeotargetingXlsx(
     { wch: 60 },
     { wch: 12 },
   ];
-  XLSX.utils.book_append_sheet(wb, hojaCps, "CPs");
+  XLSX.utils.book_append_sheet(wb, hojaCps, "CPs_unicos (resumen)");
 
-  // desglose tienda×CP: la base para armar line items y presupuesto
-  // por tienda en el DSP (una fila por combinación origen→CP)
-  const filasPorOrigen = cps
-    .flatMap((c) =>
-      (c.origenes ?? []).map((idx) => ({
-        idx,
-        origen: nombreDe(idx),
-        codigo_postal: c.codigo_postal,
-        municipio: c.municipio ?? "",
-        colonias_principales: (c.colonias ?? []).join(" · "),
-      }))
-    )
-    .sort(
-      (a, b) =>
-        a.idx - b.idx || a.codigo_postal.localeCompare(b.codigo_postal)
-    )
-    .map(({ idx: _idx, ...fila }) => fila);
-  if (filasPorOrigen.length > 0) {
-    const hojaOrigen = XLSX.utils.json_to_sheet(filasPorOrigen);
-    hojaOrigen["!cols"] = [{ wch: 34 }, { wch: 14 }, { wch: 24 }, { wch: 46 }];
-    XLSX.utils.book_append_sheet(wb, hojaOrigen, "CPs_por_origen");
-  }
-
-  // keywords: SOLO hojas con contenido — nada de grupos fantasma
+  // 3) keywords: SOLO hojas con contenido — nada de grupos fantasma
   const hojaKw = (lista: string[], titulo: string) => {
     if (lista.length === 0) return;
     const hoja = XLSX.utils.json_to_sheet(lista.map((k) => ({ keyword: k })));
@@ -255,6 +301,16 @@ export async function exportarGeotargetingXlsx(
     hojaKw(keywords.industria, "Keywords_Industria");
     hojaKw(keywords.competencia, "Keywords_Competencia");
   }
+
+  // 4) la nota que evita presupuestos sobre poblaciones "exclusivas"
+  const hojaNotas = XLSX.utils.json_to_sheet([
+    { Nota: NOTA_PESOS_GEO },
+    {
+      Nota: `cp_dsp es el formato de carga masiva del DSP ("44510,${PAIS_ISO3}"); codigo_postal queda limpio para cruces y fórmulas.`,
+    },
+  ]);
+  hojaNotas["!cols"] = [{ wch: 120 }];
+  XLSX.utils.book_append_sheet(wb, hojaNotas, "Notas");
 
   XLSX.writeFile(wb, `seeker_geotargeting_${limpiarNombre(cliente)}.xlsx`);
 }
@@ -293,6 +349,7 @@ function propsDeCp(
 ): Record<string, unknown> {
   return {
     codigo_postal: c.codigo_postal,
+    cp_dsp: cpDsp(c.codigo_postal),
     municipio: c.municipio,
     entidad: c.entidad,
     colonias_principales: (c.colonias ?? []).join(" · ") || null,
@@ -328,7 +385,9 @@ export function featureCollectionCobertura(
  * CP aparece una vez por cada tienda cuyo radio lo cubre). */
 export function featureCollectionPorOrigen(
   cps: CpCobertura[],
-  nombresOrigenes?: string[]
+  nombresOrigenes?: string[],
+  /** Universo individual 18+ de cada tienda, alineado con los centros. */
+  universosOrigenes?: (number | null)[]
 ): FeatureCollectionGeo {
   const nombreDe = nombreOrigenDe(nombresOrigenes);
   const features = cps
@@ -341,11 +400,13 @@ export function featureCollectionPorOrigen(
           geometry: c.geometria!,
           properties: {
             origen: nombreDe(idx),
+            universo_origen_18: universosOrigenes?.[idx] ?? null,
             codigo_postal: c.codigo_postal,
+            cp_dsp: cpDsp(c.codigo_postal),
             municipio: c.municipio,
             entidad: c.entidad,
             colonias_principales: (c.colonias ?? []).join(" · ") || null,
-            universo_18: c.universo_18 ?? null,
+            universo_cp_18: c.universo_18 ?? null,
           },
         },
       }))
@@ -394,11 +455,12 @@ export function exportarGeoJsonCobertura(
 export function exportarGeoJsonPorOrigen(
   cps: CpCobertura[],
   plan: string,
-  nombresOrigenes?: string[]
+  nombresOrigenes?: string[],
+  universosOrigenes?: (number | null)[]
 ) {
   descargarGeoJson(
     `geotargeting_${limpiarNombre(plan)}_por_origen.geojson`,
-    featureCollectionPorOrigen(cps, nombresOrigenes)
+    featureCollectionPorOrigen(cps, nombresOrigenes, universosOrigenes)
   );
 }
 
@@ -450,9 +512,6 @@ export async function exportarZipPorOrigen(
 
 export type FormatoDsp = "simplifi";
 
-/** Código de país ISO-3166 alpha-3 que piden los bulk uploads. */
-const PAIS_ISO3 = "MEX";
-
 const SERIALIZADORES_DSP: Record<
   FormatoDsp,
   {
@@ -472,8 +531,7 @@ const SERIALIZADORES_DSP: Record<
     etiqueta: "Simpli.fi",
     sufijo: "simplifi",
     mime: "text/csv;charset=utf-8",
-    contenido: (cps) =>
-      cps.map((c) => `${c.codigo_postal},${PAIS_ISO3}`).join("\n"),
+    contenido: (cps) => cps.map((c) => cpDsp(c.codigo_postal)).join("\n"),
   },
 };
 
@@ -525,7 +583,8 @@ export async function exportarZipDspPorOrigen(
 export async function exportarZipProyectoGeo(
   cps: CpCobertura[],
   plan: string,
-  nombresOrigenes: string[]
+  nombresOrigenes: string[],
+  universosOrigenes?: (number | null)[]
 ) {
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();
@@ -538,7 +597,9 @@ export async function exportarZipProyectoGeo(
   if (nombresOrigenes.length > 0) {
     zip.file(
       `${base}_por_origen.geojson`,
-      JSON.stringify(featureCollectionPorOrigen(cps, nombresOrigenes))
+      JSON.stringify(
+        featureCollectionPorOrigen(cps, nombresOrigenes, universosOrigenes)
+      )
     );
     for (const t of coberturaPorTienda(cps, nombresOrigenes)) {
       zip.file(
@@ -605,19 +666,24 @@ export async function geometriasPorCodigo(
  */
 export async function reconstruirCobertura(cfg: ConfigGeotargeting): Promise<{
   cps: CpCobertura[];
-  /** Centros re-ejecutados (vacío cuando solo quedaron los códigos). */
-  centros: { lat: number; lng: number; nombre?: string }[];
+  /** Centros re-ejecutados (vacío cuando solo quedaron los códigos),
+   * con el universo individual de cada tienda cuando el detalle por
+   * punto de su survey ya se calculó. */
+  centros: CentroGeo[];
 }> {
   const uniGuardado = new Map(
     (cfg.cps ?? []).map((c) => [c.cp, c.universo_18 ?? null])
   );
-  let centros: { lat: number; lng: number; nombre?: string }[] =
-    cfg.centros ?? [];
+  let centros: CentroGeo[] = cfg.centros ?? [];
   if (cfg.origenSurveyId) {
-    const mapa = await cargarPuntosSurveys([cfg.origenSurveyId]);
-    const pts = mapa.get(cfg.origenSurveyId) ?? [];
+    const pts = await cargarPuntosCrudosSurvey(cfg.origenSurveyId);
     if (pts.length > 0) {
-      centros = pts.map((p) => ({ lat: p.lat, lng: p.lng, nombre: p.nombre }));
+      centros = pts.map((p) => ({
+        lat: p.lat,
+        lng: p.lng,
+        nombre: p.nombre,
+        universo_18: p.universo_individual ?? null,
+      }));
     }
   }
   centros = centros.slice(0, MAX_CENTROS_GEO);
@@ -658,7 +724,11 @@ export function exportarBloqueCsv(
 ) {
   const lineas =
     bloque === "cps"
-      ? ["codigo_postal", ...cps.map((c) => c.codigo_postal)]
+      ? [
+          "codigo_postal,cp_dsp",
+          // cp_dsp lleva coma adentro: SIEMPRE entre comillas en CSV
+          ...cps.map((c) => `${c.codigo_postal},"${cpDsp(c.codigo_postal)}"`),
+        ]
       : ["keyword", ...(keywords?.[bloque] ?? [])];
   const blob = new Blob(["﻿" + lineas.join("\n")], {
     type: "text/csv;charset=utf-8",

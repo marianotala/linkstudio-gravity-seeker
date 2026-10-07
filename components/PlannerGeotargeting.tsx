@@ -30,11 +30,12 @@ import {
   RADIOS_GEOTARGETING,
   reconstruirCobertura,
   type BulkKeywords,
+  type CentroGeo,
   type ConfigGeotargeting,
   type CpCobertura,
   type GrupoKeywords,
 } from "@/lib/geotargeting";
-import { cargarPuntosSurveys } from "@/lib/planner";
+import { cargarPuntosCrudosSurvey } from "@/lib/planner";
 import { createClient } from "@/lib/supabase/client";
 import {
   calcularUniversosCliente,
@@ -102,9 +103,7 @@ export default function PlannerGeotargeting({
   // ---- c) resultado
   const [cps, setCps] = useState<CpCobertura[] | null>(null);
   const [origenDesc, setOrigenDesc] = useState("");
-  const [centrosUsados, setCentrosUsados] = useState<
-    { lat: number; lng: number; nombre?: string }[]
-  >([]);
+  const [centrosUsados, setCentrosUsados] = useState<CentroGeo[]>([]);
   /** Vista por origen: -1 = todos; n = resalta los CPs de esa tienda. */
   const [origenSel, setOrigenSel] = useState(-1);
   /** Survey reabierto: Guardar actualiza en vez de crear otro. */
@@ -183,7 +182,7 @@ export default function PlannerGeotargeting({
     setError("");
     setNota("");
     try {
-      let centros: { lat: number; lng: number; nombre?: string }[];
+      let centros: CentroGeo[];
       let desc: string;
       if (fuente === "manual") {
         centros = puntosManuales.map((p) => ({
@@ -193,9 +192,15 @@ export default function PlannerGeotargeting({
         }));
         desc = `${centros.length} puntos recolectados`;
       } else {
-        const mapa = await cargarPuntosSurveys([fuente]);
-        const pts = mapa.get(fuente) ?? [];
-        centros = pts.map((p) => ({ lat: p.lat, lng: p.lng, nombre: p.nombre }));
+        // crudos: traen el universo individual de cada tienda (detalle
+        // por punto de Proximidad) para la hoja operativa del export
+        const pts = await cargarPuntosCrudosSurvey(fuente);
+        centros = pts.map((p) => ({
+          lat: p.lat,
+          lng: p.lng,
+          nombre: p.nombre,
+          universo_18: p.universo_individual ?? null,
+        }));
         desc = `${centros.length} puntos de "${surveysFuente.find((s) => s.id === fuente)?.nombre ?? "levantamiento"}"`;
       }
       if (centros.length === 0) {
@@ -794,11 +799,12 @@ export default function PlannerGeotargeting({
               cps ?? [],
               keywords,
               cliente,
-              centrosUsados.map((c, i) => c.nombre ?? `Origen ${i + 1}`)
+              centrosUsados.map((c, i) => c.nombre ?? `Origen ${i + 1}`),
+              centrosUsados.map((c) => c.universo_18 ?? null)
             )
           }
           disabled={!cps || cps.length === 0}
-          title="Un xlsx con hoja CPs (lista limpia + tiendas que cubren cada CP), hoja CPs_por_origen (tienda×CP para line items) y hojas de keywords por grupo (solo las pobladas)"
+          title="Un xlsx con CPs_por_origen primero (tienda×CP con universo de la tienda Y del CP + cp_dsp), la lista deduplicada CPs_unicos, hojas de keywords por grupo (solo las pobladas) y Notas"
         >
           ⤓ Export Geo-Targeting (.xlsx)
         </Boton>
@@ -824,11 +830,12 @@ export default function PlannerGeotargeting({
             exportarGeoJsonPorOrigen(
               cps ?? [],
               cliente,
-              centrosUsados.map((c, i) => c.nombre ?? `Origen ${i + 1}`)
+              centrosUsados.map((c, i) => c.nombre ?? `Origen ${i + 1}`),
+              centrosUsados.map((c) => c.universo_18 ?? null)
             )
           }
           disabled={!cps || cps.length === 0 || centrosUsados.length === 0}
-          title="Un Feature por tienda×CP (el mismo CP se repite por cada tienda que lo cubre) — la base para line items por tienda"
+          title="Un Feature por tienda×CP con cp_dsp y ambos universos (tienda y CP) en properties — la base para line items por tienda"
         >
           ⤓ GeoJSON por origen
         </Boton>
