@@ -123,6 +123,9 @@ export interface PlanProyectoDatos {
   /** FASE 18 — detalle por punto (presentación 16:9): universo 18+ y
    * NSE dominante del buffer individual de cada punto, por capa (id). */
   detallePuntos?: Record<string, FilaDetallePunto[]>;
+  /** Geo-Targeting del plan (CPs de cobertura + bulk de keywords):
+   * alimenta el sustento de la táctica de targeting. */
+  geoTargeting?: { cps: number; keywords: number } | null;
 }
 
 export interface FilaDetallePunto {
@@ -141,6 +144,7 @@ const ETIQUETA_SECCION_ROL: Record<RolLevantamiento, [string, string]> = {
   ooh: ["Plan OOH", "Pantallas que apoyan a los puntos de venta"],
   // exploración nunca llega al PDF (se promueve antes); clave requerida
   exploracion: ["Exploración", "Búsquedas exploratorias del plan"],
+  geotargeting: ["Geo-Targeting", "CPs de cobertura + keywords"],
 };
 
 export const NOMBRE_ROL: Record<RolLevantamiento, string> = {
@@ -149,6 +153,7 @@ export const NOMBRE_ROL: Record<RolLevantamiento, string> = {
   proximidad: "Proximidad",
   ooh: "Pantallas",
   exploracion: "Exploración",
+  geotargeting: "Geo-Targeting",
 };
 
 const ORDEN_ROLES: RolLevantamiento[] = ["poi_propio", "competencia", "proximidad"];
@@ -260,7 +265,9 @@ export function sustentoTactica(
         ? `con las ${fmt(d.ooh.pantallas.length)} pantallas del cruce OOH`
         : null;
     case "targeting":
-      return `sobre el universo consolidado de ${fmt(adultos(d.consolidado))} adultos 18+`;
+      return d.geoTargeting
+        ? `${fmt(d.geoTargeting.cps)} CPs de cobertura${d.geoTargeting.keywords > 0 ? ` · bulk de ${fmt(d.geoTargeting.keywords)} keywords en 3 grupos (propuesta IA editable)` : ""}`
+        : `sobre el universo consolidado de ${fmt(adultos(d.consolidado))} adultos 18+`;
     case "trade": {
       const n = puntosDe("poi_propio");
       return n > 0

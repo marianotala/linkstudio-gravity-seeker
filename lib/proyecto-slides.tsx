@@ -90,6 +90,7 @@ const TITULO_TACTICA: Record<RolLevantamiento, [string, string]> = {
   ooh: ["GEO-PDOOH · PANTALLAS × PDVS", "Geo-PDOOH"],
   // exploración no se exporta a láminas; clave requerida por el tipo
   exploracion: ["EXPLORACIÓN", "Exploración"],
+  geotargeting: ["GEO-TARGETING", "Geo-Targeting"],
 };
 
 const adultos = (u: Universos | null | undefined) =>

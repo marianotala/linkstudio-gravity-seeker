@@ -7,6 +7,7 @@
 import { useEffect, useMemo } from "react";
 import {
   CircleMarker,
+  GeoJSON,
   MapContainer,
   Polyline,
   Popup,
@@ -33,6 +34,14 @@ export interface CapaProyecto {
   cuadrados?: boolean;
   /** Líneas pantalla→PDV del cruce OOH (visibles con el survey). */
   lineas?: { a: { lat: number; lng: number }; b: { lat: number; lng: number } }[];
+  /** Polígonos (Geo-Targeting: CPs de cobertura) pintados con el color
+   * de la capa; nombre para el popup y bbox para el encuadre. */
+  poligonos?: {
+    nombre: string;
+    detalle?: string;
+    geometria: Record<string, unknown>;
+    bbox?: { north: number; south: number; east: number; west: number };
+  }[];
 }
 
 function Encuadre({
@@ -49,9 +58,14 @@ function Encuadre({
   useEffect(() => {
     if (foco) return;
     const puntos: [number, number][] = [];
-    capas.forEach((c) =>
-      c.puntos.slice(0, 500).forEach((p) => puntos.push([p.lat, p.lng]))
-    );
+    capas.forEach((c) => {
+      c.puntos.slice(0, 500).forEach((p) => puntos.push([p.lat, p.lng]));
+      (c.poligonos ?? []).slice(0, 500).forEach((pg) => {
+        if (pg.bbox) {
+          puntos.push([pg.bbox.south, pg.bbox.west], [pg.bbox.north, pg.bbox.east]);
+        }
+      });
+    });
     if (puntos.length === 0) return;
     map.fitBounds(L.latLngBounds(puntos).pad(0.15));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -100,6 +114,30 @@ export default function PlannerMapa({
           },
         }}
       />
+      {/* polígonos (CPs de cobertura del Geo-Targeting) al fondo */}
+      {visibles.map((c) =>
+        (c.poligonos ?? []).slice(0, 600).map((pg, i) => (
+          <GeoJSON
+            key={`${c.id}-pg-${i}-${pg.nombre}`}
+            data={pg.geometria as unknown as GeoJSON.GeoJsonObject}
+            style={{
+              color: c.color,
+              weight: 1.5,
+              opacity: 0.9,
+              fillColor: c.color,
+              fillOpacity: 0.12,
+            }}
+          >
+            <Popup>
+              <div className="font-mono text-xs">
+                <strong>{pg.nombre}</strong>
+                {pg.detalle && <div>{pg.detalle}</div>}
+                <div style={{ color: c.color }}>{c.nombre}</div>
+              </div>
+            </Popup>
+          </GeoJSON>
+        ))
+      )}
       {/* líneas pantalla→PDV (cruce OOH) debajo de los markers */}
       {visibles.map((c) =>
         (c.lineas ?? []).slice(0, 2000).map((l, i) => (

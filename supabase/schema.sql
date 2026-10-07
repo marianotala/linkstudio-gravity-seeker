@@ -2668,7 +2668,8 @@ create table if not exists public.surveys (
     -- existentes se migraron a 'poi_propio' con traza en
     -- configuracion.fusionado_de y el código ya no lo crea; sigue
     -- permitido solo para no romper inserts en vuelo
-    check (rol in ('poi_propio', 'competencia', 'proximidad', 'ooh', 'exploracion')),
+    -- 'geotargeting': cobertura de CPs + bulk de keywords (config jsonb)
+    check (rol in ('poi_propio', 'competencia', 'proximidad', 'ooh', 'exploracion', 'geotargeting')),
   fuente text,                       -- google | denue | ambas | inventario
   configuracion jsonb not null default '{}'::jsonb, -- modo, términos, categorías, radio, geografía
   status text not null default 'en_progreso'
@@ -3501,3 +3502,88 @@ $$;
 
 revoke execute on function public.admin_set_rol(uuid, text) from public, anon;
 grant execute on function public.admin_set_rol(uuid, text) to authenticated;
+
+
+-- ------------------------------------------------------------------
+-- GEO-TARGETING: CPs por radios — todos los códigos postales cuyo
+-- polígono intersecta los radios de los PDVs. Consulta local PostGIS,
+-- cero APIs externas. Pre-filtro por bbox (índice gist) + verificación
+-- exacta en geografía; contexto del catálogo de colonias si está
+-- cargado. Validado en vivo: CDMX centro 3 km → 73 CPs; MTY 3 km → 35.
+-- ------------------------------------------------------------------
+create or replace function public.cps_por_radios(
+  p_centros jsonb,
+  p_radio_m int,
+  p_incluir_geometria boolean default true
+)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = public, extensions
+as $$
+declare
+  v_n int;
+  v_deg float8;
+  v_cps jsonb;
+begin
+  v_n := coalesce(jsonb_array_length(p_centros), 0);
+  if v_n < 1 or v_n > 500 then
+    raise exception 'Manda entre 1 y 500 centros';
+  end if;
+  if p_radio_m is null or p_radio_m < 100 or p_radio_m > 20000 then
+    raise exception 'Radio entre 100 y 20,000 metros';
+  end if;
+  -- margen generoso en grados para el pre-filtro por índice
+  v_deg := p_radio_m / 100000.0;
+
+  with centros as (
+    select
+      ST_SetSRID(
+        ST_MakePoint((c->>'lng')::float8, (c->>'lat')::float8), 4326
+      ) as pt
+    from jsonb_array_elements(p_centros) c
+    where (c->>'lat') is not null and (c->>'lng') is not null
+  ),
+  cobertura as (
+    select cp.codigo_postal, cp.entidad, cp.geom
+    from public.cp_poligonos cp
+    where exists (
+      select 1 from centros ct
+      where cp.geom && ST_Expand(ct.pt, v_deg)
+        and ST_DWithin(cp.geom::geography, ct.pt::geography, p_radio_m)
+    )
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'codigo_postal', cb.codigo_postal,
+    'entidad', cb.entidad,
+    'municipio', col.municipio,
+    'colonias', to_jsonb(col.colonias),
+    'total_colonias', col.total,
+    'bbox', jsonb_build_object(
+      'north', ST_YMax(cb.geom), 'south', ST_YMin(cb.geom),
+      'east', ST_XMax(cb.geom), 'west', ST_XMin(cb.geom)
+    ),
+    'geometria', case when p_incluir_geometria
+      then ST_AsGeoJSON(ST_SimplifyPreserveTopology(cb.geom, 0.0004), 5)::jsonb end
+  ) order by cb.codigo_postal), '[]'::jsonb)
+  into v_cps
+  from cobertura cb
+  left join lateral (
+    select
+      max(cc.municipio) as municipio,
+      (array_agg(cc.colonia order by cc.colonia))[1:3] as colonias,
+      count(*)::int as total
+    from public.cp_colonias cc
+    where cc.codigo_postal = cb.codigo_postal
+  ) col on true;
+
+  return jsonb_build_object(
+    'cps', v_cps,
+    'total', coalesce(jsonb_array_length(v_cps), 0)
+  );
+end;
+$$;
+
+revoke execute on function public.cps_por_radios(jsonb, int, boolean) from public, anon;
+grant execute on function public.cps_por_radios(jsonb, int, boolean) to authenticated;

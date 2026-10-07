@@ -85,6 +85,7 @@ export default function ExportarProyecto({
   tituloProyecto,
   usuario,
   surveys,
+  geoResumen,
   tacticas,
   onTacticas,
   irAResumen,
@@ -94,6 +95,8 @@ export default function ExportarProyecto({
   tituloProyecto: string | null;
   usuario: PerfilUsuario | null;
   surveys: SurveyExportar[];
+  /** Geo-Targeting del plan (CPs + keywords) para el sustento del PDF. */
+  geoResumen?: { cps: number; keywords: number } | null;
   tacticas: TacticaClave[] | null;
   onTacticas: (t: TacticaClave[]) => void;
   irAResumen: () => void;
@@ -599,6 +602,11 @@ export default function ExportarProyecto({
             : [];
         })(),
         "Universo RESIDENCIAL (población que vive en la zona): no incluye población flotante ni turismo — en plazas turísticas, complementar con la fase Footfall",
+        ...(geoResumen
+          ? [
+              `Geo-Targeting: ${geoResumen.cps.toLocaleString("es-MX")} CPs de cobertura (polígonos de Correos de México, intersección local)${geoResumen.keywords > 0 ? ` · bulk de ${geoResumen.keywords.toLocaleString("es-MX")} keywords generadas por IA con el contexto del plan — PROPUESTA EDITABLE, no data de volumen de búsqueda` : ""}`,
+            ]
+          : []),
       ];
 
       const sumaSimple = seleccionados.reduce(
@@ -629,6 +637,7 @@ export default function ExportarProyecto({
         universoRol,
         mapasRol,
         detallePuntos,
+        geoTargeting: geoResumen ?? null,
       };
       if (formato === "slides") {
         descargarBlob(

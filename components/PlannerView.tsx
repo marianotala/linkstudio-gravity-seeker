@@ -47,6 +47,11 @@ import {
 } from "@/lib/planner";
 import { reFiltrarRun } from "@/lib/refiltrado";
 import PanelDescartados from "./PanelDescartados";
+import PlannerGeotargeting, {
+  type SurveyGeoGuardado,
+} from "./PlannerGeotargeting";
+import type { ConfigGeotargeting, CpCobertura } from "@/lib/geotargeting";
+import { marcaNormalizada } from "@/lib/marcas";
 import { MensajeError } from "./ui";
 import { ChipsTerminos } from "./PlannerRecolectar";
 import { calcularUniversosCliente } from "@/lib/universos-lotes";
@@ -142,6 +147,15 @@ const SECCIONES: {
     detalle: "",
   },
   {
+    clave: "geotargeting",
+    nombre: "Geo-Targeting",
+    descriptor: "CPs de cobertura + bulk de keywords para el DSP",
+    color: "#2dd4bf",
+    activa: true,
+    fase: "",
+    detalle: "",
+  },
+  {
     clave: "exportar",
     nombre: "Exportar",
     descriptor: "El plan completo (PDF + Excel)",
@@ -190,6 +204,8 @@ export default function PlannerView({
   /** Crudos con metadata (cruces OOH: relaciones pantalla→PDV). */
   const [crudosCache, setCrudosCache] = useState<Record<string, PuntoSurvey[]>>({});
   const [seleccionado, setSeleccionado] = useState<string | null>(null);
+  /** Cobertura de CPs del Geo-Targeting (polígonos en el mapa). */
+  const [coberturaGeo, setCoberturaGeo] = useState<CpCobertura[] | null>(null);
   const [foco, setFoco] = useState<LatLng | null>(null);
   const [confirmando, setConfirmando] = useState<{
     accion: "eliminar" | "recorrer" | "dividir";
@@ -420,7 +436,29 @@ export default function PlannerView({
       };
     });
 
-  const capasMapa: CapaProyecto[] = [...capasSurveys, ...capasBorrador];
+  const capaGeo: CapaProyecto[] =
+    coberturaGeo && coberturaGeo.length > 0
+      ? [
+          {
+            id: "geotargeting-cobertura",
+            nombre: `Geo-Targeting · ${coberturaGeo.length} CPs`,
+            color: "#2dd4bf",
+            puntos: [],
+            poligonos: coberturaGeo
+              .filter((c) => c.geometria)
+              .map((c) => ({
+                nombre: `CP ${c.codigo_postal}`,
+                detalle:
+                  [c.municipio, (c.colonias ?? []).slice(0, 2).join(", ")]
+                    .filter(Boolean)
+                    .join(" · ") || undefined,
+                geometria: c.geometria!,
+                bbox: c.bbox,
+              })),
+          },
+        ]
+      : [];
+  const capasMapa: CapaProyecto[] = [...capasSurveys, ...capasBorrador, ...capaGeo];
 
   const surveySeleccionado = surveys.find((s) => s.id === seleccionado) ?? null;
   const universoSeleccionado = surveySeleccionado
@@ -500,6 +538,31 @@ export default function PlannerView({
     }
     if (proyecto?.nombre_cliente?.trim()) set.add(proyecto.nombre_cliente.trim());
     return Array.from(set).slice(0, 8);
+  })();
+
+  /** Marcas censadas en la capa Competencia (pre-carga de competidores
+   * del generador de keywords del Geo-Targeting — editables ahí). */
+  const marcasCompetencia = (() => {
+    const set = new Set<string>();
+    const agregar = (t: string) => {
+      const m = marcaNormalizada(t.trim());
+      if (m) set.add(m);
+    };
+    for (const s of surveys.filter((x) => x.rol === "competencia")) {
+      const cfg = s.configuracion ?? {};
+      for (const t of (cfg.nameFilters as string[]) ?? []) agregar(t);
+      for (const t of (cfg.censoTerminos as string[]) ?? []) agregar(t);
+      if (typeof cfg.etiqueta === "string" && cfg.etiqueta.trim()) {
+        agregar(cfg.etiqueta);
+      }
+    }
+    // la marca del cliente no es su propia competencia
+    const propias = new Set(
+      marcasPropias.map((m) => marcaNormalizada(m)).filter(Boolean)
+    );
+    return Array.from(set)
+      .filter((m) => !propias.has(m))
+      .slice(0, 10);
   })();
 
   /** runId del survey (hermana capas de una misma corrida). */
@@ -889,7 +952,10 @@ export default function PlannerView({
 
   const activa = SECCIONES.find((x) => x.clave === seccion)!;
   const filasSeccion =
-    activa.activa && seccion !== "exportar" && seccion !== "resumen"
+    activa.activa &&
+    seccion !== "exportar" &&
+    seccion !== "resumen" &&
+    seccion !== "geotargeting"
       ? porRol(seccion as RolLevantamiento)
       : [];
 
@@ -1006,7 +1072,9 @@ export default function PlannerView({
             // se promueve a una sección (Mover a…)
             <ResumenProyecto
               proyectoId={proyectoId}
-              surveys={surveys.filter((s) => s.rol !== "exploracion")}
+              surveys={surveys.filter(
+                (s) => s.rol !== "exploracion" && s.rol !== "geotargeting"
+              )}
             />
           ) : seccion === "exportar" ? (
             <ExportarProyecto
@@ -1014,7 +1082,25 @@ export default function PlannerView({
               cliente={proyecto?.nombre_cliente ?? "Cliente"}
               tituloProyecto={proyecto?.titulo ?? null}
               usuario={usuario}
-              surveys={surveys.filter((s) => s.rol !== "exploracion")}
+              surveys={surveys.filter(
+                (s) => s.rol !== "exploracion" && s.rol !== "geotargeting"
+              )}
+              geoResumen={(() => {
+                const geo = porRol("geotargeting")
+                  .map((x) => x.configuracion as unknown as ConfigGeotargeting)
+                  .filter((c) => (c?.cps?.length ?? 0) > 0)
+                  .sort((a, b) =>
+                    (b.generado_en ?? "").localeCompare(a.generado_en ?? "")
+                  )[0];
+                if (!geo) return null;
+                const kw = geo.keywords;
+                return {
+                  cps: geo.cps.length,
+                  keywords: kw
+                    ? kw.marca.length + kw.industria.length + kw.competencia.length
+                    : 0,
+                };
+              })()}
               tacticas={tacticasPlan}
               onTacticas={setTacticasPlan}
               irAResumen={() => setSeccion("resumen")}
@@ -1051,7 +1137,39 @@ export default function PlannerView({
                   </p>
                 </div>
 
-                {seccion === "poi_propio" ? (
+                {seccion === "geotargeting" ? (
+                  <PlannerGeotargeting
+                    proyectoId={proyectoId}
+                    cliente={proyecto?.nombre_cliente ?? "Cliente"}
+                    surveysFuente={surveys
+                      .filter(
+                        (s) =>
+                          (s.rol === "poi_propio" ||
+                            s.rol === "proximidad" ||
+                            s.rol === "competencia" ||
+                            s.rol === "exploracion") &&
+                          puntosDe(s) > 0
+                      )
+                      .map((s) => ({
+                        id: s.id,
+                        nombre: nombreDe(s),
+                        puntos: puntosDe(s),
+                      }))}
+                    surveysGeo={porRol("geotargeting").map(
+                      (s): SurveyGeoGuardado => ({
+                        id: s.id,
+                        nombre: nombreDe(s),
+                        created_at: s.created_at,
+                        config: s.configuracion as unknown as ConfigGeotargeting,
+                      })
+                    )}
+                    marcaSugerida={marcasPropias[0] ?? proyecto?.nombre_cliente ?? ""}
+                    industriaSugerida=""
+                    competidoresSugeridos={marcasCompetencia}
+                    alGuardar={cargar}
+                    onCobertura={(cps) => setCoberturaGeo(cps)}
+                  />
+                ) : seccion === "poi_propio" ? (
                   <SeccionPois
                     proyectoId={proyectoId}
                     color={activa.color}
@@ -1338,7 +1456,7 @@ export default function PlannerView({
                                     {/* reclasificar sin re-pagar: el rol
                                         cambia, los puntos/descartados/
                                         universos se conservan tal cual */}
-                                    {s.rol !== "ooh" && (
+                                    {s.rol !== "ooh" && s.rol !== "geotargeting" && (
                                       <select
                                         value=""
                                         disabled={promoviendo !== null}

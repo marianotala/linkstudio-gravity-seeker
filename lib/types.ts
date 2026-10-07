@@ -418,8 +418,12 @@ export type RolLevantamiento =
   | "proximidad"
   | "ooh"
   /** Buscador del plan: exploración libre; sus resultados se PROMUEVEN
-   * a otra sección reasignando el rol (v2 F1). */
-  | "exploracion";
+   * a otra sección reasignando el rol (v2 F1). LEGADO tras la fusión
+   * Buscador+POIs: el código ya no lo crea. */
+  | "exploracion"
+  /** Geo-Targeting: cobertura de CPs + bulk de keywords (config jsonb,
+   * sin survey_points). */
+  | "geotargeting";
 
 export type StatusProyecto = "activo" | "archivado";
 

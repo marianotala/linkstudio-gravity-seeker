@@ -40,6 +40,7 @@ export const ETIQUETA_ROL: Record<RolLevantamiento, string> = {
   proximidad: "Proximidad",
   ooh: "OOH",
   exploracion: "Exploración",
+  geotargeting: "Geo-Targeting",
 };
 
 /** Espectros de color por ROL (consistentes con la semántica de la
@@ -51,6 +52,7 @@ export const PALETAS_ROL: Record<RolLevantamiento, string[]> = {
   ooh: ["#ff8c42", "#f7d154", "#fdba74", "#fb923c", "#fde68a", "#f59e0b"],
   // exploración: teales/esmeralda — neutral, distinto de las tácticas
   exploracion: ["#2dd4bf", "#5eead4", "#14b8a6", "#99f6e4", "#0d9488", "#34d399"],
+  geotargeting: ["#2dd4bf", "#5eead4", "#14b8a6", "#99f6e4", "#0d9488", "#34d399"],
 };
 
 export function colorSurvey(rol: RolLevantamiento, indice: number): string {
