@@ -4637,7 +4637,7 @@ export default function SeekerApp({
           <span className="text-zinc-700">·</span>
           <span className="shrink-0 text-zinc-400">
             {planner.embebido
-              ? "Exploración libre — cada corrida se guarda al plan y se puede promover a otra sección"
+              ? `Cada corrida se guarda al plan como levantamiento de ${ETIQUETA_ROL[planner.rol]} y se puede mover a otra sección`
               : `Sección ${ETIQUETA_ROL[planner.rol]} — cada levantamiento se guarda automáticamente al plan`}
           </span>
           {notaPlanner && (

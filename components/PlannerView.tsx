@@ -23,7 +23,6 @@ import {
   BORRADOR_VACIO,
   SeccionCompetencia,
   SeccionOoh,
-  SeccionPois,
   SeccionProximidad,
   type BorradorSeccion,
 } from "./PlannerRecolectar";
@@ -70,6 +69,20 @@ import type {
 } from "@/lib/types";
 import type { CapaProyecto } from "./PlannerMapa";
 
+// El Buscador completo de siempre (censo por ciudad, celdas hex/cuadradas,
+// marca/territorial/CP/zona, DENUE/Google, filtros, depuración, exports de
+// geocercas), EMBEBIDO como la sección "Puntos de interés" del plan: sus
+// corridas son levantamientos rol 'poi_propio', movibles a cualquier
+// sección sin re-pagar.
+const SeekerEmbebido = dynamic(() => import("./SeekerApp"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-[76vh] min-h-[560px] items-center justify-center font-mono text-xs text-zinc-600">
+      Cargando el buscador…
+    </div>
+  ),
+});
+
 const PlannerMapa = dynamic(() => import("./PlannerMapa"), {
   ssr: false,
   loading: () => (
@@ -113,11 +126,12 @@ const SECCIONES: {
     detalle: "",
   },
   {
-    // FUSIÓN: "Buscador" y "Puntos de interés" son la misma sección —
-    // una sola puerta para buscar lugar, cargar Excel/CSV y censar
+    // El Buscador de siempre, renombrado: "Puntos de interés" ES el
+    // buscador completo embebido — sus levantamientos nacen con rol
+    // poi_propio y se mueven a Competencia/Proximidad sin re-pagar
     clave: "poi_propio",
     nombre: "Puntos de interés",
-    descriptor: "Busca, carga y censa — por lugar, archivo o categorías",
+    descriptor: "Busca, carga y censa los puntos del plan",
     color: "#2fb9e8",
     activa: true,
     fase: "",
@@ -859,7 +873,12 @@ export default function PlannerView({
     // levantamiento RECOLECTADO inline (F6): sus puntos regresan al
     // borrador de la sección para editarlos y volver a Calcular — sin
     // brincar de vista
-    if (s.fuente === "recoleccion" && s.rol !== "ooh") {
+    if (
+      s.fuente === "recoleccion" &&
+      s.rol !== "ooh" &&
+      // la sección POIs ya no tiene recolector: sin borrador que reabrir
+      s.rol !== "poi_propio"
+    ) {
       const mapa = await cargarPuntosSurveys([s.id]);
       const puntos: PuntoRecolectado[] = (mapa.get(s.id) ?? []).map((p) => ({
         ...p,
@@ -1287,15 +1306,24 @@ export default function PlannerView({
           ) : (
             <>
               {/* interfaz inline de la sección (recolectar → calcular)
-                  + lista de levantamientos guardados */}
-              <div className="max-h-[62%] shrink-0 overflow-y-auto border-b border-linea px-5 py-3">
+                  + lista de levantamientos guardados. Puntos de interés
+                  es el Buscador completo embebido: trae su propio mapa,
+                  así que su sección ocupa todo el alto y no pinta el
+                  mapa del proyecto. */}
+              <div
+                className={
+                  seccion === "poi_propio"
+                    ? "min-h-0 flex-1 overflow-y-auto px-5 py-3"
+                    : "max-h-[62%] shrink-0 overflow-y-auto border-b border-linea px-5 py-3"
+                }
+              >
                 <div className="mb-3">
                   <h2 className="font-display text-base font-extrabold tracking-tight text-white">
                     {activa.nombre}
                   </h2>
                   <p className="font-mono text-[10px] text-zinc-500">
                     {filasSeccion.length > 0
-                      ? `${filasSeccion.length} ${filasSeccion.length === 1 ? "levantamiento guardado" : "levantamientos guardados"} · el mapa pinta lo recolectado y todos los visibles del proyecto`
+                      ? `${filasSeccion.length} ${filasSeccion.length === 1 ? "levantamiento guardado" : "levantamientos guardados"}${seccion === "poi_propio" ? " · muévelos a otra sección con «Mover a»" : " · el mapa pinta lo recolectado y todos los visibles del proyecto"}`
                       : activa.descriptor}
                   </p>
                 </div>
@@ -1333,14 +1361,15 @@ export default function PlannerView({
                     onCobertura={(cps) => setCoberturaGeo(cps)}
                   />
                 ) : seccion === "poi_propio" ? (
-                  <SeccionPois
-                    proyectoId={proyectoId}
-                    color={activa.color}
-                    borrador={borradores.poi_propio ?? BORRADOR_VACIO}
-                    onBorrador={(b) =>
-                      setBorradores((prev) => ({ ...prev, poi_propio: b }))
-                    }
-                    alGuardar={cargar}
+                  <SeekerEmbebido
+                    usuario={usuario}
+                    planner={{
+                      proyectoId,
+                      rol: "poi_propio",
+                      nombreCliente: proyecto?.nombre_cliente,
+                      embebido: true,
+                      alGuardar: cargar,
+                    }}
                   />
                 ) : seccion === "proximidad" ? (
                   <SeccionProximidad
@@ -1779,15 +1808,20 @@ export default function PlannerView({
                                           : "Dividir en capas"}
                                       </button>
                                     )}
-                                    <button
-                                      onClick={() =>
-                                        setConfirmando({ accion: "recorrer", id: s.id })
-                                      }
-                                      className="rounded border border-linea bg-panel2 px-2 py-0.5 text-[10px] text-zinc-400 hover:border-cian hover:text-cian"
-                                      title="Nueva ejecución con la misma configuración (reemplaza este levantamiento y sus capas hermanas)"
-                                    >
-                                      Re-correr
-                                    </button>
+                                    {/* recolecciones de la sección POIs vieja: ya no
+                                        hay recolector donde reabrir su borrador — se
+                                        conservan tal cual (universos, exports, mover a) */}
+                                    {!(s.fuente === "recoleccion" && s.rol === "poi_propio") && (
+                                      <button
+                                        onClick={() =>
+                                          setConfirmando({ accion: "recorrer", id: s.id })
+                                        }
+                                        className="rounded border border-linea bg-panel2 px-2 py-0.5 text-[10px] text-zinc-400 hover:border-cian hover:text-cian"
+                                        title="Nueva ejecución con la misma configuración (reemplaza este levantamiento y sus capas hermanas)"
+                                      >
+                                        Re-correr
+                                      </button>
+                                    )}
                                     <button
                                       onClick={() =>
                                         setRenombrando({ id: s.id, texto: nombreDe(s) })
@@ -1846,27 +1880,30 @@ export default function PlannerView({
                 </div>
               )}
 
-              {/* mapa del proyecto: todos los levantamientos visibles */}
-              <div className="relative m-4 min-h-0 flex-1 overflow-hidden rounded-lg border border-linea">
-                <PlannerMapa capas={capasMapa} foco={foco} />
-                {capasMapa.length > 0 && (
-                  <div className="absolute right-3 top-3 z-[800] max-h-64 overflow-y-auto rounded-lg border border-linea bg-panel/90 px-3 py-2 backdrop-blur">
-                    {capasMapa.map((c) => (
-                      <div
-                        key={c.id}
-                        className="flex items-center gap-2 font-mono text-[10px] text-zinc-300"
-                      >
-                        <span
-                          className="inline-block h-2.5 w-2.5 rounded-full"
-                          style={{ backgroundColor: c.color }}
-                        />
-                        <span className="max-w-[180px] truncate">{c.nombre}</span>
-                        <span className="text-zinc-500">{fmt(c.puntos.length)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {/* mapa del proyecto: todos los levantamientos visibles
+                  (el Buscador embebido trae su propio mapa) */}
+              {seccion !== "poi_propio" && (
+                <div className="relative m-4 min-h-0 flex-1 overflow-hidden rounded-lg border border-linea">
+                  <PlannerMapa capas={capasMapa} foco={foco} />
+                  {capasMapa.length > 0 && (
+                    <div className="absolute right-3 top-3 z-[800] max-h-64 overflow-y-auto rounded-lg border border-linea bg-panel/90 px-3 py-2 backdrop-blur">
+                      {capasMapa.map((c) => (
+                        <div
+                          key={c.id}
+                          className="flex items-center gap-2 font-mono text-[10px] text-zinc-300"
+                        >
+                          <span
+                            className="inline-block h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: c.color }}
+                          />
+                          <span className="max-w-[180px] truncate">{c.nombre}</span>
+                          <span className="text-zinc-500">{fmt(c.puntos.length)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </main>
