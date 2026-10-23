@@ -22,10 +22,10 @@ export const TIPOS_PANTALLA: Record<
   espectacular: { etiqueta: "Espectacular", color: "#f52d87" },
   muro_digital: { etiqueta: "Muro digital", color: "#9966f2" },
   mall: { etiqueta: "Mall / centro comercial", color: "#e2711d" },
-  urbano: { etiqueta: "Urbano / mupis", color: "#f7d154" },
-  aeropuerto: { etiqueta: "Aeropuerto", color: "#34d399" },
-  transporte: { etiqueta: "Transporte", color: "#f87171" },
-  otro: { etiqueta: "Otro", color: "#a1a1aa" },
+  urbano: { etiqueta: "Urbano / mupis", color: "#b8860b" },
+  aeropuerto: { etiqueta: "Aeropuerto", color: "#0d8a5c" },
+  transporte: { etiqueta: "Transporte", color: "#dc2626" },
+  otro: { etiqueta: "Otro", color: "#6b6960" },
 };
 
 export const CLAVES_TIPO_PANTALLA = Object.keys(

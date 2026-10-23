@@ -33,6 +33,7 @@ import {
   GRIS_OSCURO,
   LINEA,
   MAGENTA,
+  Firma,
   Marca,
   Neon,
   PANEL,
@@ -118,7 +119,7 @@ function TituloLamina({ etiqueta, titulo }: { etiqueta: string; titulo: string }
           ))}
         </View>
       </View>
-      <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 24, color: BLANCO, marginTop: 4 }}>
+      <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 24, color: BLANCO, marginTop: 4 }}>
         {titulo}
       </Text>
     </View>
@@ -196,7 +197,7 @@ function FilaDetalle({
     return (
       <View style={{ flexDirection: "row", alignItems: "center", marginTop: 3, marginBottom: 1.5 }}>
         <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: item.color ?? MAGENTA, marginRight: 4 }} />
-        <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 7.5, color: BLANCO }}>
+        <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 7.5, color: BLANCO }}>
           {item.texto}
         </Text>
       </View>
@@ -308,10 +309,10 @@ function PillLamina({
             RECOMENDADA PARA ESTE TERRITORIO
           </Text>
         )}
-        <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 11, color: destacada ? BLANCO : TINTA }}>
+        <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 11, color: destacada ? BLANCO : TINTA }}>
           {nombre}
         </Text>
-        <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS, marginTop: 2.5 }}>
+        <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS, marginTop: 2.5 }}>
           {descriptor}
         </Text>
       </View>
@@ -323,7 +324,7 @@ function PillLamina({
 function CifraLamina({ valor, descriptor }: { valor: string; descriptor: string }) {
   return (
     <View style={{ flex: 1, paddingRight: 10 }}>
-      <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 22, color: BLANCO }}>
+      <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 22, color: BLANCO }}>
         {valor}
       </Text>
       <Text style={{ fontFamily: "DMMono", fontSize: 6.6, letterSpacing: 1.1, color: GRIS, marginTop: 2, lineHeight: 1.4 }}>
@@ -523,7 +524,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
     letterSpacing: 1.2,
     color: GRIS_OSCURO,
   };
-  const celdaTd = { fontFamily: "Inter" as const, fontSize: 8, color: TINTA };
+  const celdaTd = { fontFamily: "Montserrat" as const, fontSize: 8, color: TINTA };
 
   /** Columna derecha de una lámina de táctica. */
   function DatosTactica({ rol, variante }: LaminaTactica) {
@@ -565,7 +566,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
               }}
             >
               <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.color, marginRight: 6 }} />
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: BLANCO, flex: 1 }}>
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 10, color: BLANCO, flex: 1 }}>
                 {c.nombre.length > 22 ? c.nombre.slice(0, 21) + "…" : c.nombre}
               </Text>
               <Text style={{ fontFamily: "DMMono", fontSize: 9, color: MAGENTA, width: 54, textAlign: "right" }}>
@@ -665,7 +666,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
           </View>
         )}
         {rol === "ooh" && d.ooh && (
-          <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, marginBottom: 7 }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS, marginBottom: 7 }}>
             Radio de cruce {d.ooh.radioTexto} ·{" "}
             {fmt(Math.max(0, d.ooh.totalPdvs - d.ooh.cubiertos))} PDVs sin
             cobertura
@@ -776,12 +777,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
       <Page size={[SLIDE_W, SLIDE_H]} style={{ backgroundColor: FONDO, padding: M }}>
         <Neon height={200} />
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Marca size={40} />
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 26, color: BLANCO, marginLeft: 10 }}>
-              Gravity
-            </Text>
-          </View>
+          <Firma height={26} />
           <Text style={{ fontFamily: "DMMono", fontSize: 8, letterSpacing: 1.4, color: GRIS }}>
             powered by linkstudio
           </Text>
@@ -790,11 +786,11 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
           <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 10, letterSpacing: 3, color: MAGENTA }}>
             PLAN TERRITORIAL — {d.cliente.toUpperCase()}
           </Text>
-          <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 34, color: BLANCO, marginTop: 10 }}>
+          <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 34, color: BLANCO, marginTop: 10 }}>
             {titulo}
           </Text>
-          <Text style={{ fontFamily: "Inter", fontSize: 12, color: GRIS, marginTop: 10 }}>
-            Where physical meets digital.
+          <Text style={{ fontFamily: "Montserrat", fontSize: 12, color: GRIS, marginTop: 10 }}>
+            Conectamos intención con visitas.
           </Text>
           <View style={{ marginTop: 18, width: 320 }}>
             <Divisor width={320} />
@@ -850,7 +846,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
             />
           </View>
         )}
-        <Text style={{ fontFamily: "Inter", fontSize: 9, color: GRIS, marginTop: 14, lineHeight: 1.5 }}>
+        <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: GRIS, marginTop: 14, lineHeight: 1.5 }}>
           Universo de la UNIÓN deduplicada de los territorios seleccionados
           {u && d.sumaSimple > adultos(u)
             ? `: la suma simple daría ${fmt(d.sumaSimple)} adultos 18+; el consolidado real es ${fmt(adultos(u))} (−${fmt(d.sumaSimple - adultos(u))} por traslapes entre capas).`
@@ -988,7 +984,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                   descriptor="Universo 18+ de la capa"
                 />
               </View>
-              <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, marginBottom: 7, lineHeight: 1.5 }}>
+              <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS, marginBottom: 7, lineHeight: 1.5 }}>
                 Códigos postales cuyo polígono intersecta los radios alrededor
                 de {d.geoSeccion.origen} — la lista va directo al DSP
                 (keyword/contextual targeting por CP).
@@ -1012,7 +1008,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                 </View>
               )}
               {d.geoSeccion.municipios.length > 0 && (
-                <Text style={{ fontFamily: "Inter", fontSize: 8, color: GRIS, marginBottom: 7, lineHeight: 1.5 }}>
+                <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS, marginBottom: 7, lineHeight: 1.5 }}>
                   Municipios con más cobertura:{" "}
                   {d.geoSeccion.municipios
                     .map((m) => `${m.municipio} (${fmt(m.cps)})`)
@@ -1036,7 +1032,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                   <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 6.5, letterSpacing: 1.4, color: TEAL, marginBottom: 3 }}>
                     BULK DE KEYWORDS — PROPUESTA IA EDITABLE
                   </Text>
-                  <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: TINTA, lineHeight: 1.5 }}>
+                  <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: TINTA, lineHeight: 1.5 }}>
                     {fmt(
                       d.geoSeccion.keywords.marca +
                         d.geoSeccion.keywords.industria +
@@ -1102,7 +1098,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                 <View style={{ width: 240 }}>
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
                     <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: c.color, marginRight: 6 }} />
-                    <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10.5, color: BLANCO }}>
+                    <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 10.5, color: BLANCO }}>
                       {c.nombre.length > 26 ? c.nombre.slice(0, 25) + "…" : c.nombre}
                     </Text>
                   </View>
@@ -1155,13 +1151,13 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
               <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 8.5, letterSpacing: 2.4, color: MAGENTA }}>
                 TRASLAPE {traslapeEstrella.etiquetaA.toUpperCase()} × {traslapeEstrella.etiquetaB.toUpperCase()} — LA AUDIENCIA DE CONQUISTA
               </Text>
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 52, color: BLANCO, marginTop: 10 }}>
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 52, color: BLANCO, marginTop: 10 }}>
                 {fmt(traslapeEstrella.poblacion)} personas
               </Text>
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 18, color: CIAN, marginTop: 6 }}>
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 18, color: CIAN, marginTop: 6 }}>
                 {traslapeEstrella.pctBase.toLocaleString("es-MX")}% del universo de {traslapeEstrella.etiquetaBase} está en ambos territorios.
               </Text>
-              <Text style={{ fontFamily: "Inter", fontSize: 9.5, color: GRIS, marginTop: 10 }}>
+              <Text style={{ fontFamily: "Montserrat", fontSize: 9.5, color: GRIS, marginTop: 10 }}>
                 % sobre el universo de {traslapeEstrella.etiquetaBase} ({fmt(traslapeEstrella.poblacionBase)} personas, el menor del par) · cálculo por
                 inclusión-exclusión sobre el censo, con las mismas sumas crudas.
               </Text>
@@ -1170,9 +1166,9 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
             <View style={{ marginTop: 8 }} />
           )}
           {otrosTraslapes.slice(0, 3).map((t, i) => (
-            <Text key={i} style={{ fontFamily: "Inter", fontSize: 9.5, color: TINTA, marginBottom: 5 }}>
+            <Text key={i} style={{ fontFamily: "Montserrat", fontSize: 9.5, color: TINTA, marginBottom: 5 }}>
               Traslape {t.etiquetaA} × {t.etiquetaB}:{" "}
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, color: BLANCO }}>
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, color: BLANCO }}>
                 {fmt(t.poblacion)} personas
               </Text>{" "}
               ({t.pctBase.toLocaleString("es-MX")}% del universo de {t.etiquetaBase}, el menor del par).
@@ -1200,14 +1196,14 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
         </View>
         <View style={{ marginTop: 8 }}>
           {sustentos.map((s) => (
-            <Text key={s.clave} style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, marginBottom: 5, lineHeight: 1.4 }}>
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, color: TINTA }}>
+            <Text key={s.clave} style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS, marginBottom: 5, lineHeight: 1.4 }}>
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, color: TINTA }}>
                 {TACTICAS[s.clave].nombre}
               </Text>{" "}
               — {s.texto}.
             </Text>
           ))}
-          <Text style={{ fontFamily: "Inter", fontSize: 9, color: TINTA, marginTop: 4 }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: TINTA, marginTop: 4 }}>
             El equipo de Gravity arma el plan de medios sobre este territorio.
           </Text>
         </View>
@@ -1217,24 +1213,21 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
       <Page size={[SLIDE_W, SLIDE_H]} style={{ backgroundColor: FONDO, padding: M }}>
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", position: "relative" }}>
           <Neon height={160} />
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Marca size={44} />
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 28, color: BLANCO, marginLeft: 10 }}>
-              Gravity
-            </Text>
+          <View style={{ alignItems: "center" }}>
+            <Marca size={48} />
           </View>
-          <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 20, color: BLANCO, marginTop: 22 }}>
-            Hagamos del mundo físico tu mejor canal digital.
+          <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 20, color: BLANCO, marginTop: 22 }}>
+            De intención a visita.
           </Text>
           <View style={{ flexDirection: "row", marginTop: 10 }}>
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 13, color: MAGENTA }}>
-              Real Audiences.{" "}
+            <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 13, color: MAGENTA }}>
+              Conectamos{" "}
             </Text>
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 13, color: CIAN }}>
-              Real Visits.{" "}
+            <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 13, color: VIOLETA }}>
+              intención{" "}
             </Text>
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 13, color: VIOLETA }}>
-              Real Gravity.
+            <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 13, color: CIAN }}>
+              con visitas.
             </Text>
           </View>
           <Text style={{ fontFamily: "DMMono", fontSize: 9, color: GRIS, marginTop: 26 }}>
@@ -1253,11 +1246,11 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
           <View style={{ flex: 1, paddingRight: 26 }}>
             <Text style={[celdaTh, { marginBottom: 6 }]}>FUENTES DE DATOS (TODOS LOS LEVANTAMIENTOS)</Text>
             {d.fuentes.map((f) => (
-              <Text key={f} style={{ fontFamily: "Inter", fontSize: 8, color: GRIS, marginBottom: 4, lineHeight: 1.45 }}>
+              <Text key={f} style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS, marginBottom: 4, lineHeight: 1.45 }}>
                 · {f}
               </Text>
             ))}
-            <Text style={{ fontFamily: "Inter", fontSize: 8, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 8 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 8 }}>
               Georreferenciación en lat/long WGS84 (EPSG:4326). Proyecto
               consolidado el {fechaLarga} con Seeker Planner, sobre{" "}
               {fmt(d.nLevantamientos)} levantamientos. Deduplicación por
@@ -1266,7 +1259,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[celdaTh, { marginBottom: 6 }]}>UNIVERSOS Y TRASLAPES</Text>
-            <Text style={{ fontFamily: "Inter", fontSize: 8, color: GRIS, lineHeight: 1.5 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS, lineHeight: 1.5 }}>
               {hayRural
                 ? "Población urbana por interpolación areal de AGEBs (Censo 2020 INEGI) + población rural por localidad puntual (ITER 2020, localidades <2,500 hab)"
                 : "Población por interpolación areal sobre AGEBs urbanas del Censo 2020 (INEGI)"}
@@ -1274,7 +1267,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
               levantamientos seleccionados. El universo de cada táctica se
               calcula sobre la unión de buffers de SUS propios puntos.
             </Text>
-            <Text style={{ fontFamily: "Inter", fontSize: 8, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 8 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 8 }}>
               Traslapes por inclusión-exclusión — pob(A∩B) = pob(A) + pob(B) −
               pob(A∪B) — con las mismas sumas censales. El índice
               socioeconómico es un proxy censal (escolaridad, vehículos e

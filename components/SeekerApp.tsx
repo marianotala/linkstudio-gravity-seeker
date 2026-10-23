@@ -209,8 +209,8 @@ const PALETA_CAPAS = [
   "#f52d87", // magenta
   "#27b5e2", // cian
   "#9966f2", // violeta
-  "#34d399", // verde
-  "#fbbf24", // ámbar
+  "#0d8a5c", // verde
+  "#b45309", // ámbar
   "#e2711d", // naranja
 ];
 

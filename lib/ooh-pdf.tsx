@@ -22,6 +22,7 @@ import {
   LINEA,
   MAGENTA,
   MARGEN,
+  Firma,
   Marca,
   Neon,
   PANEL,
@@ -138,7 +139,7 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
     letterSpacing: 1.3,
     color: GRIS_OSCURO,
   };
-  const celdaTd = { fontFamily: "Inter" as const, fontSize: 8, color: TINTA };
+  const celdaTd = { fontFamily: "Montserrat" as const, fontSize: 8, color: TINTA };
   const labelCol = {
     fontFamily: "DMMono" as const,
     fontWeight: 500 as const,
@@ -154,12 +155,7 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
         {/* ---------- encabezado ---------- */}
         <Neon height={150} />
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Marca size={38} />
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 24, color: BLANCO, marginLeft: 10 }}>
-              Gravity
-            </Text>
-          </View>
+          <Firma height={26} />
           <Text style={{ fontFamily: "DMMono", fontSize: 8, letterSpacing: 1.4, color: GRIS }}>
             powered by linkstudio
           </Text>
@@ -169,10 +165,10 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
           <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 9.5, letterSpacing: 3, color: MAGENTA }}>
             PLAN GEO-PDOOH · PANTALLAS × PUNTOS DE VENTA
           </Text>
-          <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 28, color: BLANCO, marginTop: 8 }}>
+          <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 28, color: BLANCO, marginTop: 8 }}>
             {titulo}
           </Text>
-          <Text style={{ fontFamily: "Inter", fontSize: 11, color: GRIS, marginTop: 8 }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 11, color: GRIS, marginTop: 8 }}>
             El exterior, ahora medible.
           </Text>
           <Text style={{ fontFamily: "DMMono", fontSize: 8.5, color: GRIS_OSCURO, marginTop: 10 }}>
@@ -335,7 +331,7 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
               }}
             >
               {sinCob.map((n) => (
-                <Text key={n} style={{ fontFamily: "Inter", fontSize: 8.5, color: TINTA, marginBottom: 3 }}>
+                <Text key={n} style={{ fontFamily: "Montserrat", fontSize: 8.5, color: TINTA, marginBottom: 3 }}>
                   · {n}
                 </Text>
               ))}
@@ -365,7 +361,7 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
             />
           ))}
         </View>
-        <Text style={{ fontFamily: "Inter", fontSize: 10, color: TINTA, marginTop: 2 }}>
+        <Text style={{ fontFamily: "Montserrat", fontSize: 10, color: TINTA, marginTop: 2 }}>
           El equipo de Gravity arma el plan de medios sobre este territorio.
         </Text>
 
@@ -373,24 +369,21 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
         <View style={{ width: CONT, marginTop: 34 }}>
           <View style={{ alignItems: "center", marginBottom: 26, position: "relative" }}>
             <Neon height={110} />
-            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 10 }}>
-              <Marca size={30} />
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 19, color: BLANCO, marginLeft: 8 }}>
-                Gravity
-              </Text>
+            <View style={{ alignItems: "center", marginTop: 10 }}>
+              <Marca size={34} />
             </View>
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 14, color: BLANCO, marginTop: 14 }}>
-              Hagamos del mundo físico tu mejor canal digital.
+            <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 14, color: BLANCO, marginTop: 14 }}>
+              De intención a visita.
             </Text>
             <View style={{ flexDirection: "row", marginTop: 8 }}>
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: MAGENTA }}>
-                Real Audiences.{" "}
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 10, color: MAGENTA }}>
+                Conectamos{" "}
               </Text>
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: CIAN }}>
-                Real Visits.{" "}
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 10, color: VIOLETA }}>
+                intención{" "}
               </Text>
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: VIOLETA }}>
-                Real Gravity.
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 10, color: CIAN }}>
+                con visitas.
               </Text>
             </View>
           </View>
@@ -408,18 +401,18 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
           <View style={{ flex: 1, paddingRight: 24 }}>
             <Text style={[labelCol, { fontSize: 6.5, marginBottom: 6 }]}>FUENTES DE DATOS</Text>
             {d.fuentes.map((f) => (
-              <Text key={f} style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS, marginBottom: 3, lineHeight: 1.4 }}>
+              <Text key={f} style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS, marginBottom: 3, lineHeight: 1.4 }}>
                 · {f}
               </Text>
             ))}
-            <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
               Georreferenciación en lat/long WGS84 (EPSG:4326). Cruce del{" "}
               {fechaLarga} con Seeker OOH.
             </Text>
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[labelCol, { fontSize: 6.5, marginBottom: 6 }]}>CRITERIO DEL CRUCE</Text>
-            <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS, lineHeight: 1.5 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS, lineHeight: 1.5 }}>
               Una pantalla apoya a un punto de venta cuando la distancia
               geodésica (Haversine) entre ambos es menor o igual al radio del
               plan ({d.radioTexto}). Tipos de pantalla del inventario:{" "}
@@ -428,7 +421,7 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
               .
             </Text>
             {u && (
-              <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
+              <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
                 {hayRural
                   ? "Universos: población urbana por interpolación areal de AGEBs (Censo 2020 INEGI) + población rural por localidad puntual (ITER 2020)"
                   : "Universos: población por interpolación areal sobre AGEBs urbanas del Censo 2020 (INEGI)"}

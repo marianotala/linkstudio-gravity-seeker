@@ -27,6 +27,7 @@ import {
   LINEA,
   MAGENTA,
   MARGEN,
+  Firma,
   Marca,
   Neon,
   PANEL,
@@ -595,7 +596,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
     letterSpacing: 1.3,
     color: GRIS_OSCURO,
   };
-  const celdaTd = { fontFamily: "Inter" as const, fontSize: 8, color: TINTA };
+  const celdaTd = { fontFamily: "Montserrat" as const, fontSize: 8, color: TINTA };
   const labelCol = {
     fontFamily: "DMMono" as const,
     fontWeight: 500 as const,
@@ -605,7 +606,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
     marginBottom: 8,
   };
   const lectura = {
-    fontFamily: "Inter" as const,
+    fontFamily: "Montserrat" as const,
     fontSize: 9,
     color: GRIS,
     marginTop: -6,
@@ -625,12 +626,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
         {/* ---------- 1 · portada ---------- */}
         <Neon height={150} />
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Marca size={38} />
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 24, color: BLANCO, marginLeft: 10 }}>
-              Gravity
-            </Text>
-          </View>
+          <Firma height={26} />
           <Text style={{ fontFamily: "DMMono", fontSize: 8, letterSpacing: 1.4, color: GRIS }}>
             powered by linkstudio
           </Text>
@@ -640,11 +636,11 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
           <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 9.5, letterSpacing: 3, color: MAGENTA }}>
             PLAN TERRITORIAL — {d.cliente.toUpperCase()}
           </Text>
-          <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 28, color: BLANCO, marginTop: 8 }}>
+          <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 28, color: BLANCO, marginTop: 8 }}>
             {titulo}
           </Text>
-          <Text style={{ fontFamily: "Inter", fontSize: 11, color: GRIS, marginTop: 8 }}>
-            Where physical meets digital.
+          <Text style={{ fontFamily: "Montserrat", fontSize: 11, color: GRIS, marginTop: 8 }}>
+            Conectamos intención con visitas.
           </Text>
           <Text style={{ fontFamily: "DMMono", fontSize: 8.5, color: GRIS_OSCURO, marginTop: 10 }}>
             {fechaLarga} · Generado por {d.usuario}
@@ -671,7 +667,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
           />
         </View>
 
-        <Text style={{ fontFamily: "Inter", fontSize: 9, color: GRIS, marginTop: 12, lineHeight: 1.5 }}>
+        <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: GRIS, marginTop: 12, lineHeight: 1.5 }}>
           Universo de la unión de los territorios seleccionados, deduplicando
           traslapes entre capas
           {d.sumaSimple > adultos(u) && u
@@ -804,13 +800,13 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
               return (
                 <View key={c.id} style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
                   <View style={puntoCapa(c.color)} />
-                  <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 11, color: BLANCO, width: 190 }}>
+                  <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 11, color: BLANCO, width: 190 }}>
                     {c.nombre}
                   </Text>
                   <Text style={{ fontFamily: "DMMono", fontSize: 9, color: MAGENTA, width: 84 }}>
                     {fmt(c.pois.length)} puntos
                   </Text>
-                  <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, flex: 1 }}>
+                  <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS, flex: 1 }}>
                     {adultos(c.universo) > 0
                       ? `universo ${fmt(adultos(c.universo))} · `
                       : ""}
@@ -838,16 +834,16 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                 <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 7, letterSpacing: 1.8, color: MAGENTA, marginBottom: 5 }}>
                   TRASLAPE PROPIOS × COMPETENCIA — LA AUDIENCIA DE CONQUISTA
                 </Text>
-                <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 15, color: BLANCO }}>
+                <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 15, color: BLANCO }}>
                   {fmt(traslapeEstrella.poblacion)} personas — el {traslapeEstrella.pctBase.toLocaleString("es-MX")}% del universo de {traslapeEstrella.etiquetaBase} — están en ambos territorios.
                 </Text>
-                <Text style={{ fontFamily: "Inter", fontSize: 8, color: GRIS, marginTop: 4 }}>
+                <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS, marginTop: 4 }}>
                   % sobre el universo de {traslapeEstrella.etiquetaBase} ({fmt(traslapeEstrella.poblacionBase)} personas, el menor del par). Cálculo por inclusión-exclusión sobre el censo.
                 </Text>
               </View>
             )}
             {otrosTraslapes.map((t, i) => (
-              <Text key={i} style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, marginTop: 6 }}>
+              <Text key={i} style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS, marginTop: 6 }}>
                 Traslape {t.etiquetaA} × {t.etiquetaB}:{" "}
                 <Text style={{ color: TINTA }}>{fmt(t.poblacion)} personas</Text>{" "}
                 ({t.pctBase.toLocaleString("es-MX")}% del universo de {t.etiquetaBase}, el menor del par).
@@ -868,20 +864,20 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
             {proximidad.map((c) => (
               <View key={c.id} style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
                 <View style={puntoCapa(c.color)} />
-                <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 11, color: BLANCO, width: 190 }}>
+                <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 11, color: BLANCO, width: 190 }}>
                   {c.nombre}
                 </Text>
                 <Text style={{ fontFamily: "DMMono", fontSize: 9, color: VIOLETA, width: 84 }}>
                   {fmt(c.pois.length)} puntos
                 </Text>
-                <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, flex: 1 }}>
+                <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS, flex: 1 }}>
                   {adultos(c.universo) > 0
                     ? `universo ${fmt(adultos(c.universo))} adultos 18+ en su zona`
                     : "puntos de venta / lugares de referencia"}
                 </Text>
               </View>
             ))}
-            <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, marginTop: 4, lineHeight: 1.5 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS, marginTop: 4, lineHeight: 1.5 }}>
               Ejemplos:{" "}
               {proximidad
                 .flatMap((c) => c.pois)
@@ -948,7 +944,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                       +{fmt(filasDet.length - top.length)} PDVs más — detalle completo con % del universo en el Export data (Excel).
                     </Text>
                   )}
-                  <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 5, lineHeight: 1.45 }}>
+                  <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 5, lineHeight: 1.45 }}>
                     {NOTA_TRASLAPE_DETALLE}
                   </Text>
                 </View>
@@ -1045,7 +1041,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                   }}
                 >
                   {sinCob.map((n) => (
-                    <Text key={n} style={{ fontFamily: "Inter", fontSize: 8.5, color: TINTA, marginBottom: 3 }}>
+                    <Text key={n} style={{ fontFamily: "Montserrat", fontSize: 8.5, color: TINTA, marginBottom: 3 }}>
                       · {n}
                     </Text>
                   ))}
@@ -1106,7 +1102,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
               />
             )}
             {d.geoSeccion.municipios.length > 0 && (
-              <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, marginBottom: 6, lineHeight: 1.5 }}>
+              <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS, marginBottom: 6, lineHeight: 1.5 }}>
                 Municipios con más cobertura:{" "}
                 {d.geoSeccion.municipios
                   .map((m) => `${m.municipio} (${fmt(m.cps)} CPs)`)
@@ -1131,7 +1127,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                 <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 7, letterSpacing: 1.8, color: TEAL, marginBottom: 4 }}>
                   BULK DE KEYWORDS — PROPUESTA IA EDITABLE
                 </Text>
-                <Text style={{ fontFamily: "Inter", fontSize: 9, color: TINTA, lineHeight: 1.5 }}>
+                <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: TINTA, lineHeight: 1.5 }}>
                   {fmt(totalKeywordsGeo(d.geoSeccion.keywords))} keywords en{" "}
                   {d.geoSeccion.keywords.competencia > 0 ? "3" : "2"} grupos:
                   marca {fmt(d.geoSeccion.keywords.marca)} · industria{" "}
@@ -1196,7 +1192,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                       <View style={{ width: 216 }}>
                         <View style={{ flexDirection: "row", alignItems: "center" }}>
                           <View style={puntoCapa(c.color)} />
-                          <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: BLANCO }}>
+                          <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 10, color: BLANCO }}>
                             {c.nombre.length > 26 ? c.nombre.slice(0, 25) + "…" : c.nombre}
                           </Text>
                         </View>
@@ -1252,7 +1248,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                         marginBottom: 8,
                       }}
                     >
-                      <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: TINTA, lineHeight: 1.45 }}>{h}</Text>
+                      <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: TINTA, lineHeight: 1.45 }}>{h}</Text>
                     </View>
                   ))}
                 </View>
@@ -1279,14 +1275,14 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
           ))}
         </View>
         {sustentos.map((s) => (
-          <Text key={s.clave} style={{ fontFamily: "Inter", fontSize: 8.5, color: GRIS, marginBottom: 4 }}>
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, color: TINTA }}>
+          <Text key={s.clave} style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS, marginBottom: 4 }}>
+            <Text style={{ fontFamily: "Montserrat", fontWeight: 800, color: TINTA }}>
               {TACTICAS[s.clave].nombre}
             </Text>{" "}
             — {s.texto}.
           </Text>
         ))}
-        <Text style={{ fontFamily: "Inter", fontSize: 10, color: TINTA, marginTop: 6 }}>
+        <Text style={{ fontFamily: "Montserrat", fontSize: 10, color: TINTA, marginTop: 6 }}>
           El equipo de Gravity arma el plan de medios sobre este territorio.
         </Text>
 
@@ -1294,24 +1290,21 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
         <View style={{ width: CONT, marginTop: 34 }}>
           <View style={{ alignItems: "center", marginBottom: 26, position: "relative" }}>
             <Neon height={110} />
-            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 10 }}>
-              <Marca size={30} />
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 19, color: BLANCO, marginLeft: 8 }}>
-                Gravity
-              </Text>
+            <View style={{ alignItems: "center", marginTop: 10 }}>
+              <Marca size={34} />
             </View>
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 14, color: BLANCO, marginTop: 14 }}>
-              Hagamos del mundo físico tu mejor canal digital.
+            <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 14, color: BLANCO, marginTop: 14 }}>
+              De intención a visita.
             </Text>
             <View style={{ flexDirection: "row", marginTop: 8 }}>
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: MAGENTA }}>
-                Real Audiences.{" "}
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 10, color: MAGENTA }}>
+                Conectamos{" "}
               </Text>
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: CIAN }}>
-                Real Visits.{" "}
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 10, color: VIOLETA }}>
+                intención{" "}
               </Text>
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: VIOLETA }}>
-                Real Gravity.
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 10, color: CIAN }}>
+                con visitas.
               </Text>
             </View>
           </View>
@@ -1329,11 +1322,11 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
           <View style={{ flex: 1, paddingRight: 24 }}>
             <Text style={[labelCol, { fontSize: 6.5, marginBottom: 6 }]}>FUENTES DE DATOS (TODOS LOS LEVANTAMIENTOS)</Text>
             {d.fuentes.map((f) => (
-              <Text key={f} style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS, marginBottom: 3, lineHeight: 1.4 }}>
+              <Text key={f} style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS, marginBottom: 3, lineHeight: 1.4 }}>
                 · {f}
               </Text>
             ))}
-            <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
               Georreferenciación en lat/long WGS84 (EPSG:4326). Proyecto
               consolidado el {fechaLarga} con Seeker Planner, sobre{" "}
               {fmt(d.nLevantamientos)} levantamientos. Deduplicación por
@@ -1342,7 +1335,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[labelCol, { fontSize: 6.5, marginBottom: 6 }]}>UNIVERSOS Y TRASLAPES</Text>
-            <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS, lineHeight: 1.5 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS, lineHeight: 1.5 }}>
               {hayRural
                 ? "Población urbana por interpolación areal de AGEBs (Censo 2020 INEGI) + población rural por localidad puntual (ITER 2020, localidades <2,500 hab)"
                 : "Población por interpolación areal sobre AGEBs urbanas del Censo 2020 (INEGI)"}
@@ -1350,7 +1343,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
               levantamientos seleccionados: dos capas sobre la misma zona no
               cuentan a su población dos veces.
             </Text>
-            <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
               Los traslapes entre capas se calculan por inclusión-exclusión
               — pob(A∩B) = pob(A) + pob(B) − pob(A∪B) — con las mismas sumas
               censales. El índice socioeconómico es un proxy censal

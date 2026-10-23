@@ -31,7 +31,7 @@ export const ETIQUETA_VIA: Record<ViaRecoleccion, string> = {
 
 const COLOR_VIA: Record<ViaRecoleccion, string> = {
   manual: "#27b5e2",
-  excel: "#34d399",
+  excel: "#0d8a5c",
   censo: "#f52d87",
   proyecto: "#9966f2",
 };

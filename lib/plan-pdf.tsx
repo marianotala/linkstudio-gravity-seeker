@@ -1,7 +1,7 @@
 // Export plan (PDF) — one-pager VERTICAL continuo (ancho carta 816pt,
 // alto dinámico según contenido: documento para scroll en celular y
 // laptop, no para proyectar por láminas) con el sistema de diseño del
-// pitch deck de Gravity: fondo #0a0a0f, paleta magenta/violeta/cian,
+// pitch deck de Gravity V2: fondo blanco cálido #F7F5EF, Montserrat,
 // encabezados con etiqueta magenta + tres puntos, cifras gigantes,
 // divisores de gradiente y pills de tácticas. Renderizado con
 // @react-pdf/renderer EN EL CLIENTE con los datos del análisis ACTIVO
@@ -79,42 +79,46 @@ export interface PlanDatos {
 }
 
 // ------------------------------------------------------------------
-// Tokens del deck
+// Tokens del deck — TEMA CLARO (brand book V2). Los NOMBRES se
+// conservan para no tocar los cuatro formatos: BLANCO/TINTA/GRIS/
+// GRIS_OSCURO siguen significando "texto de mayor a menor contraste"
+// (hoy sobre fondo claro, así que son tintas oscuras).
 // ------------------------------------------------------------------
 
-export const FONDO = "#0a0a0f";
-export const PANEL = "#12121a";
-export const LINEA = "#e5e2d9";
+export const FONDO = "#f7f5ef"; // blanco cálido maestro
+export const PANEL = "#ffffff"; // bloques/tarjetas
+export const LINEA = "#e5e2d9"; // borde sutil
 export const MAGENTA = "#f52d87";
 export const VIOLETA = "#9966f2";
 export const CIAN = "#27b5e2";
-export const BLANCO = "#ffffff";
-export const GRIS = "#8b8b96";
-export const GRIS_OSCURO = "#5c5c66";
-export const TINTA = "#c9c9d1";
+export const BLANCO = "#111111"; // tinta máxima (nombre legado)
+export const GRIS = "#4a4a4a"; // texto secundario
+export const GRIS_OSCURO = "#8a8878"; // texto terciario/decorativo
+export const TINTA = "#333330"; // cuerpo
 
 export const ANCHO_PAG = 816;
 export const MARGEN = 44;
 export const CONT = ANCHO_PAG - MARGEN * 2; // 728
 
 let fuentesRegistradas = false;
-/** Registra las fuentes una vez. `base` = "" en el navegador
- * (rutas /fonts/*) o la carpeta public en Node (pruebas). */
+/** Base de assets (fuentes y logos): "" en el navegador (rutas
+ * /fonts/* y /brand/*) o la carpeta public en Node (pruebas). */
+export let BASE_ASSETS = "";
+/** Registra las fuentes una vez (brand V2: Montserrat en todo el PDF;
+ * mono SOLO datos). Los pesos 700/800 heredados resuelven a SemiBold
+ * 600 — el énfasis máximo del brand book. */
 export function registrarFuentes(base = "") {
+  BASE_ASSETS = base;
   if (fuentesRegistradas) return;
   fuentesRegistradas = true;
   Font.register({
-    family: "Manrope",
+    family: "Montserrat",
     fonts: [
-      { src: `${base}/fonts/Manrope-600.ttf`, fontWeight: 600 },
-      { src: `${base}/fonts/Manrope-800.ttf`, fontWeight: 800 },
-    ],
-  });
-  Font.register({
-    family: "Inter",
-    fonts: [
-      { src: `${base}/fonts/Inter-400.ttf`, fontWeight: 400 },
-      { src: `${base}/fonts/Inter-600.ttf`, fontWeight: 600 },
+      { src: `${base}/fonts/Montserrat-Regular.ttf`, fontWeight: 400 },
+      { src: `${base}/fonts/Montserrat-Medium.ttf`, fontWeight: 500 },
+      { src: `${base}/fonts/Montserrat-SemiBold.ttf`, fontWeight: 600 },
+      { src: `${base}/fonts/Montserrat-SemiBold.ttf`, fontWeight: 700 },
+      { src: `${base}/fonts/Montserrat-SemiBold.ttf`, fontWeight: 800 },
     ],
   });
   Font.register({
@@ -129,8 +133,8 @@ export function registrarFuentes(base = "") {
 
 export const fmt = (n: number) => n.toLocaleString("es-MX");
 
-/** Texto seguro para react-pdf: las fuentes del deck (Manrope/DM
- * Mono/Inter) no tienen glifos de emoji — los pictogramas salen como
+/** Texto seguro para react-pdf: las fuentes del deck (Montserrat/DM
+ * Mono) no tienen glifos de emoji — los pictogramas salen como
  * caracteres corruptos en el PDF (auditoría 30-sep). Se retiran los
  * emojis (pares sustitutos), símbolos misceláneos, selectores de
  * variación y área de uso privado, y se colapsan los espacios. */
@@ -162,22 +166,27 @@ export function abreviarCiudad(s: string): string {
 // Componentes del sistema (réplicas del deck)
 // ------------------------------------------------------------------
 
-/** Isotipo de ondas Gravity (misma geometría que GravityMark de la app). */
+/** Símbolo de medialunas Gravity (brand V2) — el asset maestro, nunca
+ * redibujado. Proporción real del archivo: 512×454. */
 export function Marca({ size = 40 }: { size?: number }) {
-  const trazos: [string, string, number][] = [
-    ["M7 19.5 Q4.8 24 7 28.5", "#17607f", 2.6],
-    ["M12.5 14.5 Q9.2 24 12.5 33.5", "#1e8ab4", 3],
-    ["M19 9 Q14.6 24 19 39", CIAN, 3.6],
-    ["M28.5 9 Q32.9 24 28.5 39", MAGENTA, 3.6],
-    ["M35.5 14.5 Q38.8 24 35.5 33.5", "#c0399f", 3],
-    ["M41 19.5 Q43.2 24 41 28.5", VIOLETA, 2.6],
-  ];
   return (
-    <Svg width={size} height={size} viewBox="0 0 48 48">
-      {trazos.map(([d, color, w], i) => (
-        <Path key={i} d={d} stroke={color} strokeWidth={w} strokeLinecap="round" />
-      ))}
-    </Svg>
+    // eslint-disable-next-line jsx-a11y/alt-text
+    <Image
+      src={`${BASE_ASSETS}/brand/gravity-simbolo.png`}
+      style={{ width: size, height: Math.round(size * 0.887) }}
+    />
+  );
+}
+
+/** Firma horizontal (símbolo + GRAVITY en negro) — portadas y headers
+ * sobre fondo claro. Proporción real del archivo: 1200×239. */
+export function Firma({ height = 24 }: { height?: number }) {
+  return (
+    // eslint-disable-next-line jsx-a11y/alt-text
+    <Image
+      src={`${BASE_ASSETS}/brand/gravity-firma-negra.png`}
+      style={{ width: Math.round(height * (1200 / 239)), height }}
+    />
   );
 }
 
@@ -223,7 +232,7 @@ export function Seccion({ etiqueta, titulo }: { etiqueta: string; titulo: string
           ))}
         </View>
       </View>
-      <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 19, color: BLANCO, marginTop: 7 }}>
+      <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 19, color: BLANCO, marginTop: 7 }}>
         {titulo}
       </Text>
     </View>
@@ -241,7 +250,7 @@ export function FooterTresCol({ fecha }: { fecha: string }) {
     color: GRIS_OSCURO,
     marginBottom: 3,
   };
-  const valor = { fontFamily: "Inter" as const, fontSize: 9, color: GRIS };
+  const valor = { fontFamily: "Montserrat" as const, fontSize: 9, color: GRIS };
   return (
     <View style={{ borderTopWidth: 0.8, borderTopColor: LINEA, paddingTop: 12, flexDirection: "row" }}>
       <View style={col}>
@@ -260,40 +269,17 @@ export function FooterTresCol({ fecha }: { fecha: string }) {
   );
 }
 
-/** Trazos de neón sutiles para el encabezado y el cierre. */
-export function Neon({ height = 120 }: { height?: number }) {
-  return (
-    <View style={{ position: "absolute", top: 0, left: 0, width: CONT, height }}>
-      <Svg width={CONT} height={height} viewBox={`0 0 ${CONT} ${height}`} preserveAspectRatio="none">
-        <Defs>
-          <LinearGradient id="neon" x1="0" y1="0" x2="1" y2="0">
-            <Stop offset="0" stopColor={MAGENTA} />
-            <Stop offset="0.5" stopColor={VIOLETA} />
-            <Stop offset="1" stopColor={CIAN} />
-          </LinearGradient>
-        </Defs>
-        <Path
-          d={`M-20 ${height * 0.75} C ${CONT * 0.25} ${height * 0.35}, ${CONT * 0.6} ${height * 1.05}, ${CONT + 20} ${height * 0.55}`}
-          stroke="url(#neon)"
-          strokeWidth={1.3}
-          opacity={0.5}
-        />
-        <Path
-          d={`M-20 ${height * 0.9} C ${CONT * 0.3} ${height * 0.55}, ${CONT * 0.65} ${height * 1.15}, ${CONT + 20} ${height * 0.75}`}
-          stroke="url(#neon)"
-          strokeWidth={0.9}
-          opacity={0.28}
-        />
-      </Svg>
-    </View>
-  );
+/** La V2 es limpia: nada de neón ni glows. El componente queda como
+ * no-op para no tocar los cuatro formatos que lo posicionan. */
+export function Neon({ height: _height = 120 }: { height?: number }) {
+  return null;
 }
 
 /** Cifra protagonista estilo deck (patrón 58% / 82%). */
 export function Cifra({ valor, descriptor }: { valor: string; descriptor: string }) {
   return (
     <View style={{ flex: 1, paddingRight: 12 }}>
-      <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 30, color: BLANCO }}>
+      <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 30, color: BLANCO }}>
         {valor}
       </Text>
       <Text
@@ -420,10 +406,10 @@ export function PillTactica({
             RECOMENDADA PARA ESTE TERRITORIO
           </Text>
         )}
-        <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 13, color: destacada ? BLANCO : TINTA }}>
+        <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 13, color: destacada ? BLANCO : TINTA }}>
           {nombre}
         </Text>
-        <Text style={{ fontFamily: "Inter", fontSize: 9, color: GRIS, marginTop: 4 }}>
+        <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: GRIS, marginTop: 4 }}>
           {descriptor}
         </Text>
       </View>
@@ -741,7 +727,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
     letterSpacing: 1.3,
     color: GRIS_OSCURO,
   };
-  const celdaTd = { fontFamily: "Inter" as const, fontSize: 8, color: TINTA };
+  const celdaTd = { fontFamily: "Montserrat" as const, fontSize: 8, color: TINTA };
   const labelCol = {
     fontFamily: "DMMono" as const,
     fontWeight: 500 as const,
@@ -757,12 +743,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
         {/* ---------- bloque 1 · encabezado compacto ---------- */}
         <Neon height={150} />
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Marca size={38} />
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 24, color: BLANCO, marginLeft: 10 }}>
-              Gravity
-            </Text>
-          </View>
+          <Firma height={26} />
           <Text style={{ fontFamily: "DMMono", fontSize: 8, letterSpacing: 1.4, color: GRIS }}>
             powered by linkstudio
           </Text>
@@ -774,11 +755,11 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
           >
             PLAN TERRITORIAL
           </Text>
-          <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 28, color: BLANCO, marginTop: 8 }}>
+          <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 28, color: BLANCO, marginTop: 8 }}>
             {titulo}
           </Text>
-          <Text style={{ fontFamily: "Inter", fontSize: 11, color: GRIS, marginTop: 8 }}>
-            Where physical meets digital.
+          <Text style={{ fontFamily: "Montserrat", fontSize: 11, color: GRIS, marginTop: 8 }}>
+            Conectamos intención con visitas.
           </Text>
           <Text style={{ fontFamily: "DMMono", fontSize: 8.5, color: GRIS_OSCURO, marginTop: 10 }}>
             {fechaLarga} · Generado por {d.usuario}
@@ -870,7 +851,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
               }
             />
             {!capasDoc && zonaTopGeneral && d.nombresOrigen.length > 1 && (
-              <Text style={{ fontFamily: "Inter", fontSize: 9, color: GRIS, marginTop: -6, marginBottom: 8 }}>
+              <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: GRIS, marginTop: -6, marginBottom: 8 }}>
                 Los puntos se concentran en {zonaTopGeneral[0]} ({fmt(zonaTopGeneral[1])} de {fmt(d.pois.length)}).
               </Text>
             )}
@@ -904,7 +885,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
                   {sec.nombre && (
                     <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 5 }}>
                       <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: sec.color ?? MAGENTA, marginRight: 6 }} />
-                      <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 12.5, color: BLANCO }}>
+                      <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 12.5, color: BLANCO }}>
                         {sec.nombre}
                       </Text>
                       <Text style={{ fontFamily: "DMMono", fontSize: 8.5, color: GRIS, marginLeft: 8 }}>
@@ -958,7 +939,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
                           {ejemplos.map((p) => (
                             <Text
                               key={`ej:${p.placeId}`}
-                              style={{ fontFamily: "Inter", fontSize: 8, color: GRIS, marginBottom: 3 }}
+                              style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS, marginBottom: 3 }}
                             >
                               <Text style={{ color: TINTA }}>
                                 {p.nombre.length > 33 ? p.nombre.slice(0, 32) + "…" : p.nombre}
@@ -1068,7 +1049,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
                       marginBottom: 8,
                     }}
                   >
-                    <Text style={{ fontFamily: "Inter", fontSize: 8.5, color: TINTA, lineHeight: 1.45 }}>{h}</Text>
+                    <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: TINTA, lineHeight: 1.45 }}>{h}</Text>
                   </View>
                 ))}
               </View>
@@ -1095,7 +1076,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
             />
           ))}
         </View>
-        <Text style={{ fontFamily: "Inter", fontSize: 10, color: TINTA, marginTop: 2 }}>
+        <Text style={{ fontFamily: "Montserrat", fontSize: 10, color: TINTA, marginTop: 2 }}>
           El equipo de Gravity arma el plan de medios sobre este territorio.
         </Text>
 
@@ -1103,24 +1084,21 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
         <View style={{ width: CONT, marginTop: 34 }}>
           <View style={{ alignItems: "center", marginBottom: 26, position: "relative" }}>
             <Neon height={110} />
-            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 10 }}>
-              <Marca size={30} />
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 19, color: BLANCO, marginLeft: 8 }}>
-                Gravity
-              </Text>
+            <View style={{ alignItems: "center", marginTop: 10 }}>
+              <Marca size={34} />
             </View>
-            <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 14, color: BLANCO, marginTop: 14 }}>
-              Hagamos del mundo físico tu mejor canal digital.
+            <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 14, color: BLANCO, marginTop: 14 }}>
+              De intención a visita.
             </Text>
             <View style={{ flexDirection: "row", marginTop: 8 }}>
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: MAGENTA }}>
-                Real Audiences.{" "}
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 10, color: MAGENTA }}>
+                Conectamos{" "}
               </Text>
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: CIAN }}>
-                Real Visits.{" "}
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 10, color: VIOLETA }}>
+                intención{" "}
               </Text>
-              <Text style={{ fontFamily: "Manrope", fontWeight: 800, fontSize: 10, color: VIOLETA }}>
-                Real Gravity.
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 10, color: CIAN }}>
+                con visitas.
               </Text>
             </View>
           </View>
@@ -1142,11 +1120,11 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
           <View style={{ flex: 1, paddingRight: 24 }}>
             <Text style={[labelCol, { fontSize: 6.5, marginBottom: 6 }]}>FUENTES DE DATOS</Text>
             {d.fuentes.map((f) => (
-              <Text key={f} style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS, marginBottom: 3, lineHeight: 1.4 }}>
+              <Text key={f} style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS, marginBottom: 3, lineHeight: 1.4 }}>
                 · {f}
               </Text>
             ))}
-            <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
               Georreferenciación en lat/long WGS84 (EPSG:4326). Levantamiento
               del {fechaLarga} con Seeker. Deduplicación por identificador de
               lugar{d.exclusiones.length > 0 ? `; exclusiones: ${d.exclusiones.join(", ")}` : ""}.
@@ -1154,7 +1132,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[labelCol, { fontSize: 6.5, marginBottom: 6 }]}>UNIVERSOS DEMOGRÁFICOS</Text>
-            <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS, lineHeight: 1.5 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS, lineHeight: 1.5 }}>
               {hayRural
                 ? "Población urbana por interpolación areal de AGEBs (Censo 2020 INEGI) + población rural por localidad puntual (ITER 2020, localidades <2,500 hab)"
                 : "Población por interpolación areal sobre AGEBs urbanas del Censo 2020 (INEGI)"}
@@ -1162,7 +1140,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
               {d.criterio ? ` (${d.criterio})` : ""}
               {d.radioM ? `, radio de ${d.radioM >= 1000 ? `${d.radioM / 1000} km` : `${d.radioM} m`}` : ""}.
             </Text>
-            <Text style={{ fontFamily: "Inter", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, lineHeight: 1.5, marginTop: 6 }}>
               El índice socioeconómico es un proxy censal (escolaridad,
               vehículos e internet por vivienda); no es NSE AMAI
               {hayRural ? " y considera solo la población urbana (el ITER no trae sus variables)" : ""}.
