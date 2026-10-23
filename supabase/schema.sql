@@ -2952,7 +2952,10 @@ begin
     greatest(coalesce(p_de_cache, 0), 0),
     greatest(coalesce(p_costo_mxn, 0), 0)
   );
+  -- las cargas del mapa (maps_js, costo 0) se loguean pero NO
+  -- consumen la cuota diaria de celdas del usuario
   if coalesce(p_consultas, 0) > 0
+     and coalesce(p_metodo, '') <> 'maps_js'
      and not exists (select 1 from public.profiles where id = v_uid and rol = 'admin') then
     insert into public.usage_limits (user_id, date, cells_count)
     values (v_uid, current_date, p_consultas)

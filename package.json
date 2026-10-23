@@ -28,6 +28,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/google.maps": "^3.66.7",
     "@types/leaflet": "^1.9.20",
     "@types/node": "^20",
     "@types/papaparse": "^5.3.16",

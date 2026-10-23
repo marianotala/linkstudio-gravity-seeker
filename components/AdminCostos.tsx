@@ -55,6 +55,7 @@ const ETIQUETA_METODO: Record<string, string> = {
   geocode: "Geocoding",
   autocomplete_sesion: "Autocomplete (sesiones)",
   cache: "Caché (gratis)",
+  maps_js: "Cargas de mapa (Maps JS, gratis)",
 };
 
 const CAMPOS_CONFIG: { clave: keyof ConfigCostos; etiqueta: string }[] = [

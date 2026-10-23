@@ -302,8 +302,8 @@ body {
   background: transparent;
   border: none;
   box-shadow: none;
-  color: #c9a8f7;
-  text-shadow: 0 1px 3px rgb(var(--rgb-fondo-profundo) / 0.9);
+  color: #6d3fc4; /* morado oscuro legible sobre mapa claro */
+  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.9);
 }
 .etiqueta-cp::before {
   display: none;
@@ -344,4 +344,34 @@ body {
 .cluster-pois {
   background: rgba(245, 45, 135, 0.18);
   border-color: #f52d87;
+}
+
+/* ==================================================================
+   GOOGLE MAPS (mapa principal, estilo claro) — popups y etiquetas con
+   la misma tipografía/semántica que el resto de la app.
+   ================================================================== */
+.gmap-popup {
+  font-family: var(--fuente-datos), ui-monospace, monospace;
+  color: var(--texto-primario);
+}
+.gmap-cluster-label {
+  color: #111111 !important;
+  font-family: var(--fuente-datos), ui-monospace, monospace !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+}
+.gmap-etiqueta-cp {
+  color: #6d3fc4 !important;
+  font-family: var(--fuente-datos), ui-monospace, monospace !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.9);
+}
+.gmap-etiqueta-linea {
+  color: var(--texto-secundario) !important;
+  font-family: var(--fuente-datos), ui-monospace, monospace !important;
+  font-size: 10px !important;
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 999px;
+  padding: 1px 6px;
 }

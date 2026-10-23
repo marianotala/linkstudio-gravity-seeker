@@ -63,20 +63,20 @@ function cargarTile(z: number, x: number, y: number): Promise<HTMLImageElement |
   });
 }
 
-/** Oscurecimiento por píxel (respaldo si ctx.filter no existe: Safari). */
+/** Desaturado por píxel (respaldo si ctx.filter no existe: Safari) —
+ * TEMA CLARO: el tile se queda claro, solo pierde saturación. */
 function oscurecerPixeles(ctx: CanvasRenderingContext2D, ancho: number, alto: number) {
   const data = ctx.getImageData(0, 0, ancho, alto);
   const px = data.data;
   for (let i = 0; i < px.length; i += 4) {
-    // invert + desaturar + bajar brillo (aproxima el filtro CSS)
-    const r = 255 - px[i];
-    const g = 255 - px[i + 1];
-    const b = 255 - px[i + 2];
+    const r = px[i];
+    const g = px[i + 1];
+    const b = px[i + 2];
     const gris = 0.299 * r + 0.587 * g + 0.114 * b;
-    const s = 0.28;
-    px[i] = (gris + (r - gris) * s) * 0.68;
-    px[i + 1] = (gris + (g - gris) * s) * 0.68;
-    px[i + 2] = (gris + (b - gris) * s) * 0.68;
+    const s = 0.55;
+    px[i] = gris + (r - gris) * s;
+    px[i + 1] = gris + (g - gris) * s;
+    px[i + 2] = gris + (b - gris) * s;
   }
   ctx.putImageData(data, 0, 0);
 }
@@ -156,13 +156,14 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
     canvas.height = ALTO;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return null;
-    ctx.fillStyle = "#101018";
+    // TEMA CLARO (brand V2): fondo blanco cálido y tiles apenas
+    // desaturados para que markers y polígonos protagonicen
+    ctx.fillStyle = "#f7f5ef";
     ctx.fillRect(0, 0, ANCHO, ALTO);
 
     const soportaFiltro = typeof ctx.filter === "string";
     if (soportaFiltro) {
-      ctx.filter =
-        "invert(1) hue-rotate(180deg) brightness(0.68) contrast(1.12) saturate(0.28)";
+      ctx.filter = "saturate(0.55) contrast(0.96)";
     }
     const maxTile = 2 ** z;
     const tareas: Promise<void>[] = [];
@@ -199,7 +200,7 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
           : geom.coordinates;
       ctx.strokeStyle = VIOLETA;
       ctx.lineWidth = 2.5;
-      ctx.fillStyle = "rgba(157, 92, 240, 0.14)";
+      ctx.fillStyle = "rgba(153, 102, 242, 0.14)";
       for (const anillos of polys) {
         ctx.beginPath();
         for (const anillo of anillos) {
@@ -235,7 +236,7 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
         ctx.arc(px, py, o.radioM / mPorPx, 0, Math.PI * 2);
         ctx.strokeStyle = CIAN;
         ctx.lineWidth = 1.5;
-        ctx.fillStyle = "rgba(47, 185, 232, 0.07)";
+        ctx.fillStyle = "rgba(39, 181, 226, 0.07)";
         ctx.fill();
         ctx.stroke();
       }
@@ -275,7 +276,7 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
       ctx.beginPath();
       ctx.arc(px, py, 4.5, 0, Math.PI * 2);
       if (p.hueco) {
-        ctx.fillStyle = "#0a0a0f";
+        ctx.fillStyle = "#ffffff";
         ctx.fill();
         ctx.strokeStyle = p.color;
         ctx.lineWidth = 2;
@@ -283,7 +284,7 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
       } else {
         ctx.fillStyle = p.color;
         ctx.fill();
-        ctx.strokeStyle = "#0a0a0f";
+        ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 1.2;
         ctx.stroke();
       }
@@ -293,7 +294,7 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
       const [px, py] = aPx(p.lat, p.lng);
       ctx.fillStyle = p.color;
       ctx.fillRect(px - 5, py - 5, 10, 10);
-      ctx.strokeStyle = "#0a0a0f";
+      ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 1.4;
       ctx.strokeRect(px - 5, py - 5, 10, 10);
     }
@@ -308,15 +309,15 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
         (p.capa ? o.colorPorCapa?.[p.capa] : undefined) ??
         (p.fuente === "denue" ? NARANJA : MAGENTA);
       ctx.fill();
-      ctx.strokeStyle = "#0a0a0f";
+      ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }
 
     // 5) atribución
-    ctx.fillStyle = "rgba(10,10,15,0.75)";
+    ctx.fillStyle = "rgba(255,255,255,0.8)";
     ctx.fillRect(ANCHO - 170, ALTO - 22, 170, 22);
-    ctx.fillStyle = "#8b8b96";
+    ctx.fillStyle = "#4a4a4a";
     ctx.font = "11px monospace";
     ctx.fillText("© OpenStreetMap", ANCHO - 158, ALTO - 7);
 
