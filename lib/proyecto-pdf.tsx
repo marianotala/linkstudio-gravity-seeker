@@ -190,7 +190,7 @@ const NOTA_TRASLAPE_DETALLE =
   "Universo del radio individual de cada punto; los radios cercanos comparten población (la suma de individuales excede al consolidado deduplicado) — para presupuesto son pesos relativos, no poblaciones exclusivas.";
 const ALTO_MAPA_OOH = Math.round((CONT * 7) / 16);
 /** Teal de la capa Geo-Targeting (misma familia que la app). */
-const TEAL = "#2dd4bf";
+const TEAL = "#0f766e";
 const MAX_MUNICIPIOS_GEO = 5;
 
 const radioTextoGeo = (m: number) => (m >= 1000 ? `${m / 1000} km` : `${m} m`);
@@ -729,7 +729,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
               ))}
               {d.ooh && (
                 <View style={{ flexDirection: "row", alignItems: "center", marginRight: 12, marginBottom: 3 }}>
-                  <View style={{ width: 6, height: 6, backgroundColor: "#ff8c42", marginRight: 4 }} />
+                  <View style={{ width: 6, height: 6, backgroundColor: "#e2711d", marginRight: 4 }} />
                   <Text style={{ fontFamily: "DMMono", fontSize: 8, color: GRIS }}>
                     Pantallas OOH (líneas = a qué PDV apoyan)
                   </Text>
@@ -1008,7 +1008,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                 <Text style={[celdaTd, { width: 170, color: BLANCO }]}>
                   {p.nombre.length > 30 ? p.nombre.slice(0, 29) + "…" : p.nombre}
                 </Text>
-                <Text style={[celdaTd, { width: 78, color: "#ff8c42" }]}>
+                <Text style={[celdaTd, { width: 78, color: "#e2711d" }]}>
                   {(p.tipo ?? "—").slice(0, 14)}
                 </Text>
                 <Text style={[celdaTd, { width: 36, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>

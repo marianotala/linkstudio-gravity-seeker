@@ -109,11 +109,11 @@ export default function PanelDescartados<T extends DescartePoi>({
   }
 
   return (
-    <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60 p-4">
+    <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-fondo/80 backdrop-blur-[1px] p-4">
       <div className="tarjeta-elevada flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden">
         <div className="flex items-start justify-between gap-3 border-b border-linea px-5 py-3">
           <div>
-            <p className="font-display text-sm font-extrabold text-white">
+            <p className="font-display text-sm font-extrabold text-texto-primario">
               Descartados · {fmt(descartes.length)}
             </p>
             <p className="mt-0.5 font-mono text-[10px] leading-relaxed text-zinc-500">
@@ -180,7 +180,7 @@ export default function PanelDescartados<T extends DescartePoi>({
                 type="checkbox"
                 checked={checks.has(d.placeId)}
                 onChange={(e) => alternar(d.placeId, e.target.checked)}
-                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#2fb9e8]"
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#27b5e2]"
               />
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-mono text-xs text-zinc-200">

@@ -102,7 +102,7 @@ export default function HistorialView({
         <div className="tarjeta glow-violeta mx-auto max-w-5xl px-6 py-6">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h1 className="font-display text-xl font-extrabold tracking-tight text-white">
+              <h1 className="font-display text-xl font-extrabold tracking-tight text-texto-primario">
                 Historial de búsquedas
               </h1>
               <p className="mt-1 font-mono text-[11px] text-zinc-500">

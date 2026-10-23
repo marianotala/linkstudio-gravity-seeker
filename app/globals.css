@@ -11,29 +11,30 @@
    su propia paleta fija) — no tocar desde aquí.
    ================================================================== */
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  /* ---- superficies (elevación de 3 niveles) — canales RGB para que
-     Tailwind soporte opacidades (bg-panel/60, border-linea/50…) */
-  --rgb-fondo-profundo: 11 11 16; /* #0B0B10 fondo de app */
-  --rgb-superficie-1: 19 19 27; /* #13131B tarjetas, paneles */
-  --rgb-superficie-2: 27 27 37; /* #1B1B25 modales, popups, dropdowns */
-  --rgb-superficie-hover: 33 33 45; /* #21212D */
-  --rgb-borde-sutil: 36 36 50; /* #242432 1px en tarjetas */
-  --rgb-borde-activo: 58 58 78; /* #3A3A4E */
+  /* ---- superficies (TEMA CLARO, brand book V2) — canales RGB para
+     que Tailwind soporte opacidades (bg-panel/60, border-linea/50…) */
+  --rgb-fondo-profundo: 247 245 239; /* #F7F5EF blanco cálido maestro */
+  --rgb-superficie-1: 255 255 255; /* #FFFFFF tarjetas, paneles */
+  --rgb-superficie-2: 255 255 255; /* #FFFFFF modales (elevan por sombra) */
+  --rgb-superficie-hover: 240 237 229; /* #F0EDE5 */
+  --rgb-borde-sutil: 229 226 217; /* #E5E2D9 1px en tarjetas */
+  --rgb-borde-activo: 201 197 184; /* #C9C5B8 */
 
-  /* ---- color semántico (sagrado: no cambia de significado) */
-  --rgb-origenes: 56 189 248; /* #38BDF8 cian */
-  --rgb-pois: 255 46 154; /* #FF2E9A magenta · acción primaria */
-  --rgb-zonas: 139 92 246; /* #8B5CF6 violeta · zonas/CP */
-  --rgb-exito: 52 211 153; /* #34D399 */
-  --rgb-alerta: 251 191 36; /* #FBBF24 */
-  --rgb-error: 248 113 113; /* #F87171 */
+  /* ---- color semántico (sagrado: no cambia de significado) —
+     valores EXACTOS del brand book */
+  --rgb-origenes: 39 181 226; /* #27B5E2 azul claro */
+  --rgb-pois: 245 45 135; /* #F52D87 magenta · acción primaria */
+  --rgb-zonas: 153 102 242; /* #9966F2 morado · zonas/CP */
+  --rgb-exito: 13 138 92; /* #0D8A5C legible sobre claro */
+  --rgb-alerta: 180 83 9; /* #B45309 legible sobre claro */
+  --rgb-error: 220 38 38; /* #DC2626 */
 
-  /* ---- texto (contraste AA sobre superficies 1 y 2) */
-  --rgb-texto-primario: 244 244 248; /* #F4F4F8 */
-  --rgb-texto-secundario: 168 168 188; /* #A8A8BC mínimo legible */
-  --rgb-texto-terciario: 110 110 130; /* #6E6E82 solo decorativo */
+  /* ---- texto sobre claro (contraste AA) */
+  --rgb-texto-primario: 17 17 17; /* #111111 Gravity Black */
+  --rgb-texto-secundario: 74 74 74; /* #4A4A4A */
+  --rgb-texto-terciario: 138 136 120; /* #8A8878 solo decorativo */
 
   /* ---- tokens compuestos (para CSS directo) */
   --fondo-profundo: rgb(var(--rgb-fondo-profundo));
@@ -53,8 +54,9 @@
   --texto-terciario: rgb(var(--rgb-texto-terciario));
 
   /* El gradiente firma SOLO en: CTA principal, anillo de progreso,
-     cifras protagonistas y divisores clave. Nada más. */
-  --gradiente-firma: linear-gradient(90deg, #ff2e9a, #8b5cf6, #38bdf8);
+     cifras protagonistas y divisores clave. Nada más. Horizontal 0° —
+     no rotar, invertir ni cambiar los puntos de color (brand book). */
+  --gradiente-firma: linear-gradient(90deg, #f52d87, #9966f2, #27b5e2);
 
   /* ---- espaciado (grid de 8px) */
   --esp-1: 8px;
@@ -67,7 +69,13 @@
   --radio-tarjeta: 12px;
   --radio-control: 8px;
   --radio-chip: 999px;
-  --sombra-elevada: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --sombra-elevada: 0 8px 24px rgba(17, 17, 17, 0.1);
+
+  /* ---- tipografía (brand book V2): Montserrat en todo; mono SOLO
+     datos. Medium 500 titulares · Semibold 600 énfasis/cifras/CTAs ·
+     Regular 400 cuerpo (interlineado 145%). */
+  --fuente-titulos: var(--fuente-montserrat);
+  --fuente-cuerpo: var(--fuente-montserrat);
 
   /* ---- movimiento */
   --transicion-rapida: 150ms ease;
@@ -78,6 +86,8 @@ html,
 body {
   height: 100%;
   background: var(--fondo-profundo);
+  /* cuerpo Montserrat Regular con interlineado 145% (brand book) */
+  line-height: 1.45;
 }
 
 /* Scrollbars discretos, acorde al panel */
@@ -218,41 +228,14 @@ body {
   }
 }
 
-/* Acentos de glow: SOLO login, estados vacíos y header (sutil). */
-.glow-cian {
-  background-image: radial-gradient(
-    120% 120% at 100% 0%,
-    rgb(var(--rgb-origenes) / 0.1),
-    transparent 55%
-  );
-}
-.glow-magenta {
-  background-image: radial-gradient(
-    120% 120% at 100% 0%,
-    rgb(var(--rgb-pois) / 0.1),
-    transparent 55%
-  );
-}
-.glow-violeta {
-  background-image: radial-gradient(
-    120% 120% at 100% 0%,
-    rgb(var(--rgb-zonas) / 0.1),
-    transparent 55%
-  );
-}
-.glow-verde {
-  background-image: radial-gradient(
-    120% 120% at 100% 0%,
-    rgb(var(--rgb-exito) / 0.09),
-    transparent 55%
-  );
-}
+/* La V2 es limpia: nada de neón ni glows. Las clases .glow-* quedan
+   como no-ops para no tocar el markup que las usa. */
+.glow-cian,
+.glow-magenta,
+.glow-violeta,
+.glow-verde,
 .glow-ambar {
-  background-image: radial-gradient(
-    120% 120% at 100% 0%,
-    rgb(var(--rgb-alerta) / 0.09),
-    transparent 55%
-  );
+  background-image: none;
 }
 
 /* Punto de estatus animado del header */
@@ -295,15 +278,11 @@ body {
   font-family: var(--fuente-cuerpo), sans-serif;
 }
 
-/* OSM estándar oscurecido: inversión + rotación de tono para que el
-   mapa claro de OSM quede oscuro y neutro, acorde a Gravity. Solo se
-   aplica a los tiles base, no a los markers ni overlays. */
+/* TEMA CLARO: los tiles base se muestran tal cual (solo se bajan un
+   poco de saturación para que markers y polígonos protagonicen). La
+   clase conserva el nombre legado para no tocar los componentes. */
 .tiles-osm-oscuro {
-  /* brightness bajo + contraste arriba: fondo cerca del fondo profundo
-     sin perder la legibilidad de calles y etiquetas (validado
-     visualmente contra 0.85/0.9 y 0.55/1.2) */
-  filter: invert(1) hue-rotate(180deg) brightness(0.68) contrast(1.12)
-    saturate(0.28);
+  filter: saturate(0.55) contrast(0.96);
 }
 .leaflet-control-attribution {
   background: rgb(var(--rgb-fondo-profundo) / 0.7) !important;
@@ -353,18 +332,16 @@ body {
   justify-content: center;
   transform: translate(-50%, -50%);
   border-radius: 9999px;
-  background: rgba(47, 185, 232, 0.16);
-  border: 2px solid #2fb9e8;
-  color: #fff;
+  background: rgba(39, 181, 226, 0.22);
+  border: 2px solid #27b5e2;
+  color: #111111;
   font-family: var(--fuente-datos), ui-monospace, monospace;
   font-size: 11px;
   font-weight: 600;
-  box-shadow: 0 0 14px rgba(47, 185, 232, 0.35);
 }
 
 /* clusters de POIs: magenta (los de orígenes son cian) */
 .cluster-pois {
-  background: rgba(244, 54, 138, 0.16);
-  border-color: #f4368a;
-  box-shadow: 0 0 14px rgba(244, 54, 138, 0.35);
+  background: rgba(245, 45, 135, 0.18);
+  border-color: #f52d87;
 }

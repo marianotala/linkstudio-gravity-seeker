@@ -19,9 +19,9 @@ export const TIPOS_PANTALLA: Record<
   TipoPantalla,
   { etiqueta: string; color: string }
 > = {
-  espectacular: { etiqueta: "Espectacular", color: "#f4368a" },
-  muro_digital: { etiqueta: "Muro digital", color: "#9d5cf0" },
-  mall: { etiqueta: "Mall / centro comercial", color: "#ff8c42" },
+  espectacular: { etiqueta: "Espectacular", color: "#f52d87" },
+  muro_digital: { etiqueta: "Muro digital", color: "#9966f2" },
+  mall: { etiqueta: "Mall / centro comercial", color: "#e2711d" },
   urbano: { etiqueta: "Urbano / mupis", color: "#f7d154" },
   aeropuerto: { etiqueta: "Aeropuerto", color: "#34d399" },
   transporte: { etiqueta: "Transporte", color: "#f87171" },

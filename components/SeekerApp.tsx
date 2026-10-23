@@ -178,7 +178,7 @@ const RADIOS_TERRITORIAL = [
   { m: 20000, label: "20 km" },
 ];
 
-const NARANJA = "#ff8c42";
+const NARANJA = "#e2711d";
 
 /**
  * ¿El error de una celda debe abortar todo el censo? Solo cuota, auth
@@ -206,12 +206,12 @@ const MAX_CELDAS_CP =
 // no de los POIs, así que se comparte entre capas.
 const MAX_CAPAS = 6;
 const PALETA_CAPAS = [
-  "#f4368a", // magenta
-  "#2fb9e8", // cian
-  "#9d5cf0", // violeta
+  "#f52d87", // magenta
+  "#27b5e2", // cian
+  "#9966f2", // violeta
   "#34d399", // verde
   "#fbbf24", // ámbar
-  "#ff8c42", // naranja
+  "#e2711d", // naranja
 ];
 
 // Escalamiento del modo por orígenes (listas de hasta 10,000 PDVs):
@@ -4708,7 +4708,7 @@ export default function SeekerApp({
                   ? "text-emerald-400"
                   : mode === "census"
                     ? "text-magenta"
-                    : "text-[#ff8c42]"
+                    : "text-[#e2711d]"
           }
         />
         {mode === "cp" && (
@@ -4782,7 +4782,7 @@ export default function SeekerApp({
               }
               color={
                 terFuente === "denue"
-                  ? "text-[#ff8c42]"
+                  ? "text-[#e2711d]"
                   : terFuente === "google"
                     ? "text-magenta"
                     : "text-emerald-400"
@@ -4823,7 +4823,7 @@ export default function SeekerApp({
                 : `en ${centrosActivos.length} ${centrosActivos.length === 1 ? "centro activo" : "centros activos"}`
           }
           glow="glow-cian"
-          colorValor="text-white"
+          colorValor="text-texto-primario"
         />
         <Kpi
           titulo="Distancia promedio"
@@ -5544,7 +5544,7 @@ export default function SeekerApp({
               <div className="grid grid-cols-3 gap-2">
                 {(
                   [
-                    ["denue", "DENUE", "border-[#ff8c42] bg-[#ff8c42]/10 text-[#ff8c42]"],
+                    ["denue", "DENUE", "border-[#e2711d] bg-[#e2711d]/10 text-[#e2711d]"],
                     ["google", "Google", "border-magenta bg-magenta/10 text-magenta"],
                     ["ambas", "Ambas", "border-emerald-400 bg-emerald-400/10 text-emerald-400"],
                   ] as [Fuente, string, string][]
@@ -5570,16 +5570,16 @@ export default function SeekerApp({
               <button
                 onClick={calcularTerritorial}
                 disabled={ocupado}
-                className="mt-4 w-full rounded-md border border-[#ff8c42] bg-[#ff8c42]/10 px-3 py-2 font-mono text-xs font-medium text-[#ff8c42] transition-colors hover:bg-[#ff8c42]/20 disabled:opacity-40"
+                className="mt-4 w-full rounded-md border border-[#e2711d] bg-[#e2711d]/10 px-3 py-2 font-mono text-xs font-medium text-[#e2711d] transition-colors hover:bg-[#e2711d]/20 disabled:opacity-40"
               >
                 Calcular consultas
               </button>
 
               {celdas && !progresoCenso && (
-                <div className="mt-3 rounded-md border border-[#ff8c42]/40 bg-[#ff8c42]/5 p-3">
+                <div className="mt-3 rounded-md border border-[#e2711d]/40 bg-[#e2711d]/5 p-3">
                   <p className="font-mono text-[11px] leading-relaxed text-zinc-300">
                     Serán{" "}
-                    <span className="text-[#ff8c42]">
+                    <span className="text-[#e2711d]">
                       {celdas.length}{" "}
                       {celdas.length === 1 ? "consulta" : "consultas"}
                     </span>
@@ -5587,7 +5587,7 @@ export default function SeekerApp({
                       <>
                         {" "}
                         × 2 fuentes ={" "}
-                        <span className="text-[#ff8c42]">
+                        <span className="text-[#e2711d]">
                           {celdas.length * 2} llamadas
                         </span>
                       </>
@@ -5597,7 +5597,7 @@ export default function SeekerApp({
                   <button
                     onClick={ejecutarTerritorial}
                     disabled={ocupado}
-                    className="mt-2 w-full rounded-md bg-[#ff8c42] px-3 py-2 font-display text-xs font-extrabold text-fondo transition-opacity hover:opacity-90 disabled:opacity-40"
+                    className="mt-2 w-full rounded-md bg-[#e2711d] px-3 py-2 font-display text-xs font-extrabold text-fondo transition-opacity hover:opacity-90 disabled:opacity-40"
                   >
                     Ejecutar censo territorial
                   </button>
@@ -5620,13 +5620,13 @@ export default function SeekerApp({
                     <span>
                       Consulta {progresoCenso.actual} de {progresoCenso.total}
                     </span>
-                    <span className="text-[#ff8c42]">
+                    <span className="text-[#e2711d]">
                       {progresoCenso.pois} establecimientos
                     </span>
                   </div>
                   <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-fondo">
                     <div
-                      className="h-full rounded-full bg-[#ff8c42] transition-all"
+                      className="h-full rounded-full bg-[#e2711d] transition-all"
                       style={{
                         width: `${Math.round((progresoCenso.actual / progresoCenso.total) * 100)}%`,
                       }}
@@ -5635,7 +5635,7 @@ export default function SeekerApp({
                   {ocupado && (
                     <button
                       onClick={() => (detenerCensoRef.current = true)}
-                      className="mt-2 w-full rounded-md border border-[#ff8c42]/50 bg-panel px-3 py-1.5 font-mono text-[11px] text-[#ff8c42] transition-colors hover:bg-[#ff8c42]/10"
+                      className="mt-2 w-full rounded-md border border-[#e2711d]/50 bg-panel px-3 py-1.5 font-mono text-[11px] text-[#e2711d] transition-colors hover:bg-[#e2711d]/10"
                     >
                       Detener censo
                     </button>
@@ -6323,7 +6323,7 @@ export default function SeekerApp({
         <main className="tarjeta flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex shrink-0 items-start justify-between gap-3 px-5 pb-3 pt-4">
             <div className="min-w-0">
-              <h2 className="font-display text-base font-extrabold tracking-tight text-white">
+              <h2 className="font-display text-base font-extrabold tracking-tight text-texto-primario">
                 Mapa de resultados
               </h2>
               <p className="truncate font-mono text-[10px] text-zinc-500">
@@ -6500,7 +6500,7 @@ export default function SeekerApp({
                             [s.placeId]: e.target.checked,
                           }))
                         }
-                        className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#2fb9e8]"
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#27b5e2]"
                       />
                       <span className="min-w-0">
                         <span className="block truncate font-mono text-xs text-zinc-200">

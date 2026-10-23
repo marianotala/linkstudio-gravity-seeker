@@ -108,7 +108,7 @@ export default function PlanesView({
               <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-violeta">
                 Planner
               </p>
-              <h1 className="mt-1 font-display text-xl font-extrabold tracking-tight text-white">
+              <h1 className="mt-1 font-display text-xl font-extrabold tracking-tight text-texto-primario">
                 Mis planes
               </h1>
               <p className="mt-1 font-mono text-[11px] text-zinc-500">
@@ -121,7 +121,7 @@ export default function PlanesView({
               <button
                 onClick={abrirExploracion}
                 disabled={abriendoExploracion}
-                className="shrink-0 rounded-full border border-[#2dd4bf]/50 bg-[#2dd4bf]/10 px-4 py-2 font-mono text-[11px] text-[#2dd4bf] transition-colors hover:bg-[#2dd4bf]/20 disabled:opacity-50"
+                className="shrink-0 rounded-full border border-[#0f766e]/50 bg-[#0f766e]/10 px-4 py-2 font-mono text-[11px] text-[#0f766e] transition-colors hover:bg-[#0f766e]/20 disabled:opacity-50"
                 title="Búsquedas sueltas sin cliente: tu plan personal de exploración — todo queda guardado y se puede promover a cualquier plan"
               >
                 {abriendoExploracion ? "Abriendo…" : "⌕ Exploración libre"}
@@ -199,7 +199,7 @@ export default function PlanesView({
                       key={p.id}
                       className="border-t border-linea/60 text-zinc-300"
                     >
-                      <td className="max-w-[200px] truncate px-4 py-2.5 font-medium text-white">
+                      <td className="max-w-[200px] truncate px-4 py-2.5 font-medium text-texto-primario">
                         {p.nombre_cliente}
                         {p.status === "archivado" && (
                           <span className="ml-2 rounded-full border border-linea px-2 py-0.5 text-[9px] uppercase tracking-wider text-zinc-500">

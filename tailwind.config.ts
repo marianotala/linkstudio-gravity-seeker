@@ -33,6 +33,32 @@ const config: Config = {
           secundario: "rgb(var(--rgb-texto-secundario) / <alpha-value>)",
           terciario: "rgb(var(--rgb-texto-terciario) / <alpha-value>)",
         },
+        // REMAP TEMA CLARO (brand V2): las utilidades zinc/emerald/
+        // amber/teal del tema oscuro se re-mapean a equivalentes
+        // legibles sobre claro CONSERVANDO el orden de contraste
+        // (número menor = más contraste contra el fondo). Así los
+        // cientos de usos existentes heredan el tema sin tocarse.
+        zinc: {
+          100: "#111111",
+          200: "#1f1f1d",
+          300: "#333330",
+          400: "#4a4a4a",
+          500: "#6b6960",
+          600: "#8a8878",
+          700: "#c9c5b8",
+          800: "#e5e2d9",
+          900: "#f0ede5",
+          950: "#f7f5ef",
+        },
+        emerald: { 400: "#0d8a5c", 500: "#0d8a5c", 600: "#0a7049" },
+        amber: { 300: "#92400e", 400: "#b45309", 500: "#b45309" },
+        teal: { 400: "#0f766e", 500: "#0f766e" },
+      },
+      // Brand V2: el énfasis máximo es Semibold 600 (nada de pesos
+      // pesados); los font-bold/extrabold existentes bajan a 600.
+      fontWeight: {
+        bold: "600",
+        extrabold: "600",
       },
       fontFamily: {
         display: ["var(--fuente-titulos)", "sans-serif"],

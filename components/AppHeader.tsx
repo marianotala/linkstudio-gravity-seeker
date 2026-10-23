@@ -7,7 +7,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
-import GravityMark from "./GravityMark";
+import { GravityFirma } from "./GravityMark";
 import NuevoPlanModal from "./NuevoPlanModal";
 import { Boton } from "./ui";
 import { createClient } from "@/lib/supabase/client";
@@ -52,14 +52,12 @@ export default function AppHeader({ usuario, status, onNueva }: AppHeaderProps) 
     }`;
 
   return (
-    <header className="tarjeta glow-cian flex items-center justify-between gap-3 px-5 py-3">
+    <header className="tarjeta flex items-center justify-between gap-3 px-5 py-3">
       <div className="flex min-w-0 items-center gap-3">
-        <GravityMark size={30} />
+        {/* firma negra del brand book V2 (fondos claros, la principal) */}
         <div className="min-w-0">
-          <div className="font-display text-lg font-bold leading-tight tracking-tight text-texto-primario">
-            Gravity
-          </div>
-          <div className="truncate font-body text-[11px] text-texto-terciario">
+          <GravityFirma height={22} />
+          <div className="mt-1 truncate font-body text-[11px] text-texto-terciario">
             Seeker — point of interest intelligence · powered by Link Studio
           </div>
         </div>

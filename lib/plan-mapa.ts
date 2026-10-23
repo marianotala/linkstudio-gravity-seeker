@@ -6,10 +6,10 @@
 
 import type { CpPoligono, Origin, Poi } from "./types";
 
-const MAGENTA = "#f4368a";
-const VIOLETA = "#9d5cf0";
-const CIAN = "#2fb9e8";
-const NARANJA = "#ff8c42";
+const MAGENTA = "#f52d87";
+const VIOLETA = "#9966f2";
+const CIAN = "#27b5e2";
+const NARANJA = "#e2711d";
 
 const ANCHO_DEFAULT = 1440;
 const ALTO_DEFAULT = 810;

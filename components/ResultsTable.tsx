@@ -102,7 +102,7 @@ export default function ResultsTable({
                       <span
                         className={`mr-1.5 inline-block h-2 w-2 shrink-0 rounded-full ${
                           p.fuente === "denue"
-                            ? "bg-[#ff8c42]"
+                            ? "bg-[#e2711d]"
                             : p.fuente === "ambas"
                               ? "bg-emerald-400"
                               : "bg-magenta"

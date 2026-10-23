@@ -114,7 +114,7 @@ export default function GuardarEnPlanModal({
         <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-violeta">
           Planner
         </p>
-        <h2 className="mt-1 font-display text-xl font-extrabold tracking-tight text-white">
+        <h2 className="mt-1 font-display text-xl font-extrabold tracking-tight text-texto-primario">
           Guardar en un plan
         </h2>
         <p className="mt-1 font-mono text-[11px] leading-relaxed text-zinc-500">
@@ -162,7 +162,7 @@ export default function GuardarEnPlanModal({
                     : r === "proximidad"
                       ? "border-violeta bg-violeta/10 text-violeta"
                       : r === "ooh"
-                        ? "border-[#ff8c42] bg-[#ff8c42]/10 text-[#ff8c42]"
+                        ? "border-[#e2711d] bg-[#e2711d]/10 text-[#e2711d]"
                         : "border-magenta bg-magenta/10 text-magenta"
                   : "border-linea bg-panel2 text-zinc-400 hover:border-zinc-600"
               }`}

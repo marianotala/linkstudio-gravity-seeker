@@ -1,54 +1,30 @@
-// Isotipo de ondas de Gravity: seis arcos que irradian del centro
-// hacia afuera — teal/cian a la izquierda, magenta/violeta a la derecha.
+/* eslint-disable @next/next/no-img-element */
+// Símbolo de Gravity (brand book V2): las dos medialunas en degradado
+// magenta→morado→azul. Se usa el ASSET MAESTRO de /public/brand — el
+// brand book prohíbe reconstruir las formas (no redondear puntas ni
+// alterar el degradado), así que nada de SVG redibujado.
 
 export default function GravityMark({ size = 30 }: { size?: number }) {
   return (
-    <svg
+    <img
+      src="/brand/gravity-simbolo.png"
       width={size}
-      height={size}
-      viewBox="0 0 48 48"
-      fill="none"
-      role="img"
-      aria-label="Gravity"
-    >
-      {/* ondas izquierdas (señal) */}
-      <path
-        d="M7 19.5 Q4.8 24 7 28.5"
-        stroke="#17607f"
-        strokeWidth="2.6"
-        strokeLinecap="round"
-      />
-      <path
-        d="M12.5 14.5 Q9.2 24 12.5 33.5"
-        stroke="#1e8ab4"
-        strokeWidth="3"
-        strokeLinecap="round"
-      />
-      <path
-        d="M19 9 Q14.6 24 19 39"
-        stroke="#2fb9e8"
-        strokeWidth="3.6"
-        strokeLinecap="round"
-      />
-      {/* ondas derechas (POIs) */}
-      <path
-        d="M28.5 9 Q32.9 24 28.5 39"
-        stroke="#f4368a"
-        strokeWidth="3.6"
-        strokeLinecap="round"
-      />
-      <path
-        d="M35 14.5 Q38.3 24 35 33.5"
-        stroke="#9d5cf0"
-        strokeWidth="3"
-        strokeLinecap="round"
-      />
-      <path
-        d="M40.5 19.5 Q42.7 24 40.5 28.5"
-        stroke="#5b3fa8"
-        strokeWidth="2.6"
-        strokeLinecap="round"
-      />
-    </svg>
+      height={Math.round(size * 0.887)}
+      alt="Gravity"
+      style={{ display: "block", width: size, height: "auto" }}
+    />
+  );
+}
+
+/** Firma horizontal (símbolo + GRAVITY en negro) — para fondos claros,
+ * la versión principal del brand book V2. */
+export function GravityFirma({ height = 26 }: { height?: number }) {
+  return (
+    <img
+      src="/brand/gravity-firma-negra.png"
+      height={height}
+      alt="Gravity"
+      style={{ display: "block", height, width: "auto" }}
+    />
   );
 }

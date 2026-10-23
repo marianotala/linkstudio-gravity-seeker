@@ -233,7 +233,7 @@ export default function AdminCostos() {
     <>
       {/* ---- solicitudes de corridas grandes ---- */}
       <div className="tarjeta glow-magenta px-6 py-6">
-        <h2 className="font-display text-xl font-extrabold tracking-tight text-white">
+        <h2 className="font-display text-xl font-extrabold tracking-tight text-texto-primario">
           Corridas grandes — solicitudes
           {pendientes.length > 0 && (
             <span className="ml-2 rounded-full border border-amber-400/60 bg-amber-400/10 px-2.5 py-0.5 font-mono text-xs text-amber-400">
@@ -315,7 +315,7 @@ export default function AdminCostos() {
       <div className="tarjeta glow-violeta px-6 py-6">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="font-display text-xl font-extrabold tracking-tight text-white">
+            <h2 className="font-display text-xl font-extrabold tracking-tight text-texto-primario">
               Gasto de la API de Google (MXN)
             </h2>
             <p className="mt-1 font-mono text-[11px] leading-relaxed text-zinc-500">
@@ -344,7 +344,7 @@ export default function AdminCostos() {
                   <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
                     {c.etiqueta}
                   </p>
-                  <p className="mt-1 font-display text-lg font-extrabold text-white">
+                  <p className="mt-1 font-display text-lg font-extrabold text-texto-primario">
                     {c.valor}
                   </p>
                   <p className="font-mono text-[10px] text-zinc-500">{c.sub}</p>
@@ -453,7 +453,7 @@ export default function AdminCostos() {
 
       {/* ---- configuración de costos ---- */}
       <div className="tarjeta px-6 py-5">
-        <h2 className="font-display text-base font-extrabold text-white">
+        <h2 className="font-display text-base font-extrabold text-texto-primario">
           Configuración de costos y umbral de aprobación
         </h2>
         <p className="mt-1 font-mono text-[11px] leading-relaxed text-zinc-500">

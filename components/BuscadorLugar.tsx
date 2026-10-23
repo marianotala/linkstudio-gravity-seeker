@@ -142,13 +142,13 @@ export default function BuscadorLugar({
         className="w-full rounded-md border border-linea bg-panel2 px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-cian focus:outline-none"
       />
       {abierto && sugerencias.length > 0 && (
-        <div className="absolute left-0 right-0 z-30 mt-1 max-h-64 overflow-y-auto rounded-md border border-linea bg-panel2 py-1 shadow-xl shadow-black/50">
+        <div className="absolute left-0 right-0 z-30 mt-1 max-h-64 overflow-y-auto rounded-md border border-linea bg-panel2 py-1 shadow-elevada">
           {sugerencias.map((s, i) => (
             <button
               key={s.placeId}
               type="button"
               onClick={() => elegir(s)}
-              className="block w-full px-3 py-1.5 text-left font-mono text-xs text-zinc-300 transition-colors hover:bg-fondo hover:text-white"
+              className="block w-full px-3 py-1.5 text-left font-mono text-xs text-zinc-300 transition-colors hover:bg-fondo hover:text-texto-primario"
             >
               <span className="text-zinc-100">{s.texto}</span>
               {i === 0 && (

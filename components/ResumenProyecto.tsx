@@ -410,7 +410,7 @@ export default function ResumenProyecto({
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="font-display text-base font-extrabold tracking-tight text-white">
+          <h2 className="font-display text-base font-extrabold tracking-tight text-texto-primario">
             Resumen del proyecto
           </h2>
           <p className="font-mono text-[10px] leading-relaxed text-zinc-500">
@@ -639,7 +639,7 @@ export default function ResumenProyecto({
                 Traslape{" "}
                 <span className="text-cian">{ETIQUETA_ROL[t.roles[0]]}</span> ×{" "}
                 <span className="text-magenta">{ETIQUETA_ROL[t.roles[1]]}</span>:{" "}
-                <span className="text-white">{fmt(t.poblacion)} personas</span>{" "}
+                <span className="text-texto-primario">{fmt(t.poblacion)} personas</span>{" "}
                 <span className="text-zinc-500">
                   ({t.pctBase.toLocaleString("es-MX")}% del universo de{" "}
                   {ETIQUETA_ROL[t.base]} —el menor del par, {fmt(t.poblacionBase)}—

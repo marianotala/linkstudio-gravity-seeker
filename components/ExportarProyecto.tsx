@@ -83,7 +83,7 @@ interface TraslapeGuardado {
 }
 
 const fmt = (n: number) => n.toLocaleString("es-MX");
-const COLOR_OOH = "#ff8c42";
+const COLOR_OOH = "#e2711d";
 
 /** Coordenada redondeada a ~10 cm: clave de match PDV↔relación. */
 const claveCoord = (lat: number, lng: number) =>
@@ -606,7 +606,7 @@ export default function ExportarProyecto({
             (
               (p.metadata?.pdvs as { lat: number; lng: number }[] | undefined) ??
               []
-            ).map((rel) => ({ lat: rel.lat, lng: rel.lng, color: "#2fb9e8" }))
+            ).map((rel) => ({ lat: rel.lat, lng: rel.lng, color: "#27b5e2" }))
           ),
           ...dimsSlot,
           // en presentación, el mapa OOH comparte encuadre con las tácticas
@@ -1044,7 +1044,7 @@ export default function ExportarProyecto({
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-      <h2 className="font-display text-base font-extrabold tracking-tight text-white">
+      <h2 className="font-display text-base font-extrabold tracking-tight text-texto-primario">
         Exportar el plan del proyecto
       </h2>
       <p className="font-mono text-[10px] leading-relaxed text-zinc-500">
@@ -1109,7 +1109,7 @@ export default function ExportarProyecto({
         {cargado && !consolidado ? (
           <p className="font-mono text-[11px] text-amber-400">
             Aún no hay universo consolidado. Calcúlalo primero en{" "}
-            <button onClick={irAResumen} className="underline hover:text-white">
+            <button onClick={irAResumen} className="underline hover:text-texto-primario">
               Resumen del proyecto
             </button>
             .

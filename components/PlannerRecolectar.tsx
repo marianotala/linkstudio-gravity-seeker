@@ -1334,7 +1334,7 @@ export function SeccionOoh({
   const chip = (activo: boolean) =>
     `rounded-full border px-2.5 py-0.5 font-mono text-[10px] transition-colors ${
       activo
-        ? "border-[#ff8c42] bg-[#ff8c42]/15 text-[#ff8c42]"
+        ? "border-[#e2711d] bg-[#e2711d]/15 text-[#e2711d]"
         : "border-linea bg-panel2 text-zinc-500 hover:text-zinc-300"
     }`;
   const alternarLista = (lista: string[], valor: string) =>
@@ -1398,7 +1398,7 @@ export function SeccionOoh({
               type="checkbox"
               checked={radioDiferenciado}
               onChange={(e) => setCfg({ radioDiferenciado: e.target.checked })}
-              className="accent-[#ff8c42]"
+              className="accent-[#e2711d]"
             />
             diferenciado urbano / foráneo
           </label>

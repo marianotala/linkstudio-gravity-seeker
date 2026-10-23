@@ -17,11 +17,11 @@ export interface NivelNse {
 }
 
 export const NIVELES_NSE: NivelNse[] = [
-  { clave: "ab", etiqueta: "AB", desde: 75, color: "#9d5cf0" },
+  { clave: "ab", etiqueta: "AB", desde: 75, color: "#9966f2" },
   { clave: "c_mas", etiqueta: "C+", desde: 65, color: "#7d6cf0" },
   { clave: "c", etiqueta: "C", desde: 55, color: "#5b7ce8" },
   { clave: "c_menos", etiqueta: "C-", desde: 45, color: "#3f97d8" },
-  { clave: "d_mas", etiqueta: "D+", desde: 35, color: "#2fb9e8" },
+  { clave: "d_mas", etiqueta: "D+", desde: 35, color: "#27b5e2" },
   { clave: "de", etiqueta: "DE", desde: 0, color: "#57707d" },
 ];
 

@@ -76,10 +76,10 @@ export default function OverlayProgreso({
                 aria-hidden
               >
                 <defs>
-                  <linearGradient id="anillo-gravity" x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0%" stopColor="#f4368a" />
-                    <stop offset="50%" stopColor="#9d5cf0" />
-                    <stop offset="100%" stopColor="#2fb9e8" />
+                  <linearGradient id="anillo-gravity" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stopColor="#f52d87" />
+                    <stop offset="50%" stopColor="#9966f2" />
+                    <stop offset="100%" stopColor="#27b5e2" />
                   </linearGradient>
                 </defs>
                 <circle
@@ -87,7 +87,7 @@ export default function OverlayProgreso({
                   cy="66"
                   r={RADIO}
                   fill="none"
-                  stroke="#26262e"
+                  stroke="#e5e2d9"
                   strokeWidth="7"
                 />
                 <circle
@@ -104,7 +104,7 @@ export default function OverlayProgreso({
                 />
               </svg>
               <div className="absolute inset-0 flex items-center justify-center">
-                <span className="font-display text-2xl font-extrabold text-white">
+                <span className="font-display text-2xl font-extrabold text-texto-primario">
                   {pct}%
                 </span>
               </div>

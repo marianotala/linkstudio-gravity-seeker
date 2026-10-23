@@ -55,7 +55,7 @@ export default function PanelDepuracion({
               type="checkbox"
               checked={checks[s.placeId] ?? false}
               onChange={(e) => onCheck(s.placeId, e.target.checked)}
-              className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#2fb9e8]"
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#27b5e2]"
             />
             <span className="min-w-0">
               <span className="block truncate font-mono text-xs text-zinc-200">

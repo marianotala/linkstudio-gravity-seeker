@@ -46,13 +46,13 @@ export const ETIQUETA_ROL: Record<RolLevantamiento, string> = {
 /** Espectros de color por ROL (consistentes con la semántica de la
  * app: propios en cian/azules, competencia en magenta/cálidos). */
 export const PALETAS_ROL: Record<RolLevantamiento, string[]> = {
-  poi_propio: ["#2fb9e8", "#7fd4f2", "#1e8ab4", "#a5e3f7", "#17607f", "#60a5fa"],
-  competencia: ["#f4368a", "#ff8c42", "#f7d154", "#c0399f", "#ff6b6b", "#f79ac0"],
-  proximidad: ["#9d5cf0", "#c9a8f7", "#7a3fd1", "#b57ef5", "#d8b4fe", "#8b5cf6"],
-  ooh: ["#ff8c42", "#f7d154", "#fdba74", "#fb923c", "#fde68a", "#f59e0b"],
+  poi_propio: ["#27b5e2", "#7fd4f2", "#1e8ab4", "#a5e3f7", "#17607f", "#60a5fa"],
+  competencia: ["#f52d87", "#e2711d", "#f7d154", "#c0399f", "#ff6b6b", "#f79ac0"],
+  proximidad: ["#9966f2", "#c9a8f7", "#7a3fd1", "#b57ef5", "#d8b4fe", "#8b5cf6"],
+  ooh: ["#e2711d", "#f7d154", "#fdba74", "#fb923c", "#fde68a", "#f59e0b"],
   // exploración: teales/esmeralda — neutral, distinto de las tácticas
-  exploracion: ["#2dd4bf", "#5eead4", "#14b8a6", "#99f6e4", "#0d9488", "#34d399"],
-  geotargeting: ["#2dd4bf", "#5eead4", "#14b8a6", "#99f6e4", "#0d9488", "#34d399"],
+  exploracion: ["#0f766e", "#5eead4", "#14b8a6", "#99f6e4", "#0d9488", "#34d399"],
+  geotargeting: ["#0f766e", "#5eead4", "#14b8a6", "#99f6e4", "#0d9488", "#34d399"],
 };
 
 export function colorSurvey(rol: RolLevantamiento, indice: number): string {

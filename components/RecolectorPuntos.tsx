@@ -30,10 +30,10 @@ export const ETIQUETA_VIA: Record<ViaRecoleccion, string> = {
 };
 
 const COLOR_VIA: Record<ViaRecoleccion, string> = {
-  manual: "#2fb9e8",
+  manual: "#27b5e2",
   excel: "#34d399",
-  censo: "#f4368a",
-  proyecto: "#9d5cf0",
+  censo: "#f52d87",
+  proyecto: "#9966f2",
 };
 
 const claveCoord = (lat: number, lng: number) =>

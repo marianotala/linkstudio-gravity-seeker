@@ -25,8 +25,8 @@ import { etiquetaOrigen } from "@/lib/geo";
 import { colorTipoPantalla, etiquetaTipoPantalla } from "@/lib/ooh";
 import type { CrucePantalla, LatLng, Origin } from "@/lib/types";
 
-const CIAN = "#2fb9e8";
-const MAGENTA = "#f4368a";
+const CIAN = "#27b5e2";
+const MAGENTA = "#f52d87";
 
 const CENTRO_INICIAL: [number, number] = [19.4326, -99.1332];
 /** Con más líneas que esto, la etiqueta de km pasa de fija a hover. */
@@ -161,7 +161,7 @@ export default function OohMap({
               center={[c.pantalla.lat, c.pantalla.lng]}
               radius={7}
               pathOptions={{
-                color: "#0a0a0c",
+                color: "#ffffff",
                 weight: 1.5,
                 fillColor: color,
                 fillOpacity: 1,
@@ -205,8 +205,8 @@ export default function OohMap({
             radius={5.5}
             pathOptions={
               sinCobertura
-                ? { color: MAGENTA, weight: 2, fillColor: "#0a0a0c", fillOpacity: 1 }
-                : { color: CIAN, weight: 2, fillColor: "#0a0a0c", fillOpacity: 1 }
+                ? { color: MAGENTA, weight: 2, fillColor: "#ffffff", fillOpacity: 1 }
+                : { color: CIAN, weight: 2, fillColor: "#ffffff", fillOpacity: 1 }
             }
           >
             <Popup>

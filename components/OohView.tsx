@@ -678,7 +678,7 @@ export default function OohView({
         puntos: pdvs.map((o, i) => ({
           lat: o.lat,
           lng: o.lng,
-          color: cubiertos.has(i) ? "#2fb9e8" : "#f4368a",
+          color: cubiertos.has(i) ? "#27b5e2" : "#f52d87",
           hueco: !cubiertos.has(i),
         })),
       });
@@ -1132,7 +1132,7 @@ export default function OohView({
         <main className="tarjeta flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-5 pb-3 pt-4">
             <div className="min-w-0">
-              <h2 className="font-display text-base font-extrabold tracking-tight text-white">
+              <h2 className="font-display text-base font-extrabold tracking-tight text-texto-primario">
                 OOH · Cruce pantallas × puntos de venta
               </h2>
               <p className="truncate font-mono text-[10px] text-zinc-500">

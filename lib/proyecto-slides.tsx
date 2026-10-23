@@ -97,7 +97,7 @@ const adultos = (u: Universos | null | undefined) =>
   u?.disponible ? (u.residencial?.adultos18 ?? 0) : 0;
 
 /** Teal de la capa Geo-Targeting (misma familia que la app). */
-const TEAL = "#2dd4bf";
+const TEAL = "#0f766e";
 const radioTextoGeo = (m: number) => (m >= 1000 ? `${m / 1000} km` : `${m} m`);
 
 // ------------------------------------------------------------------
@@ -763,7 +763,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
   function leyendaDe(rol: RolLevantamiento): { color: string; texto: string }[] {
     if (rol === "ooh") {
       return [
-        { color: "#ff8c42", texto: "Pantallas (líneas = a qué PDV apoyan)" },
+        { color: "#e2711d", texto: "Pantallas (líneas = a qué PDV apoyan)" },
         { color: CIAN, texto: "PDVs" },
       ];
     }

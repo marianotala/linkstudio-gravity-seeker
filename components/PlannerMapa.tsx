@@ -173,7 +173,7 @@ export default function PlannerMapa({
                   [p.lat + d, p.lng + d],
                 ]}
                 pathOptions={{
-                  color: "#0a0a0c",
+                  color: "#ffffff",
                   weight: 1,
                   fillColor: c.color,
                   fillOpacity: 1,
@@ -189,7 +189,7 @@ export default function PlannerMapa({
               center={[p.lat, p.lng]}
               radius={5}
               pathOptions={{
-                color: "#0a0a0c",
+                color: "#ffffff",
                 weight: 1,
                 fillColor: c.color,
                 fillOpacity: 0.9,

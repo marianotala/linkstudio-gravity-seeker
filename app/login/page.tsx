@@ -88,7 +88,7 @@ export default function LoginPage() {
       <div className="tarjeta glow-cian w-full max-w-sm p-8">
         <div className="mb-8 flex flex-col items-center text-center">
           <GravityMark size={56} />
-          <h1 className="mt-4 font-display text-3xl font-extrabold tracking-tight text-white">
+          <h1 className="mt-4 font-display text-3xl font-extrabold tracking-tight text-texto-primario">
             Gravity
           </h1>
           <p className="mt-1 font-mono text-[11px] tracking-wide text-zinc-500">

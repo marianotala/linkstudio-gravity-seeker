@@ -132,7 +132,7 @@ const SECCIONES: {
     clave: "poi_propio",
     nombre: "Puntos de interés",
     descriptor: "Busca, carga y censa los puntos del plan",
-    color: "#2fb9e8",
+    color: "#27b5e2",
     activa: true,
     fase: "",
     detalle: "",
@@ -141,7 +141,7 @@ const SECCIONES: {
     clave: "proximidad",
     nombre: "Proximidad",
     descriptor: "El universo cerca de tus puntos de venta",
-    color: "#9d5cf0",
+    color: "#9966f2",
     activa: true,
     fase: "",
     detalle: "",
@@ -150,7 +150,7 @@ const SECCIONES: {
     clave: "competencia",
     nombre: "Competencia",
     descriptor: "Qué hay alrededor de tus orígenes",
-    color: "#f4368a",
+    color: "#f52d87",
     activa: true,
     fase: "",
     detalle: "",
@@ -159,7 +159,7 @@ const SECCIONES: {
     clave: "ooh",
     nombre: "OOH",
     descriptor: "Pantallas × puntos de venta",
-    color: "#ff8c42",
+    color: "#e2711d",
     activa: true,
     fase: "",
     detalle: "",
@@ -168,7 +168,7 @@ const SECCIONES: {
     clave: "geotargeting",
     nombre: "Geo-Targeting",
     descriptor: "CPs de cobertura + bulk de keywords para el DSP",
-    color: "#2dd4bf",
+    color: "#0f766e",
     activa: true,
     fase: "",
     detalle: "",
@@ -557,7 +557,7 @@ export default function PlannerView({
           {
             id: "geotargeting-cobertura",
             nombre: `Geo-Targeting · ${coberturaGeo.length} CPs`,
-            color: "#2dd4bf",
+            color: "#0f766e",
             puntos: [],
             poligonos: coberturaGeo
               .filter((c) => c.geometria)
@@ -1293,7 +1293,7 @@ export default function PlannerView({
                 className="mx-auto block h-3 w-3 rounded-full"
                 style={{ backgroundColor: activa.color }}
               />
-              <h2 className="mt-4 font-display text-2xl font-extrabold tracking-tight text-white">
+              <h2 className="mt-4 font-display text-2xl font-extrabold tracking-tight text-texto-primario">
                 {activa.nombre}
               </h2>
               <p className="mt-2 font-mono text-xs leading-relaxed text-zinc-400">
@@ -1318,7 +1318,7 @@ export default function PlannerView({
                 }
               >
                 <div className="mb-3">
-                  <h2 className="font-display text-base font-extrabold tracking-tight text-white">
+                  <h2 className="font-display text-base font-extrabold tracking-tight text-texto-primario">
                     {activa.nombre}
                   </h2>
                   <p className="font-mono text-[10px] text-zinc-500">
@@ -1540,7 +1540,7 @@ export default function PlannerView({
                               }}
                               className={`cursor-pointer border-t border-linea/60 transition-colors ${
                                 seleccionado === s.id
-                                  ? "bg-panel2 text-white"
+                                  ? "bg-panel2 text-texto-primario"
                                   : "text-zinc-300 hover:bg-panel2/60"
                               }`}
                             >

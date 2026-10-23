@@ -29,10 +29,10 @@ import type {
   SearchMode,
 } from "@/lib/types";
 
-const CIAN = "#2fb9e8";
-const MAGENTA = "#f4368a";
-const VIOLETA = "#9d5cf0";
-const NARANJA = "#ff8c42"; // POIs de DENUE (INEGI)
+const CIAN = "#27b5e2";
+const MAGENTA = "#f52d87";
+const VIOLETA = "#9966f2";
+const NARANJA = "#e2711d"; // POIs de DENUE (INEGI)
 
 /** Color del POI según su fuente: Google magenta, DENUE naranja,
  * "ambas" (match cruzado) magenta con borde naranja. */
@@ -116,7 +116,7 @@ function CapaOrigenes({
               pathOptions={{
                 color: CIAN,
                 weight: 2,
-                fillColor: "#0a0a0c",
+                fillColor: "#ffffff",
                 fillOpacity: 1,
               }}
             >
@@ -147,7 +147,7 @@ function CapaOrigenes({
             pathOptions={{
               color: CIAN,
               weight: 2,
-              fillColor: "#0a0a0c",
+              fillColor: "#ffffff",
               fillOpacity: 1,
             }}
           >
@@ -219,7 +219,7 @@ function popupCp(c: CpPoligono, poblacion?: number): string {
   }
   if (poblacion !== undefined) {
     partes.push(
-      `<div style="margin-top:4px;color:#9d5cf0">población: ${poblacion.toLocaleString("es-MX")}</div>`
+      `<div style="margin-top:4px;color:#9966f2">población: ${poblacion.toLocaleString("es-MX")}</div>`
     );
   }
   partes.push(`</div>`);
@@ -597,7 +597,7 @@ export default function MapView(props: MapViewProps) {
               pathOptions={{
                 color: VIOLETA,
                 weight: 2,
-                fillColor: "#0a0a0c",
+                fillColor: "#ffffff",
                 fillOpacity: 1,
               }}
             >
@@ -635,7 +635,7 @@ export default function MapView(props: MapViewProps) {
             pathOptions={{
               color: VIOLETA,
               weight: 2,
-              fillColor: "#0a0a0c",
+              fillColor: "#ffffff",
               fillOpacity: 1,
             }}
           >

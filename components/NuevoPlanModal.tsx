@@ -77,7 +77,7 @@ export default function NuevoPlanModal({
         <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-violeta">
           Planner
         </p>
-        <h2 className="mt-1 font-display text-xl font-extrabold tracking-tight text-white">
+        <h2 className="mt-1 font-display text-xl font-extrabold tracking-tight text-texto-primario">
           Nuevo plan
         </h2>
         <p className="mt-1 font-mono text-[11px] leading-relaxed text-zinc-500">

@@ -85,7 +85,7 @@ export default function CensosView({
         <div className="tarjeta glow-cian mx-auto max-w-6xl px-6 py-6">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h1 className="font-display text-xl font-extrabold tracking-tight text-white">
+              <h1 className="font-display text-xl font-extrabold tracking-tight text-texto-primario">
                 Biblioteca de censos
               </h1>
               <p className="mt-1 font-mono text-[11px] text-zinc-500">
@@ -150,13 +150,13 @@ export default function CensosView({
                           className={
                             c.tipo === "marca"
                               ? "text-magenta"
-                              : "text-[#ff8c42]"
+                              : "text-[#e2711d]"
                           }
                         >
                           {c.tipo === "marca" ? "Marca" : "Territorial"}
                         </span>
                       </td>
-                      <td className="max-w-[180px] truncate px-3 py-2.5 text-white">
+                      <td className="max-w-[180px] truncate px-3 py-2.5 text-texto-primario">
                         {c.marca_o_categoria}
                       </td>
                       <td className="max-w-[220px] truncate px-3 py-2.5 text-zinc-400">

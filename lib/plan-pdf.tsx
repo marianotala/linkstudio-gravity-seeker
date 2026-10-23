@@ -84,10 +84,10 @@ export interface PlanDatos {
 
 export const FONDO = "#0a0a0f";
 export const PANEL = "#12121a";
-export const LINEA = "#26262e";
-export const MAGENTA = "#f4368a";
-export const VIOLETA = "#9d5cf0";
-export const CIAN = "#2fb9e8";
+export const LINEA = "#e5e2d9";
+export const MAGENTA = "#f52d87";
+export const VIOLETA = "#9966f2";
+export const CIAN = "#27b5e2";
 export const BLANCO = "#ffffff";
 export const GRIS = "#8b8b96";
 export const GRIS_OSCURO = "#5c5c66";

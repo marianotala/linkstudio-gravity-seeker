@@ -1,20 +1,15 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, DM_Sans, JetBrains_Mono } from "next/font/google";
+import { Montserrat, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-// Tipografía con disciplina de roles (design tokens v2):
-// títulos en Space Grotesk, cuerpo/UI en DM Sans y monospace SOLO
-// para datos (números, coordenadas, códigos) en JetBrains Mono.
-const titulos = Space_Grotesk({
+// Tipografía del brand book V2: Montserrat para TODO (Regular 400
+// lectura, Medium 500 titulares, Semibold 600 énfasis/cifras/CTAs —
+// evitar Light en lecturas pequeñas) y monospace SOLO para datos
+// (números, coordenadas, códigos) en JetBrains Mono.
+const montserrat = Montserrat({
   subsets: ["latin"],
-  weight: ["500", "600", "700"],
-  variable: "--fuente-titulos",
-});
-
-const cuerpo = DM_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--fuente-cuerpo",
+  weight: ["400", "500", "600"],
+  variable: "--fuente-montserrat",
 });
 
 const datos = JetBrains_Mono({
@@ -35,7 +30,7 @@ export default function RootLayout({
   return (
     <html lang="es-MX">
       <body
-        className={`${titulos.variable} ${cuerpo.variable} ${datos.variable} font-body bg-fondo text-texto-primario antialiased`}
+        className={`${montserrat.variable} ${datos.variable} font-body bg-fondo text-texto-primario antialiased`}
       >
         {children}
       </body>
