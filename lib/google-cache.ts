@@ -23,10 +23,37 @@ import {
 } from "./costos";
 import type { GeocodeResult, LatLng } from "./types";
 
-/** Vigencia del caché: dentro de esta ventana la consulta es gratis. */
-const TTL_HORAS = 36;
-/** Limpieza oportunista: al escribir, a veces se barren los vencidos. */
-const RETENCION_HORAS = 72;
+/** Vigencia del caché: dentro de esta ventana la consulta es gratis.
+ * 30 días = el máximo que permiten los términos de Google Places para
+ * resultados; los place_id NO caducan (lo persistido en surveys se
+ * conserva para siempre — esto solo rige las RESPUESTAS cacheadas). */
+export const TTL_DIAS_CACHE = 30;
+const TTL_HORAS = TTL_DIAS_CACHE * 24;
+/** Retención física = TTL: lo vencido se barre, lo vigente se queda. */
+const RETENCION_HORAS = TTL_HORAS;
+
+/** Normalización de la LLAVE: minúsculas, sin acentos, espacios
+ * colapsados — "Café", "cafe" y "CAFÉ " son la misma consulta. */
+export function normalizarClaveTexto(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Llave de una consulta searchText sobre una celda circular — LA
+ * MISMA construcción que usa el caché, exportada para que el estimador
+ * pre-corrida (/api/cache-estado) calcule hits sin ejecutar nada. */
+export function claveTextoCircular(
+  q: string,
+  centro: LatLng,
+  radioM: number
+): string {
+  const consulta = `text|${normalizarClaveTexto(q)}|c:${centro.lat.toFixed(5)},${centro.lng.toFixed(5)},${Math.round(radioM)}`;
+  return hash(consulta);
+}
 
 export interface ConsumoGoogle {
   /** Llamadas facturables ejecutadas, por método. */
@@ -56,10 +83,15 @@ export class CacheGoogle {
 
   constructor(
     private db: ClienteDb,
-    private cfg: ConfigCostos
+    private cfg: ConfigCostos,
+    /** true = "Refrescar todo": ignora las lecturas del caché (paga y
+     * sobreescribe). SIEMPRE es decisión explícita del usuario desde el
+     * estimador — nunca se refresca solo. */
+    private refrescar = false
   ) {}
 
   private async leer(clave: string): Promise<unknown | null> {
+    if (this.refrescar) return null;
     try {
       const desde = new Date(Date.now() - TTL_HORAS * 3600_000).toISOString();
       const { data } = await this.db
@@ -103,13 +135,13 @@ export class CacheGoogle {
     this.consumo.costoMxn += llamadas * costoLlamadaMxn(metodo, this.cfg);
   }
 
-  /** searchText con caché (la clave incluye query + área). */
+  /** searchText con caché (la clave incluye query normalizada + área). */
   async text(q: string, area: AreaBusqueda): Promise<PlaceResult[]> {
     const desc =
       "rectangle" in area
         ? `r:${area.rectangle.north.toFixed(4)},${area.rectangle.south.toFixed(4)},${area.rectangle.east.toFixed(4)},${area.rectangle.west.toFixed(4)}`
         : `c:${area.circle.center.lat.toFixed(5)},${area.circle.center.lng.toFixed(5)},${Math.round(area.circle.radius)}`;
-    const consulta = `text|${q.trim().toLowerCase()}|${desc}`;
+    const consulta = `text|${normalizarClaveTexto(q)}|${desc}`;
     const clave = hash(consulta);
     const enCache = await this.leer(clave);
     if (enCache) {
@@ -129,7 +161,7 @@ export class CacheGoogle {
     radioM: number,
     tipos: string[]
   ): Promise<PlaceResult[]> {
-    const consulta = `nearby|${[...tipos].sort().join(",")}|${centro.lat.toFixed(5)},${centro.lng.toFixed(5)},${Math.round(radioM)}`;
+    const consulta = `nearby|${[...tipos].sort().join(",")}|c:${centro.lat.toFixed(5)},${centro.lng.toFixed(5)},${Math.round(radioM)}`;
     const clave = hash(consulta);
     const enCache = await this.leer(clave);
     if (enCache) {
@@ -145,7 +177,7 @@ export class CacheGoogle {
 
   /** Geocoding con caché (también los "sin resultados": igual costaron). */
   async geocode(direccion: string): Promise<GeocodeResult> {
-    const consulta = `geo|${direccion.trim().toLowerCase().replace(/\s+/g, " ")}`;
+    const consulta = `geo|${normalizarClaveTexto(direccion)}`;
     const clave = hash(consulta);
     const enCache = await this.leer(clave);
     if (enCache) {

@@ -286,6 +286,9 @@ export interface SearchRequest {
   contexto?: string;
   /** Solicitud de corrida grande APROBADA (autoriza exceder límites). */
   solicitudId?: string;
+  /** "Refrescar todo" del estimador de caché: ignora las lecturas del
+   * caché (paga y sobreescribe). Nunca va en true por default. */
+  forzarRefresco?: boolean;
 }
 
 /** Punto DESCARTADO por los filtros de una corrida — ya se PAGÓ, así

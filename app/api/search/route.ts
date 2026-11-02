@@ -103,6 +103,9 @@ const BodySchema = z
       .optional(),
     /** Etiqueta legible del análisis, para el log de consumo. */
     contexto: z.string().trim().max(160).optional(),
+    /** "Refrescar todo" elegido por el usuario en el estimador: ignora
+     * las LECTURAS del caché (paga y sobreescribe). Nunca es default. */
+    forzarRefresco: z.boolean().optional(),
     /** Solicitud de corrida grande APROBADA: autoriza exceder los
      * límites del día (la aprobación ES la autorización del gasto). */
     solicitudId: z.string().uuid().optional(),
@@ -347,7 +350,11 @@ export async function POST(req: Request) {
 
   // Caché + medidor: la misma consulta dentro del TTL es GRATIS; lo
   // pagado se registra por método con su costo en MXN.
-  const cache = new CacheGoogle(supabase, await cargarConfigCostos(supabase));
+  const cache = new CacheGoogle(
+    supabase,
+    await cargarConfigCostos(supabase),
+    parsed.data.forzarRefresco === true
+  );
   const contextoLog =
     parsed.data.contexto ??
     `${mode}${terminos.length ? `: ${terminos.slice(0, 3).join(", ")}` : ""}`;

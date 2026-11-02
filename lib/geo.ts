@@ -250,7 +250,16 @@ export function haversine(a: LatLng, b: LatLng): number {
  * espaciamiento garantiza cobertura completa del plano:
  * - hex: retícula hexagonal con separación r·√3
  * - square: retícula cuadrada con separación r·√2
- * Regresa los centros ordenados del centro hacia afuera.
+ *
+ * MALLA GLOBAL DETERMINISTA: los centros de celda viven en una
+ * retícula FIJA anclada al origen (0°, 0°) — la celda se deriva del
+ * territorio y del radio, no del punto exacto que regresó el
+ * geocodificador hoy ni del estado de la UI. Re-correr el mismo censo
+ * produce las MISMAS celdas (mismas llaves de caché) aunque el centro
+ * se mueva unos metros; solo las celdas de la orilla pueden entrar o
+ * salir. Los centros se redondean a 5 decimales (~1 m), exactamente
+ * la precisión de la llave del caché. Regresa los centros ordenados
+ * del centro hacia afuera (desempate estable por lat/lng).
  */
 export function generarCuadricula(
   center: LatLng,
@@ -258,43 +267,57 @@ export function generarCuadricula(
   radioCeldaM: number,
   tipo: "hex" | "square"
 ): LatLng[] {
-  const latRad = (center.lat * Math.PI) / 180;
+  // metros por grado con el coseno de una BANDA de latitud de 0.5°
+  // (no del centro exacto): la retícula no se deforma entre corridas
+  const latBanda = Math.round(center.lat * 2) / 2;
   const mPorGradoLat = 111320;
-  const mPorGradoLng = 111320 * Math.cos(latRad);
+  const mPorGradoLng = 111320 * Math.cos((latBanda * Math.PI) / 180);
   const celdas: { lat: number; lng: number; d: number }[] = [];
+  const r5 = (v: number) => Math.round(v * 1e5) / 1e5;
 
-  const agregar = (xM: number, yM: number) => {
-    const d = Math.hypot(xM, yM);
+  const agregar = (lat: number, lng: number) => {
+    const dLatM = (lat - center.lat) * mPorGradoLat;
+    const dLngM = (lng - center.lng) * mPorGradoLng;
+    const d = Math.hypot(dLatM, dLngM);
     if (d > alcanceM) return;
-    celdas.push({
-      lat: center.lat + yM / mPorGradoLat,
-      lng: center.lng + xM / mPorGradoLng,
-      d,
-    });
+    celdas.push({ lat: r5(lat), lng: r5(lng), d });
   };
 
   if (tipo === "square") {
     const paso = radioCeldaM * Math.SQRT2;
-    const n = Math.ceil(alcanceM / paso);
-    for (let i = -n; i <= n; i++) {
-      for (let j = -n; j <= n; j++) {
-        agregar(i * paso, j * paso);
+    const dLat = paso / mPorGradoLat;
+    const dLng = paso / mPorGradoLng;
+    const j0 = Math.floor((center.lat - alcanceM / mPorGradoLat) / dLat);
+    const j1 = Math.ceil((center.lat + alcanceM / mPorGradoLat) / dLat);
+    const i0 = Math.floor((center.lng - alcanceM / mPorGradoLng) / dLng);
+    const i1 = Math.ceil((center.lng + alcanceM / mPorGradoLng) / dLng);
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        agregar(j * dLat, i * dLng);
       }
     }
   } else {
     const d = radioCeldaM * Math.sqrt(3);
-    const dy = (d * Math.sqrt(3)) / 2;
-    const nFilas = Math.ceil(alcanceM / dy);
-    const nCols = Math.ceil(alcanceM / d) + 1;
-    for (let f = -nFilas; f <= nFilas; f++) {
-      const offset = f % 2 !== 0 ? d / 2 : 0;
-      for (let c = -nCols; c <= nCols; c++) {
-        agregar(c * d + offset, f * dy);
+    const dyM = (d * Math.sqrt(3)) / 2;
+    const dLatFila = dyM / mPorGradoLat;
+    const dLngCol = d / mPorGradoLng;
+    const j0 = Math.floor((center.lat - alcanceM / mPorGradoLat) / dLatFila);
+    const j1 = Math.ceil((center.lat + alcanceM / mPorGradoLat) / dLatFila);
+    const i0 = Math.floor((center.lng - alcanceM / mPorGradoLng) / dLngCol) - 1;
+    const i1 = Math.ceil((center.lng + alcanceM / mPorGradoLng) / dLngCol) + 1;
+    for (let j = j0; j <= j1; j++) {
+      // el offset hexagonal depende de la PARIDAD GLOBAL de la fila
+      // (no de su posición relativa al centro): malla idéntica siempre
+      const offset = ((j % 2) + 2) % 2 !== 0 ? dLngCol / 2 : 0;
+      for (let i = i0; i <= i1; i++) {
+        agregar(j * dLatFila, i * dLngCol + offset);
       }
     }
   }
 
-  celdas.sort((a, b) => a.d - b.d);
+  celdas.sort(
+    (a, b) => a.d - b.d || a.lat - b.lat || a.lng - b.lng
+  );
   return celdas.map(({ lat, lng }) => ({ lat, lng }));
 }
 

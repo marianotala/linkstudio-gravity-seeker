@@ -3138,7 +3138,15 @@ begin
         select jsonb_build_object(
           'contexto', coalesce(contexto, '(sin contexto)'),
           'mes_mxn', round(coalesce(sum(costo_mxn), 0), 2),
-          'mes_consultas', coalesce(sum(consultas), 0)
+          'mes_consultas', coalesce(sum(consultas), 0),
+          'mes_cache', coalesce(sum(de_cache), 0),
+          'cache_pct', case
+            when coalesce(sum(consultas), 0) + coalesce(sum(de_cache), 0) > 0
+            then round(100.0 * coalesce(sum(de_cache), 0)
+                 / (coalesce(sum(consultas), 0) + coalesce(sum(de_cache), 0)))
+            else 0
+          end,
+          'ultima_pagada', max(created_at) filter (where consultas > 0)
         ) as fila,
         coalesce(sum(costo_mxn), 0) as mes_mxn
         from public.api_usage_log

@@ -39,7 +39,16 @@ interface ResumenGasto {
     mes_consultas: number;
     mes_cache: number;
   }[];
-  contextos: { contexto: string; mes_mxn: number; mes_consultas: number }[];
+  contextos: {
+    contexto: string;
+    mes_mxn: number;
+    mes_consultas: number;
+    mes_cache?: number;
+    /** % de consultas servidas del caché ($0) sobre el total. */
+    cache_pct?: number;
+    /** Última corrida que PAGÓ a Google para esta búsqueda. */
+    ultima_pagada?: string | null;
+  }[];
 }
 
 type SolicitudConPerfil = SolicitudCorrida & {
@@ -427,11 +436,25 @@ export default function AdminCostos() {
                     <tbody className="text-zinc-300">
                       {gasto.contextos.map((c, i) => (
                         <tr key={i} className="border-t border-linea/60 first:border-t-0">
-                          <td className="max-w-[380px] truncate px-3 py-1.5">
+                          <td className="max-w-[300px] truncate px-3 py-1.5">
                             {c.contexto}
                           </td>
                           <td className="px-3 py-1.5 text-right text-zinc-500">
                             {fmt(c.mes_consultas)} consultas
+                          </td>
+                          <td
+                            className={`px-3 py-1.5 text-right ${(c.cache_pct ?? 0) >= 50 ? "text-emerald-400" : "text-zinc-500"}`}
+                            title={`${fmt(c.mes_cache ?? 0)} consultas servidas del caché ($0)`}
+                          >
+                            caché {c.cache_pct ?? 0}%
+                          </td>
+                          <td
+                            className="whitespace-nowrap px-3 py-1.5 text-right text-zinc-600"
+                            title="Última corrida que PAGÓ a Google para esta búsqueda"
+                          >
+                            {c.ultima_pagada
+                              ? `pagó ${new Date(c.ultima_pagada).toLocaleDateString("es-MX", { day: "numeric", month: "short" })}`
+                              : "sin pago"}
                           </td>
                           <td className="px-3 py-1.5 text-right text-amber-400">
                             {fmtMxn(c.mes_mxn)}

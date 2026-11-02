@@ -728,6 +728,18 @@ export default function SeekerApp({
   const [radioCelda, setRadioCelda] = useState(2000);
   const [alcance, setAlcance] = useState(10000);
   const [celdas, setCeldas] = useState<LatLng[] | null>(null);
+  /** Desglose del estimador de caché: "N en caché ($0) · M nuevas". */
+  const [cacheCenso, setCacheCenso] = useState<{
+    total: number;
+    enCache: number;
+    nuevas: number;
+    antiguedadDias: number;
+    costoNuevasMxn: number;
+    costoRefrescoMxn: number;
+    ttlDias: number;
+  } | null>(null);
+  /** "Refrescar todo" elegido EXPLÍCITAMENTE — nunca se refresca solo. */
+  const [refrescarCenso, setRefrescarCenso] = useState(false);
   const [progresoCenso, setProgresoCenso] = useState<{
     actual: number;
     total: number;
@@ -2768,6 +2780,23 @@ export default function SeekerApp({
         "ok",
         `Cuadrícula lista: ${cuadricula.length} celdas = ${cuadricula.length} llamadas a Google. Confirma para ejecutar.`
       );
+      // estimador consciente del caché: cuánto ya está pagado y cuánto
+      // costaría lo nuevo (solo lee llaves — 0 consultas a Google)
+      setCacheCenso(null);
+      setRefrescarCenso(false);
+      try {
+        const est = await postJson<NonNullable<typeof cacheCenso>>(
+          "/api/cache-estado",
+          {
+            terminos: dividirTerminos(m),
+            celdas: cuadricula,
+            radioM: radioCelda,
+          }
+        );
+        setCacheCenso(est);
+      } catch {
+        // sin estimador no pasa nada: el censo sigue funcionando igual
+      }
     } catch (e) {
       reportar("error", e instanceof Error ? e.message : "Error al calcular el censo");
     } finally {
@@ -2879,6 +2908,8 @@ export default function SeekerApp({
           persist: false,
           contexto: `censo: ${m} · ${zona.nombre ?? ciudadQuery.trim()}`,
           solicitudId: solicitudCorridaRef.current,
+          // "Refrescar todo" solo si el usuario lo eligió en el estimador
+          ...(refrescarCenso ? { forzarRefresco: true } : {}),
         } satisfies SearchRequest);
         celdasCorridas++;
         fallosSeguidos = 0;
@@ -5413,6 +5444,59 @@ export default function SeekerApp({
                     a Google Places (searchText), en serie con pausa de 250 ms.
                     Con varias marcas (separadas por coma) cada una es su capa.
                   </p>
+                  {/* estimador consciente del caché: lo pagado no se re-paga */}
+                  {cacheCenso && (
+                    <div className="mt-2 rounded-md border border-linea bg-panel p-2.5 font-mono text-[11px] leading-relaxed">
+                      <span className="text-emerald-400">
+                        {cacheCenso.enCache.toLocaleString("es-MX")} celdas en
+                        caché ($0)
+                      </span>
+                      <span className="text-zinc-500"> · </span>
+                      <span className={cacheCenso.nuevas > 0 ? "text-amber-400" : "text-zinc-500"}>
+                        {cacheCenso.nuevas.toLocaleString("es-MX")} nuevas (~$
+                        {cacheCenso.costoNuevasMxn.toLocaleString("es-MX")} MXN)
+                      </span>
+                      {cacheCenso.enCache > 0 && (
+                        <span className="text-zinc-600">
+                          {" "}
+                          · caché de hace{" "}
+                          {Math.ceil(cacheCenso.antiguedadDias)}{" "}
+                          {Math.ceil(cacheCenso.antiguedadDias) === 1 ? "día" : "días"}{" "}
+                          (vigencia {cacheCenso.ttlDias})
+                        </span>
+                      )}
+                      {/* caché con más de 14 días: el usuario DECIDE — nunca
+                          se refresca solo */}
+                      {cacheCenso.enCache > 0 && cacheCenso.antiguedadDias > 14 && (
+                        <div className="mt-2 flex gap-1.5">
+                          <button
+                            onClick={() => setRefrescarCenso(false)}
+                            className={`flex-1 rounded-md border px-2 py-1.5 transition-colors ${
+                              !refrescarCenso
+                                ? "border-emerald-400 bg-emerald-400/10 text-emerald-400"
+                                : "border-linea bg-panel2 text-zinc-500 hover:text-zinc-300"
+                            }`}
+                            title="Usa lo ya pagado dentro de la vigencia de 30 días; solo las celdas nuevas van a Google"
+                          >
+                            Usar caché ($
+                            {cacheCenso.costoNuevasMxn.toLocaleString("es-MX")})
+                          </button>
+                          <button
+                            onClick={() => setRefrescarCenso(true)}
+                            className={`flex-1 rounded-md border px-2 py-1.5 transition-colors ${
+                              refrescarCenso
+                                ? "border-amber-400 bg-amber-400/10 text-amber-400"
+                                : "border-linea bg-panel2 text-zinc-500 hover:text-zinc-300"
+                            }`}
+                            title="Ignora el caché: TODAS las celdas se re-pagan a Google con datos frescos de hoy"
+                          >
+                            Refrescar todo (~$
+                            {cacheCenso.costoRefrescoMxn.toLocaleString("es-MX")})
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {notaSaldoCeldas(
                     celdas.length * Math.max(1, dividirTerminos(marca).length)
                   )}
@@ -5421,11 +5505,17 @@ export default function SeekerApp({
                     disabled={ocupado}
                     className="mt-2 w-full rounded-md bg-magenta px-3 py-2 font-display text-xs font-extrabold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
                   >
-                    Ejecutar censo ({celdas.length} llamadas)
+                    Ejecutar censo ({celdas.length} llamadas
+                    {cacheCenso && !refrescarCenso && cacheCenso.enCache > 0
+                      ? ` · ${cacheCenso.enCache.toLocaleString("es-MX")} gratis`
+                      : ""}
+                    )
                   </button>
                   <button
                     onClick={() => {
                       setCeldas(null);
+                      setCacheCenso(null);
+                      setRefrescarCenso(false);
                       reportar("idle", "Censo cancelado");
                     }}
                     disabled={ocupado}
