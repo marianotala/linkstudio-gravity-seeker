@@ -3610,3 +3610,118 @@ $$;
 
 revoke execute on function public.cps_por_radios(jsonb, int, boolean) from public, anon;
 grant execute on function public.cps_por_radios(jsonb, int, boolean) to authenticated;
+
+-- ==================================================================
+-- CIUDAD TIPADA EN survey_points — municipio/entidad por
+-- point-in-polygon sobre el catálogo propio (cp_poligonos +
+-- cp_colonias). Reemplaza el parseo de formatted_address (producía
+-- basura: "C.P.", colonias, calles). Aplicada en vivo como migración
+-- survey_points_municipio_entidad. En CDMX el municipio es la
+-- alcaldía. Nota: tras aplicar se corrió el UPDATE retroactivo
+--   update public.survey_points sp
+--     set (municipio, entidad) = (
+--       select r.municipio, r.entidad
+--       from public.resolver_municipio(sp.lat, sp.lng) r)
+--   where sp.municipio is null;
+-- (68,206 de 68,647 puntos resueltos; 441 fuera de todo polígono).
+-- ==================================================================
+
+alter table public.survey_points
+  add column if not exists municipio text,
+  add column if not exists entidad text;
+
+-- (a) resolver UN punto: primer polígono de CP que lo contiene →
+--     municipio/estado oficiales de cp_colonias. security definer: el
+--     catálogo no está expuesto por RLS a los usuarios.
+create or replace function public.resolver_municipio(
+  p_lat double precision,
+  p_lng double precision
+) returns table (municipio text, entidad text)
+language sql stable security definer
+set search_path = public, extensions
+as $$
+  select k.municipio, k.estado
+  from public.cp_poligonos c
+  cross join lateral (
+    select kk.municipio, kk.estado
+    from public.cp_colonias kk
+    where kk.codigo_postal = c.codigo_postal
+    limit 1
+  ) k
+  where c.geom && ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)
+    and ST_Contains(c.geom, ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326))
+  limit 1;
+$$;
+
+revoke execute on function public.resolver_municipio(double precision, double precision) from public, anon;
+grant execute on function public.resolver_municipio(double precision, double precision) to authenticated;
+
+-- (b) trigger BEFORE INSERT: llena municipio/entidad si vienen null —
+--     cubre TODOS los caminos de guardado (autosave, reescritura,
+--     puntos crudos del cruce OOH, cargas futuras).
+create or replace function public.survey_point_municipio()
+returns trigger
+language plpgsql security definer
+set search_path = public, extensions
+as $$
+begin
+  if new.municipio is null or new.entidad is null then
+    select r.municipio, r.entidad into new.municipio, new.entidad
+    from public.resolver_municipio(new.lat, new.lng) r;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists survey_points_municipio_trg on public.survey_points;
+create trigger survey_points_municipio_trg
+  before insert on public.survey_points
+  for each row execute function public.survey_point_municipio();
+
+-- (c) RPC batch para datos vivos (resultados de búsqueda sin guardar,
+--     panel de descartados): 1-5000 puntos [{id, lat, lng}] →
+--     [{id, municipio, entidad}] solo de los que caen en algún
+--     polígono (el cliente pone "—" o el respaldo Google al resto).
+create or replace function public.municipios_de_puntos(p_puntos jsonb)
+returns jsonb
+language plpgsql stable security definer
+set search_path = public, extensions
+as $$
+declare
+  v jsonb;
+begin
+  if coalesce(jsonb_array_length(p_puntos), 0) = 0
+     or jsonb_array_length(p_puntos) > 5000 then
+    raise exception 'Manda entre 1 y 5000 puntos';
+  end if;
+  with pts as (
+    select p ->> 'id' as id,
+      ST_SetSRID(ST_MakePoint((p ->> 'lng')::float, (p ->> 'lat')::float), 4326) as g
+    from jsonb_array_elements(p_puntos) as p
+  ),
+  dentro as (
+    select distinct on (pts.id) pts.id, c.codigo_postal
+    from pts
+    join public.cp_poligonos c
+      on c.geom && pts.g and ST_Contains(c.geom, pts.g)
+    order by pts.id, c.codigo_postal
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'id', d.id,
+    'municipio', k.municipio,
+    'entidad', k.estado
+  )), '[]'::jsonb)
+  into v
+  from dentro d
+  cross join lateral (
+    select kk.municipio, kk.estado
+    from public.cp_colonias kk
+    where kk.codigo_postal = d.codigo_postal
+    limit 1
+  ) k;
+  return v;
+end;
+$$;
+
+revoke execute on function public.municipios_de_puntos(jsonb) from public, anon;
+grant execute on function public.municipios_de_puntos(jsonb) to authenticated;

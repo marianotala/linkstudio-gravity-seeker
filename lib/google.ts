@@ -11,7 +11,9 @@ const TEXT_URL = "https://places.googleapis.com/v1/places:searchText";
 const FIELD_MASK =
   // businessStatus viene en el MISMO SKU Pro que displayName/types: no
   // sube el tier de facturación y permite reportar abierto/cerrado
-  "places.id,places.displayName,places.formattedAddress,places.location,places.types,places.businessStatus";
+  // addressComponents viene en el MISMO SKU Pro que formattedAddress:
+  // el respaldo de ciudad no cambia el costo por llamada
+  "places.id,places.displayName,places.formattedAddress,places.location,places.types,places.businessStatus,places.addressComponents";
 
 /** Tipo de límite de Google: rate limit por minuto (pausa breve y se
  * reanuda solo) vs cuota DIARIA agotada (se reinicia a medianoche,
@@ -107,6 +109,11 @@ interface PlaceRaw {
   location?: { latitude: number; longitude: number };
   types?: string[];
   businessStatus?: string;
+  addressComponents?: {
+    longText?: string;
+    shortText?: string;
+    types?: string[];
+  }[];
 }
 
 export interface PlaceResult {
@@ -118,6 +125,20 @@ export interface PlaceResult {
   types: string[];
   /** OPERATIONAL | CLOSED_TEMPORARILY | CLOSED_PERMANENTLY (si Google lo trae). */
   businessStatus?: string | null;
+  /** RESPALDO de ciudad desde address_components de Google (locality /
+   * admin_area_level_1) — solo se usa cuando el punto cae fuera de
+   * todo polígono del catálogo (costa, frontera). Mismo SKU Pro. */
+  localidadGoogle?: string | null;
+  entidadGoogle?: string | null;
+}
+
+/** locality → administrative_area_level_1 de los address_components. */
+function componente(
+  comps: PlaceRaw["addressComponents"],
+  tipo: string
+): string | null {
+  const c = (comps ?? []).find((x) => (x.types ?? []).includes(tipo));
+  return c?.longText ?? c?.shortText ?? null;
 }
 
 function mapPlaces(places: PlaceRaw[] | undefined): PlaceResult[] {
@@ -131,6 +152,11 @@ function mapPlaces(places: PlaceRaw[] | undefined): PlaceResult[] {
       lng: p.location!.longitude,
       types: p.types ?? [],
       businessStatus: p.businessStatus ?? null,
+      localidadGoogle: componente(p.addressComponents, "locality"),
+      entidadGoogle: componente(
+        p.addressComponents,
+        "administrative_area_level_1"
+      ),
     }));
 }
 

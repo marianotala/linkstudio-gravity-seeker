@@ -56,28 +56,74 @@ export function esNombreBasura(nombre: string): boolean {
 }
 
 /**
- * Extrae la ciudad de una dirección formateada (Google o DENUE).
- * Heurística: el segmento que trae el código postal suele ser
- * "06100 Ciudad de México" — se quita el CP; si no queda texto se toma
- * el siguiente segmento. Fallback: el antepenúltimo segmento (antes de
- * estado y país).
+ * CIUDAD SIN PARSEO: la ciudad/estado de un punto se resuelve por
+ * point-in-polygon sobre nuestro catálogo (columnas tipadas municipio/
+ * entidad en el punto, calculadas al guardar) — NUNCA parseando
+ * formatted_address, que en direcciones mexicanas produce basura
+ * ("C.P.", colonias, calles). Aquí solo viven la tabla oficial de
+ * abreviaturas de entidad y el formato uniforme "Municipio, ABREV".
  */
-export function ciudadDeDireccion(direccion: string): string {
-  const partes = direccion
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (partes.length === 0) return "";
-  for (let i = 0; i < partes.length; i++) {
-    const cp = partes[i].match(/\b\d{5}\b/);
-    if (cp) {
-      const resto = partes[i].replace(cp[0], "").replace(/\bCP\b\.?/i, "").trim();
-      if (resto) return resto;
-      if (partes[i + 1]) return partes[i + 1];
-    }
-  }
-  if (partes.length >= 3) return partes[partes.length - 3];
-  return partes[partes.length - 1] ?? "";
+
+/** Abreviaturas oficiales de las 32 entidades, indexadas por nombre
+ * normalizado (sin acentos, minúsculas) tal como vienen del catálogo
+ * de Correos (p. ej. "Coahuila de Zaragoza", "Veracruz de Ignacio de
+ * la Llave"). CDMX lleva la alcaldía como municipio. */
+export const ABREV_ENTIDAD: Record<string, string> = {
+  aguascalientes: "Ags.",
+  "baja california": "B.C.",
+  "baja california sur": "B.C.S.",
+  campeche: "Camp.",
+  chiapas: "Chis.",
+  chihuahua: "Chih.",
+  "ciudad de mexico": "CDMX",
+  "coahuila de zaragoza": "Coah.",
+  colima: "Col.",
+  durango: "Dgo.",
+  guanajuato: "Gto.",
+  guerrero: "Gro.",
+  hidalgo: "Hgo.",
+  jalisco: "Jal.",
+  mexico: "EdoMéx",
+  "michoacan de ocampo": "Mich.",
+  morelos: "Mor.",
+  nayarit: "Nay.",
+  "nuevo leon": "N.L.",
+  oaxaca: "Oax.",
+  puebla: "Pue.",
+  queretaro: "Qro.",
+  "quintana roo": "Q.R.",
+  "san luis potosi": "S.L.P.",
+  sinaloa: "Sin.",
+  sonora: "Son.",
+  tabasco: "Tab.",
+  tamaulipas: "Tamps.",
+  tlaxcala: "Tlax.",
+  "veracruz de ignacio de la llave": "Ver.",
+  yucatan: "Yuc.",
+  zacatecas: "Zac.",
+};
+
+/** Abreviatura oficial de una entidad del catálogo ("" si no machea). */
+export function abrevEntidad(entidad: string | null | undefined): string {
+  if (!entidad) return "";
+  const clave = entidad
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+  return ABREV_ENTIDAD[clave] ?? entidad;
+}
+
+/** Nomenclatura uniforme de ciudad: "Naucalpan, EdoMéx" · "Miguel
+ * Hidalgo, CDMX". "—" cuando el punto no cayó en ningún polígono —
+ * nunca texto parseado. */
+export function formatoCiudad(
+  municipio: string | null | undefined,
+  entidad: string | null | undefined
+): string {
+  if (!municipio) return entidad ? abrevEntidad(entidad) : "—";
+  const ab = abrevEntidad(entidad);
+  return ab ? `${municipio}, ${ab}` : municipio;
 }
 
 /**

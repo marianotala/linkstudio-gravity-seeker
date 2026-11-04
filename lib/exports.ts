@@ -1,7 +1,7 @@
 // Los 4 exports de Seeker, generados 100% en el cliente.
 // Nombres de archivo seeker_* listos para cargar en DSPs.
 
-import { ciudadDeDireccion, circlePolygon, coloniaDeDireccion, etiquetaOrigen } from "./geo";
+import { circlePolygon, coloniaDeDireccion, etiquetaOrigen, formatoCiudad } from "./geo";
 import { marcaNormalizada } from "./marcas";
 import type { Origin, Poi, Universos } from "./types";
 
@@ -110,10 +110,9 @@ export function exportarCsv(
         csvCampo(p.nombre),
         csvCampo(p.direccion),
         csvCampo(coloniaDeDireccion(p.direccion)),
-        csvCampo(ciudadDeDireccion(p.direccion)),
-        csvCampo(
-          (p.cp && municipioPorCp?.get(p.cp)) || ciudadDeDireccion(p.direccion)
-        ),
+        // ciudad TIPADA (point-in-polygon del catálogo) — nunca parseo
+        csvCampo(formatoCiudad(p.municipio, p.entidad)),
+        csvCampo(p.municipio || (p.cp && municipioPorCp?.get(p.cp)) || ""),
         csvCampo(p.cp ?? ""),
         csvCampo(p.capa ?? ""),
         csvCampo(marcaNormalizada(p.nombre, p.termino)),
@@ -164,9 +163,9 @@ function filaDeDatos(
     nombre: p.nombre,
     direccion: p.direccion,
     colonia: coloniaDeDireccion(p.direccion),
-    ciudad: ciudadDeDireccion(p.direccion),
-    municipio:
-      (p.cp && municipioPorCp?.get(p.cp)) || ciudadDeDireccion(p.direccion),
+    // ciudad TIPADA (point-in-polygon del catálogo) — nunca parseo
+    ciudad: formatoCiudad(p.municipio, p.entidad),
+    municipio: p.municipio || (p.cp && municipioPorCp?.get(p.cp)) || "",
     codigo_postal: p.cp ?? "",
     capa: p.capa ?? "",
     marca_normalizada: marcaNormalizada(p.nombre, p.termino),

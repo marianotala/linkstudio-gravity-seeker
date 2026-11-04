@@ -54,6 +54,7 @@ import {
   type FilaDetallePunto,
   type PlanProyectoDatos,
 } from "./proyecto-pdf";
+import { formatoCiudad } from "./geo";
 import { TACTICAS, type TacticaClave } from "./tacticas";
 import type { RolLevantamiento, Universos } from "./types";
 
@@ -212,8 +213,8 @@ function FilaDetalle({
         {nombre.length > maxN ? nombre.slice(0, maxN - 1) + "…" : nombre}
       </Text>
       {conCiudad && (
-        <Text style={{ fontFamily: "Montserrat", fontSize: 6.5, color: GRIS, width: 58, maxLines: 1, textOverflow: "ellipsis" }}>
-          {ciudad.length > 13 ? ciudad.slice(0, 12) + "…" : ciudad}
+        <Text style={{ fontFamily: "Montserrat", fontSize: 6.5, color: GRIS, width: 72, paddingRight: 4, maxLines: 1, textOverflow: "ellipsis" }}>
+          {ciudad.length > 18 ? ciudad.slice(0, 17) + "…" : ciudad}
         </Text>
       )}
       <Text style={{ fontFamily: "Montserrat", fontSize: 6.5, color: CIAN, width: 46, textAlign: "right" }}>
@@ -419,12 +420,16 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
   //      NSE del buffer individual; en Conquista agrupado por marca
   const filasDeCapa = (c: CapaPlanProyecto): FilaDetallePunto[] =>
     d.detallePuntos?.[c.id] ??
-    c.pois.map((p) => ({
-      nombre: p.nombre,
-      ciudad: p.cp ? `CP ${p.cp}` : "—",
-      universo: null,
-      nse: null,
-    }));
+    c.pois.map((p) => {
+      // ciudad TIPADA del catálogo; fuera de polígono → CP, nunca parseo
+      const ciudad = formatoCiudad(p.municipio, p.entidad);
+      return {
+        nombre: p.nombre,
+        ciudad: ciudad !== "—" ? ciudad : p.cp ? `CP ${p.cp}` : "—",
+        universo: null,
+        nse: null,
+      };
+    });
 
   function detalleDeRol(rol: RolLevantamiento): ItemDetalle[] {
     if (rol === "ooh") {
@@ -695,8 +700,8 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
           itemsDer.length > 0 && (
             <View style={{ marginTop: 2 }}>
               <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 2, marginBottom: 2 }}>
-                <Text style={[celdaTh, { width: DER_W - 58 - 46 - 22 }]}>PANTALLA</Text>
-                <Text style={[celdaTh, { width: 58 }]}>CUBRE</Text>
+                <Text style={[celdaTh, { width: DER_W - 72 - 46 - 22 }]}>PANTALLA</Text>
+                <Text style={[celdaTh, { width: 72 }]}>CUBRE</Text>
                 <Text style={[celdaTh, { width: 46, textAlign: "right" }]}>DIST. MÍN</Text>
                 <Text style={{ width: 22 }} />
               </View>
@@ -704,7 +709,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                 <FilaDetalle
                   key={i}
                   item={it}
-                  anchoNombre={DER_W - 58 - 46 - 22}
+                  anchoNombre={DER_W - 72 - 46 - 22}
                   conCiudad
                 />
               ))}
@@ -887,7 +892,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                   (SLIDE_W - M * 2 - (COLS_DETALLE_CONT - 1) * GAP_COL) /
                   COLS_DETALLE_CONT;
                 // −10: el paddingLeft del filete de las columnas 2+
-                const anchoNombre = anchoCol - 58 - 46 - 22 - 10;
+                const anchoNombre = anchoCol - 72 - 46 - 22 - 10;
                 const filasCol = (lam.items ?? []).slice(
                   col * FILAS_DETALLE_CONT,
                   (col + 1) * FILAS_DETALLE_CONT
@@ -908,7 +913,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                       <Text style={[celdaTh, { width: anchoNombre }]}>
                         {lam.rol === "ooh" ? "PANTALLA" : "PUNTO"}
                       </Text>
-                      <Text style={[celdaTh, { width: 58 }]}>
+                      <Text style={[celdaTh, { width: 72 }]}>
                         {lam.rol === "ooh" ? "CUBRE" : "CIUDAD"}
                       </Text>
                       <Text style={[celdaTh, { width: 46, textAlign: "right" }]}>

@@ -28,7 +28,7 @@ import {
   calcularUniversosPorGeocerca,
 } from "@/lib/universos-lotes";
 import { clasificarNse } from "@/lib/nse";
-import { ciudadDeDireccion } from "@/lib/geo";
+import { formatoCiudad } from "@/lib/geo";
 import {
   cpDsp,
   exportarZipProyectoGeo,
@@ -419,14 +419,17 @@ export default function ExportarProyecto({
             });
             if (nuevos.size > 0) await guardarDetallePuntos(s.id, nuevos);
           }
-          detallePuntos[s.id] = crudos.map((p) => ({
-            nombre: p.nombre,
-            ciudad:
-              ciudadDeDireccion(p.direccion ?? "") ||
-              (p.cp ? `CP ${p.cp}` : "—"),
-            universo: p.universo_individual ?? null,
-            nse: p.nse_dominante ?? null,
-          }));
+          detallePuntos[s.id] = crudos.map((p) => {
+            // ciudad TIPADA del catálogo ("Naucalpan, EdoMéx"); fuera
+            // de todo polígono → CP como última referencia, nunca parseo
+            const ciudad = formatoCiudad(p.municipio, p.entidad);
+            return {
+              nombre: p.nombre,
+              ciudad: ciudad !== "—" ? ciudad : p.cp ? `CP ${p.cp}` : "—",
+              universo: p.universo_individual ?? null,
+              nse: p.nse_dominante ?? null,
+            };
+          });
         }
       }
 

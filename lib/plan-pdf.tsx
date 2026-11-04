@@ -140,21 +140,6 @@ export function textoPdf(s: string): string {
   return limpio || "—";
 }
 
-/** Nombre de plaza abreviado para columnas angostas: "Ciudad de
- * México" → "CDMX"; se quita el prefijo "Ciudad de / Cd. / Villa /
- * Heroica" para que el truncado con elipsis conserve lo distintivo
- * (evita "Ciudad de …"). */
-export function abreviarCiudad(s: string): string {
-  const limpio = textoPdf(s);
-  const clave = limpio
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase();
-  if (/(ciudad|cd\.?)\s+de\s+mexico\b/.test(clave) || clave === "cdmx") return "CDMX";
-  const sinPrefijo = limpio.replace(/^(ciudad|cd\.?|villa|heroica)\s+(de\s+(los?\s+|las?\s+)?)?/i, "").trim();
-  return sinPrefijo || limpio;
-}
-
 // ------------------------------------------------------------------
 // Componentes del sistema (réplicas del deck)
 // ------------------------------------------------------------------

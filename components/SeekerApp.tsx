@@ -34,7 +34,6 @@ import {
   postJson,
 } from "@/lib/busqueda-cliente";
 import {
-  ciudadDeDireccion,
   consolidarCentros,
   crearBuscadorCercano,
   esMismoEstablecimiento,
@@ -255,25 +254,19 @@ function dedupeOrigenes(lista: Origin[]): {
 }
 
 /** Nombres duplicados ("Sucursal Centro" dos veces): se conservan pero
- * se desambiguan con la ciudad de su dirección, o con un contador. */
+ * se desambiguan con un contador (" · 2"). El origen no trae ciudad
+ * tipada y parsear la dirección puede meter basura al nombre. */
 function desambiguarNombres(lista: Origin[]): Origin[] {
   const conteo = new Map<string, number>();
   for (const o of lista) {
     if (o.nombre) conteo.set(o.nombre, (conteo.get(o.nombre) ?? 0) + 1);
   }
-  const usados = new Set<string>();
   const corridos = new Map<string, number>();
   return lista.map((o) => {
     if (!o.nombre || (conteo.get(o.nombre) ?? 0) <= 1) return o;
-    const ciudad = o.direccion ? ciudadDeDireccion(o.direccion) : "";
-    let etiqueta = ciudad ? `${o.nombre} · ${ciudad}` : o.nombre;
-    if (!ciudad || usados.has(etiqueta)) {
-      const n = (corridos.get(o.nombre) ?? 0) + 1;
-      corridos.set(o.nombre, n);
-      etiqueta = `${ciudad ? etiqueta : o.nombre} · ${n}`;
-    }
-    usados.add(etiqueta);
-    return { ...o, nombre: etiqueta };
+    const n = (corridos.get(o.nombre) ?? 0) + 1;
+    corridos.set(o.nombre, n);
+    return { ...o, nombre: `${o.nombre} · ${n}` };
   });
 }
 

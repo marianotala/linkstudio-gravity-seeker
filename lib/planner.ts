@@ -6,6 +6,7 @@
 // reanudar sin repagar consultas. Todo vía Supabase con RLS de equipo.
 
 import { matchersDe, terminoQueCaptura } from "./filtro-nombre";
+import { abrevEntidad } from "./geo";
 import { marcaNormalizada, masEspecifica } from "./marcas";
 import { createClient } from "./supabase/client";
 import { calcularUniversosCliente } from "./universos-lotes";
@@ -174,6 +175,10 @@ export async function guardarPuntosPlanner(
         lat: p.lat,
         lng: p.lng,
         cp: p.cp ?? null,
+        // ciudad TIPADA de la búsqueda; si llega null, el trigger
+        // survey_points_municipio_trg la resuelve point-in-polygon
+        municipio: p.municipio ?? null,
+        entidad: p.entidad ?? null,
         categoria: p.categoria ?? p.termino ?? null,
         metadata: {
           fuente: p.fuente,
@@ -429,6 +434,10 @@ export interface PuntoSurvey {
   lat: number;
   lng: number;
   cp: string | null;
+  /** Ciudad TIPADA (point-in-polygon del catálogo, la llena el
+   * trigger al insertar — nunca parseo de dirección). */
+  municipio?: string | null;
+  entidad?: string | null;
   categoria: string | null;
   /** FASE 18 — detalle por punto: adultos 18+ del buffer INDIVIDUAL
    * del punto (radio del análisis) y NSE dominante de su zona. Se
@@ -463,6 +472,9 @@ export function puntoAPoi(r: PuntoSurvey): Poi {
     fuente: (r.metadata?.fuente as Poi["fuente"]) ?? "google",
     estrato: r.metadata?.estrato ?? null,
     cp: r.cp,
+    municipio: r.municipio ?? null,
+    entidad: r.entidad ?? null,
+    entidadAbrev: r.entidad ? abrevEntidad(r.entidad) : null,
     capa: r.metadata?.capa ?? null,
     termino: r.metadata?.termino ?? null,
     categoria: r.categoria,
@@ -504,7 +516,7 @@ export async function cargarPuntosCrudosSurvey(
   for (let desde = 0; ; desde += 1000) {
     const { data, error } = await supabase
       .from("survey_points")
-      .select("place_id, nombre, direccion, lat, lng, cp, categoria, metadata, universo_individual, nse_dominante")
+      .select("place_id, nombre, direccion, lat, lng, cp, municipio, entidad, categoria, metadata, universo_individual, nse_dominante")
       .eq("survey_id", surveyId)
       .order("id")
       .range(desde, desde + 999);

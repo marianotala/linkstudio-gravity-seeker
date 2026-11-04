@@ -38,7 +38,6 @@ import {
   fmt,
   ordenarTacticas,
   registrarFuentes,
-  abreviarCiudad,
   segmentosEdades,
   segmentosNse,
   textoPdf,
@@ -905,7 +904,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                   </Text>
                   <View style={{ flexDirection: "row", borderBottomWidth: 0.8, borderBottomColor: LINEA, paddingBottom: 3 }}>
                     <Text style={[celdaTh, { flex: 1 }]}>PDV</Text>
-                    <Text style={[celdaTh, { width: 74 }]}>CIUDAD</Text>
+                    <Text style={[celdaTh, { width: 92, paddingRight: 6 }]}>CIUDAD</Text>
                     <Text style={[celdaTh, { width: 76, textAlign: "right" }]}>UNIVERSO 18+</Text>
                     <Text style={[celdaTh, { width: 34, textAlign: "right" }]}>NSE</Text>
                     <Text style={[celdaTh, { width: 70, textAlign: "right" }]}>% DEL UNIVERSO</Text>
@@ -923,8 +922,10 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                       <Text style={[celdaTd, { flex: 1, color: BLANCO }]}>
                         {f.nombre.length > 42 ? f.nombre.slice(0, 41) + "…" : f.nombre}
                       </Text>
-                      <Text style={[celdaTd, { width: 74, color: GRIS }]}>
-                        {f.ciudad.length > 13 ? f.ciudad.slice(0, 12) + "…" : f.ciudad}
+                      {/* paddingRight separa la ciudad de UNIVERSO 18+
+                          (antes el texto truncado se pegaba a la cifra) */}
+                      <Text style={[celdaTd, { width: 92, paddingRight: 6, color: GRIS }]}>
+                        {f.ciudad.length > 22 ? f.ciudad.slice(0, 21) + "…" : f.ciudad}
                       </Text>
                       <Text style={[celdaTd, { width: 76, textAlign: "right", fontFamily: "Montserrat", color: CIAN }]}>
                         {f.universo != null ? fmt(f.universo) : "—"}
@@ -1419,7 +1420,9 @@ export function sanearDatosPlan(d: PlanProyectoDatos): PlanProyectoDatos {
             filas.map((f) => ({
               ...f,
               nombre: s(f.nombre),
-              ciudad: abreviarCiudad(f.ciudad),
+              // la ciudad ya llega TIPADA y formateada ("Naucalpan,
+              // EdoMéx") — abreviarla mutilaría nombres reales
+              ciudad: s(f.ciudad),
             })),
           ])
         )

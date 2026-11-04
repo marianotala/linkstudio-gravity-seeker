@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { GoogleError, type PlaceResult } from "@/lib/google";
 import { CacheGoogle, cargarConfigCostos } from "@/lib/google-cache";
-import { esNombreBasura, etiquetaOrigen, haversine, normalizarComparable } from "@/lib/geo";
+import { abrevEntidad, esNombreBasura, etiquetaOrigen, haversine, normalizarComparable } from "@/lib/geo";
 import { CATEGORIA_LIBRE, getCategoria, SOLO_NOMBRE, type Categoria } from "@/lib/categories";
 import { createClient } from "@/lib/supabase/server";
 import { calcularUniversos } from "@/lib/universos";
@@ -623,6 +623,64 @@ export async function POST(req: Request) {
         });
     }
     poisFinales.sort((a, b) => a.distancia - b.distancia);
+
+    // 6) Ciudad TIPADA: point-in-polygon sobre nuestro catálogo de CPs
+    //    (municipios_de_puntos, mismas columnas que llena el trigger al
+    //    guardar). Respaldo para puntos fuera de todo polígono (costa,
+    //    frontera): locality/admin_area_1 de Google. Nunca parseo de
+    //    formatted_address. La ciudad no bloquea la búsqueda: si la RPC
+    //    falla, queda el respaldo o "—" en el cliente.
+    if (poisFinales.length > 0) {
+      const respaldoGoogle = new Map(
+        lugares.map((p) => [
+          p.placeId,
+          {
+            municipio: p.localidadGoogle ?? null,
+            entidad: p.entidadGoogle ?? null,
+          },
+        ])
+      );
+      const porIdx = new Map<
+        number,
+        { municipio: string | null; entidad: string | null }
+      >();
+      for (let i = 0; i < poisFinales.length; i += 5000) {
+        const lote = poisFinales.slice(i, i + 5000);
+        const { data, error } = await supabase.rpc("municipios_de_puntos", {
+          p_puntos: lote.map((p, j) => ({
+            id: String(i + j),
+            lat: p.lat,
+            lng: p.lng,
+          })),
+        });
+        if (error) {
+          console.error("municipios_de_puntos falló:", error.message);
+          break;
+        }
+        for (const f of (data ?? []) as {
+          id: string;
+          municipio: string | null;
+          entidad: string | null;
+        }[]) {
+          porIdx.set(Number(f.id), {
+            municipio: f.municipio,
+            entidad: f.entidad,
+          });
+        }
+      }
+      poisFinales = poisFinales.map((p, i) => {
+        const propio = porIdx.get(i);
+        const google = respaldoGoogle.get(p.placeId);
+        const municipio = propio?.municipio ?? google?.municipio ?? null;
+        const entidad = propio?.entidad ?? google?.entidad ?? null;
+        return {
+          ...p,
+          municipio,
+          entidad,
+          entidadAbrev: entidad ? abrevEntidad(entidad) : null,
+        };
+      });
+    }
 
     // Guardar la búsqueda + resultados en el historial (RPC = una sola
     // transacción, con RLS del usuario). Si el guardado falla, la

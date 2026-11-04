@@ -7,8 +7,9 @@
 // consultas a Google. Modal overlay reutilizable (modo consulta,
 // secciones del Planner y PlannerView).
 
-import { useMemo, useState } from "react";
-import { ciudadDeDireccion, normalizarComparable } from "@/lib/geo";
+import { useEffect, useMemo, useState } from "react";
+import { formatoCiudad, normalizarComparable } from "@/lib/geo";
+import { createClient } from "@/lib/supabase/client";
 import type { DescartePoi } from "@/lib/types";
 
 const fmt = (n: number) => n.toLocaleString("es-MX");
@@ -39,6 +40,48 @@ export default function PanelDescartados<T extends DescartePoi>({
   const [visibles, setVisibles] = useState(PAGINA);
   const [checks, setChecks] = useState<Set<string>>(new Set());
   const [exportando, setExportando] = useState(false);
+  // Ciudad TIPADA de los descartados: point-in-polygon sobre nuestro
+  // catálogo (RPC batch, $0) al abrir el panel — los descartes solo
+  // traen lat/lng. Sin resultado = "—", nunca parseo de la dirección.
+  const [ciudades, setCiudades] = useState<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      if (descartes.length === 0) {
+        setCiudades(new Map());
+        return;
+      }
+      try {
+        const supabase = createClient();
+        const m = new Map<string, string>();
+        for (let i = 0; i < descartes.length; i += 5000) {
+          const lote = descartes.slice(i, i + 5000);
+          const { data, error } = await supabase.rpc("municipios_de_puntos", {
+            p_puntos: lote.map((d) => ({
+              id: d.placeId,
+              lat: d.lat,
+              lng: d.lng,
+            })),
+          });
+          if (error) break;
+          for (const f of (data ?? []) as {
+            id: string;
+            municipio: string | null;
+            entidad: string | null;
+          }[]) {
+            m.set(f.id, formatoCiudad(f.municipio, f.entidad));
+          }
+        }
+        if (!cancelado) setCiudades(m);
+      } catch {
+        // la ciudad es informativa: sin RPC queda "—"
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+  }, [descartes]);
 
   // el BUSCADOR opera sobre el TOTAL (no solo la página visible)
   const filtrados = useMemo(() => {
@@ -52,14 +95,14 @@ export default function PanelDescartados<T extends DescartePoi>({
       : [...descartes];
     lista.sort((a, b) =>
       orden === "ciudad"
-        ? ciudadDeDireccion(a.direccion).localeCompare(
-            ciudadDeDireccion(b.direccion),
+        ? (ciudades.get(a.placeId) ?? "—").localeCompare(
+            ciudades.get(b.placeId) ?? "—",
             "es"
           ) || a.nombre.localeCompare(b.nombre, "es")
         : a.nombre.localeCompare(b.nombre, "es")
     );
     return lista;
-  }, [descartes, busqueda, orden]);
+  }, [descartes, busqueda, orden, ciudades]);
 
   const pagina = filtrados.slice(0, visibles);
   const seleccionados = descartes.filter((d) => checks.has(d.placeId));
@@ -93,7 +136,7 @@ export default function PanelDescartados<T extends DescartePoi>({
         filtrados.map((d) => ({
           Nombre: d.nombre,
           "Dirección": d.direccion,
-          Ciudad: ciudadDeDireccion(d.direccion),
+          Ciudad: ciudades.get(d.placeId) ?? "—",
           Latitud: d.lat,
           Longitud: d.lng,
           "Término": d.termino ?? "",

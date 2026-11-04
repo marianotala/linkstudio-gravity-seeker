@@ -65,6 +65,13 @@ export interface Poi {
   actividad?: string | null;
   /** Solo modo CP: código postal (polígono) que contiene al POI. */
   cp?: string | null;
+  /** Ciudad TIPADA (point-in-polygon sobre nuestro catálogo, resuelta
+   * al buscar/guardar — nunca parseo de formatted_address). En CDMX el
+   * municipio es la alcaldía. null = fuera de todo polígono. */
+  municipio?: string | null;
+  entidad?: string | null;
+  /** Abreviatura oficial de la entidad (CDMX, EdoMéx, Jal., …). */
+  entidadAbrev?: string | null;
   /** Capa de categoría a la que pertenece (multi-búsqueda en la misma
    * geografía); null/ausente en búsquedas de una sola capa. */
   capa?: string | null;

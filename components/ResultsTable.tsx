@@ -3,7 +3,7 @@
 // Tabla de resultados colapsable, montada sobre el mapa.
 // Clic en una fila = zoom al POI en el mapa.
 
-import { ciudadDeDireccion, etiquetaOrigen } from "@/lib/geo";
+import { etiquetaOrigen, formatoCiudad } from "@/lib/geo";
 import type { Origin, Poi } from "@/lib/types";
 
 interface ResultsTableProps {
@@ -134,7 +134,7 @@ export default function ResultsTable({
                       {p.direccion}
                     </td>
                     <td className="max-w-[150px] truncate px-2 py-1.5 text-zinc-300">
-                      {ciudadDeDireccion(p.direccion) || "—"}
+                      {formatoCiudad(p.municipio, p.entidad)}
                     </td>
                     <td className="max-w-[130px] truncate px-2 py-1.5 font-mono text-zinc-500">
                       {p.estrato ?? "—"}
