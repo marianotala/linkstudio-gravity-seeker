@@ -418,7 +418,7 @@ function BloqueDemografico({ u }: { u: Universos | null }) {
         </View>
       )}
       {u.criterio && (
-        <Text style={{ fontFamily: "DMMono", fontSize: 7, color: GRIS_OSCURO, marginTop: 8 }}>
+        <Text style={{ fontFamily: "Montserrat", fontSize: 7, color: GRIS_OSCURO, marginTop: 8 }}>
           {u.criterio}
         </Text>
       )}
@@ -590,18 +590,18 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
   const sinCob = d.ooh?.sinCobertura.slice(0, MAX_SIN_COBERTURA) ?? [];
 
   const celdaTh = {
-    fontFamily: "DMMono" as const,
+    fontFamily: "Montserrat" as const,
     fontWeight: 500 as const,
     fontSize: 7,
-    letterSpacing: 1.3,
+    letterSpacing: 0.8,
     color: GRIS_OSCURO,
   };
   const celdaTd = { fontFamily: "Montserrat" as const, fontSize: 8, color: TINTA };
   const labelCol = {
-    fontFamily: "DMMono" as const,
+    fontFamily: "Montserrat" as const,
     fontWeight: 500 as const,
     fontSize: 7.5,
-    letterSpacing: 1.8,
+    letterSpacing: 0.8,
     color: GRIS,
     marginBottom: 8,
   };
@@ -627,13 +627,13 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
         <Neon height={150} />
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
           <Firma height={26} />
-          <Text style={{ fontFamily: "DMMono", fontSize: 8, letterSpacing: 1.4, color: GRIS }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 8, letterSpacing: 0.8, color: GRIS }}>
             powered by linkstudio
           </Text>
         </View>
 
         <View style={{ marginTop: 26 }}>
-          <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 9.5, letterSpacing: 3, color: MAGENTA }}>
+          <Text style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 9.5, letterSpacing: 0.8, color: MAGENTA }}>
             PLAN TERRITORIAL — {d.cliente.toUpperCase()}
           </Text>
           <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 28, color: BLANCO, marginTop: 8 }}>
@@ -642,7 +642,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
           <Text style={{ fontFamily: "Montserrat", fontSize: 11, color: GRIS, marginTop: 8 }}>
             Conectamos intención con visitas.
           </Text>
-          <Text style={{ fontFamily: "DMMono", fontSize: 8.5, color: GRIS_OSCURO, marginTop: 10 }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS_OSCURO, marginTop: 10 }}>
             {fechaLarga} · Generado por {d.usuario}
           </Text>
         </View>
@@ -679,9 +679,9 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
           {conteosRol.map((c, i) => (
             <View key={c.rol} style={{ flexDirection: "row", alignItems: "center", marginRight: 10, marginBottom: 4 }}>
               {i > 0 && (
-                <Text style={{ fontFamily: "DMMono", fontSize: 9, color: GRIS_OSCURO, marginRight: 10 }}>·</Text>
+                <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: GRIS_OSCURO, marginRight: 10 }}>·</Text>
               )}
-              <Text style={{ fontFamily: "DMMono", fontSize: 9, color: TINTA }}>{c.texto}</Text>
+              <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: TINTA }}>{c.texto}</Text>
             </View>
           ))}
         </View>
@@ -696,7 +696,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
             <BarraApilada titulo="Edades · % del universo 18+ consolidado (25-64: estimación con estructura nacional)" segmentos={edades} width={CONT} />
           </View>
         )}
-        <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 12 }}>
+        <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 12 }}>
           {u
             ? `Censo 2020 INEGI · ${fmt(u.agebs ?? 0)} zonas censales${(u.rurales ?? 0) > 0 ? ` · ${fmt(u.rurales!)} localidades rurales (ITER)` : ""}${u.criterio ? ` · ${u.criterio}` : ""}`
             : "Universo consolidado no disponible"}
@@ -718,7 +718,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
               {d.capas.map((c) => (
                 <View key={c.id} style={{ flexDirection: "row", alignItems: "center", marginRight: 12, marginBottom: 3 }}>
                   <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.color, marginRight: 4 }} />
-                  <Text style={{ fontFamily: "DMMono", fontSize: 8, color: GRIS }}>
+                  <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS }}>
                     {c.nombre} · {NOMBRE_ROL[c.rol]}
                   </Text>
                 </View>
@@ -726,7 +726,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
               {d.ooh && (
                 <View style={{ flexDirection: "row", alignItems: "center", marginRight: 12, marginBottom: 3 }}>
                   <View style={{ width: 6, height: 6, backgroundColor: "#e2711d", marginRight: 4 }} />
-                  <Text style={{ fontFamily: "DMMono", fontSize: 8, color: GRIS }}>
+                  <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS }}>
                     Pantallas OOH (líneas = a qué PDV apoyan)
                   </Text>
                 </View>
@@ -773,13 +773,13 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                 <Text style={[celdaTd, { flex: 1, color: GRIS }]}>
                   {p.direccion.length > 58 ? p.direccion.slice(0, 57) + "…" : p.direccion}
                 </Text>
-                <Text style={[celdaTd, { width: 60, fontFamily: "DMMono", color: CIAN }]}>
+                <Text style={[celdaTd, { width: 60, fontFamily: "Montserrat", color: CIAN }]}>
                   {p.cp ?? "—"}
                 </Text>
               </View>
             ))}
             {poisPropios.length > filasPropios.length && (
-              <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
+              <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
                 +{fmt(poisPropios.length - filasPropios.length)} puntos más — detalle completo en el Export data (Excel).
               </Text>
             )}
@@ -803,7 +803,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                   <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 11, color: BLANCO, width: 190 }}>
                     {c.nombre}
                   </Text>
-                  <Text style={{ fontFamily: "DMMono", fontSize: 9, color: MAGENTA, width: 84 }}>
+                  <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: MAGENTA, width: 84 }}>
                     {fmt(c.pois.length)} puntos
                   </Text>
                   <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS, flex: 1 }}>
@@ -831,7 +831,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                   marginTop: 8,
                 }}
               >
-                <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 7, letterSpacing: 1.8, color: MAGENTA, marginBottom: 5 }}>
+                <Text style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 7, letterSpacing: 0.8, color: MAGENTA, marginBottom: 5 }}>
                   TRASLAPE PROPIOS × COMPETENCIA — LA AUDIENCIA DE CONQUISTA
                 </Text>
                 <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 15, color: BLANCO }}>
@@ -867,7 +867,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                 <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 11, color: BLANCO, width: 190 }}>
                   {c.nombre}
                 </Text>
-                <Text style={{ fontFamily: "DMMono", fontSize: 9, color: VIOLETA, width: 84 }}>
+                <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: VIOLETA, width: 84 }}>
                   {fmt(c.pois.length)} puntos
                 </Text>
                 <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS, flex: 1 }}>
@@ -926,13 +926,13 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                       <Text style={[celdaTd, { width: 74, color: GRIS }]}>
                         {f.ciudad.length > 13 ? f.ciudad.slice(0, 12) + "…" : f.ciudad}
                       </Text>
-                      <Text style={[celdaTd, { width: 76, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
+                      <Text style={[celdaTd, { width: 76, textAlign: "right", fontFamily: "Montserrat", color: CIAN }]}>
                         {f.universo != null ? fmt(f.universo) : "—"}
                       </Text>
-                      <Text style={[celdaTd, { width: 34, textAlign: "right", fontFamily: "DMMono", color: VIOLETA }]}>
+                      <Text style={[celdaTd, { width: 34, textAlign: "right", fontFamily: "Montserrat", color: VIOLETA }]}>
                         {f.nse ?? "—"}
                       </Text>
-                      <Text style={[celdaTd, { width: 70, textAlign: "right", fontFamily: "DMMono", color: GRIS }]}>
+                      <Text style={[celdaTd, { width: 70, textAlign: "right", fontFamily: "Montserrat", color: GRIS }]}>
                         {f.universo != null && suma > 0
                           ? `${((100 * f.universo) / suma).toLocaleString("es-MX", { maximumFractionDigits: 1 })}%`
                           : "—"}
@@ -940,7 +940,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                     </View>
                   ))}
                   {filasDet.length > top.length && (
-                    <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 5 }}>
+                    <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 5 }}>
                       +{fmt(filasDet.length - top.length)} PDVs más — detalle completo con % del universo en el Export data (Excel).
                     </Text>
                   )}
@@ -1007,19 +1007,19 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                 <Text style={[celdaTd, { width: 78, color: "#e2711d" }]}>
                   {(p.tipo ?? "—").slice(0, 14)}
                 </Text>
-                <Text style={[celdaTd, { width: 36, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
+                <Text style={[celdaTd, { width: 36, textAlign: "right", fontFamily: "Montserrat", color: CIAN }]}>
                   {p.pdvs.length}
                 </Text>
                 <Text style={[celdaTd, { flex: 1, paddingLeft: 14, color: GRIS }]}>
                   {lineaPdvsProyecto(p)}
                 </Text>
-                <Text style={[celdaTd, { width: 58, textAlign: "right", fontFamily: "DMMono", color: GRIS }]}>
+                <Text style={[celdaTd, { width: 58, textAlign: "right", fontFamily: "Montserrat", color: GRIS }]}>
                   {p.impresiones != null ? fmt(p.impresiones) : "—"}
                 </Text>
               </View>
             ))}
             {d.ooh.pantallas.length > filasOoh.length && (
-              <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
+              <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
                 +{fmt(d.ooh.pantallas.length - filasOoh.length)} pantallas más — detalle completo en el Export data (Excel).
               </Text>
             )}
@@ -1046,7 +1046,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                     </Text>
                   ))}
                   {d.ooh.sinCobertura.length > sinCob.length && (
-                    <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO }}>
+                    <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO }}>
                       +{fmt(d.ooh.sinCobertura.length - sinCob.length)} más en el Export data (Excel).
                     </Text>
                   )}
@@ -1124,7 +1124,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                   marginTop: 2,
                 }}
               >
-                <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 7, letterSpacing: 1.8, color: TEAL, marginBottom: 4 }}>
+                <Text style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 7, letterSpacing: 0.8, color: TEAL, marginBottom: 4 }}>
                   BULK DE KEYWORDS — PROPUESTA IA EDITABLE
                 </Text>
                 <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: TINTA, lineHeight: 1.5 }}>
@@ -1140,7 +1140,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                 </Text>
               </View>
             )}
-            <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 8 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 8 }}>
               Lista completa de CPs, bulk de keywords y polígonos (.geojson)
               en el Export data del proyecto.
             </Text>
@@ -1196,7 +1196,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
                             {c.nombre.length > 26 ? c.nombre.slice(0, 25) + "…" : c.nombre}
                           </Text>
                         </View>
-                        <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS, marginTop: 3 }}>
+                        <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS, marginTop: 3 }}>
                           {NOMBRE_ROL[c.rol]} ·{" "}
                           <Text style={{ color: CIAN }}>
                             {fmt(adultos(c.universo))}
@@ -1315,7 +1315,7 @@ function ProyectoDocumento({ d }: { d: PlanProyectoDatos }) {
         <View style={{ marginTop: 26, marginBottom: 12 }}>
           <Divisor />
         </View>
-        <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 7.5, letterSpacing: 2.2, color: GRIS_OSCURO, marginBottom: 10 }}>
+        <Text style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 7.5, letterSpacing: 0.8, color: GRIS_OSCURO, marginBottom: 10 }}>
           METODOLOGÍA · RESPALDO TÉCNICO DEL PROYECTO
         </Text>
         <View style={{ flexDirection: "row" }}>

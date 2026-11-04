@@ -370,7 +370,7 @@ function Segmento({
 }) {
   return (
     <div className="flex min-w-0 shrink-0 flex-col gap-0.5 border-r border-linea px-4 py-0.5 last:border-r-0">
-      <span className="font-body text-[10px] font-semibold uppercase tracking-[0.18em] text-texto-terciario">
+      <span className="font-body text-[10px] font-semibold uppercase tracking-[0.08em] text-texto-terciario">
         {etiqueta}
       </span>
       <span
@@ -4899,7 +4899,7 @@ export default function SeekerApp({
       {verLista && (
         <div className="tarjeta shrink-0 px-4 py-2.5">
           <div className="flex items-center justify-between font-mono text-[11px]">
-            <span className="uppercase tracking-[0.2em] text-zinc-500">
+            <span className="uppercase tracking-[0.08em] text-zinc-500">
               {verLista === "excluidos"
                 ? `Excluidos por marca (${detalles.excluidos.length}${contadores.excluidos > detalles.excluidos.length ? ` de ${contadores.excluidos}` : ""})`
                 : `Descartados por nombre (${detalles.descartados.length}${contadores.descartadosPorNombre > detalles.descartados.length ? ` de ${contadores.descartadosPorNombre}` : ""})`}
@@ -4934,7 +4934,7 @@ export default function SeekerApp({
       {/* delta de actualización de censo */}
       {deltaInfo && (
         <div className="tarjeta flex shrink-0 items-center gap-4 px-4 py-2 font-mono text-[11px]">
-          <span className="uppercase tracking-[0.2em] text-zinc-500">
+          <span className="uppercase tracking-[0.08em] text-zinc-500">
             Delta del censo
           </span>
           <span className="text-emerald-400">{deltaInfo.nuevos} nuevos</span>

@@ -104,9 +104,9 @@ let fuentesRegistradas = false;
 /** Base de assets (fuentes y logos): "" en el navegador (rutas
  * /fonts/* y /brand/*) o la carpeta public en Node (pruebas). */
 export let BASE_ASSETS = "";
-/** Registra las fuentes una vez (brand V2: Montserrat en todo el PDF;
- * mono SOLO datos). Los pesos 700/800 heredados resuelven a SemiBold
- * 600 — el énfasis máximo del brand book. */
+/** Registra la TIPOGRAFÍA ÚNICA una vez: Montserrat embebida en todo
+ * el PDF (títulos 700, etiquetas/cifras 600, cuerpo 400; el 800
+ * heredado resuelve a Bold 700). */
 export function registrarFuentes(base = "") {
   BASE_ASSETS = base;
   if (fuentesRegistradas) return;
@@ -117,15 +117,8 @@ export function registrarFuentes(base = "") {
       { src: `${base}/fonts/Montserrat-Regular.ttf`, fontWeight: 400 },
       { src: `${base}/fonts/Montserrat-Medium.ttf`, fontWeight: 500 },
       { src: `${base}/fonts/Montserrat-SemiBold.ttf`, fontWeight: 600 },
-      { src: `${base}/fonts/Montserrat-SemiBold.ttf`, fontWeight: 700 },
-      { src: `${base}/fonts/Montserrat-SemiBold.ttf`, fontWeight: 800 },
-    ],
-  });
-  Font.register({
-    family: "DMMono",
-    fonts: [
-      { src: `${base}/fonts/DMMono-400.ttf`, fontWeight: 400 },
-      { src: `${base}/fonts/DMMono-500.ttf`, fontWeight: 500 },
+      { src: `${base}/fonts/Montserrat-Bold.ttf`, fontWeight: 700 },
+      { src: `${base}/fonts/Montserrat-Bold.ttf`, fontWeight: 800 },
     ],
   });
   Font.registerHyphenationCallback((palabra) => [palabra]);
@@ -133,8 +126,8 @@ export function registrarFuentes(base = "") {
 
 export const fmt = (n: number) => n.toLocaleString("es-MX");
 
-/** Texto seguro para react-pdf: las fuentes del deck (Montserrat/DM
- * Mono) no tienen glifos de emoji — los pictogramas salen como
+/** Texto seguro para react-pdf: Montserrat no tiene glifos de
+ * emoji — los pictogramas salen como
  * caracteres corruptos en el PDF (auditoría 30-sep). Se retiran los
  * emojis (pares sustitutos), símbolos misceláneos, selectores de
  * variación y área de uso privado, y se colapsan los espacios. */
@@ -214,10 +207,10 @@ export function Seccion({ etiqueta, titulo }: { etiqueta: string; titulo: string
       <View style={{ flexDirection: "row", alignItems: "center" }}>
         <Text
           style={{
-            fontFamily: "DMMono",
+            fontFamily: "Montserrat",
             fontWeight: 500,
             fontSize: 9,
-            letterSpacing: 2.6,
+            letterSpacing: 0.8,
             color: MAGENTA,
           }}
         >
@@ -243,10 +236,10 @@ export function Seccion({ etiqueta, titulo }: { etiqueta: string; titulo: string
 export function FooterTresCol({ fecha }: { fecha: string }) {
   const col = { flex: 1 } as const;
   const label = {
-    fontFamily: "DMMono" as const,
+    fontFamily: "Montserrat" as const,
     fontWeight: 500 as const,
     fontSize: 7,
-    letterSpacing: 2,
+    letterSpacing: 0.8,
     color: GRIS_OSCURO,
     marginBottom: 3,
   };
@@ -279,15 +272,15 @@ export function Neon({ height: _height = 120 }: { height?: number }) {
 export function Cifra({ valor, descriptor }: { valor: string; descriptor: string }) {
   return (
     <View style={{ flex: 1, paddingRight: 12 }}>
-      <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 30, color: BLANCO }}>
+      <Text style={{ fontFamily: "Montserrat", fontWeight: 600, fontSize: 30, color: BLANCO }}>
         {valor}
       </Text>
       <Text
         style={{
-          fontFamily: "DMMono",
+          fontFamily: "Montserrat",
           fontWeight: 400,
           fontSize: 7.2,
-          letterSpacing: 1.3,
+          letterSpacing: 0.8,
           color: GRIS,
           marginTop: 3,
           lineHeight: 1.5,
@@ -311,10 +304,10 @@ export function BarraApilada({ titulo, segmentos, width }: { titulo: string; seg
     <View style={{ width }}>
       <Text
         style={{
-          fontFamily: "DMMono",
+          fontFamily: "Montserrat",
           fontWeight: 500,
           fontSize: 7.5,
-          letterSpacing: 1.8,
+          letterSpacing: 0.8,
           color: GRIS,
           marginBottom: 5,
         }}
@@ -340,9 +333,9 @@ export function BarraApilada({ titulo, segmentos, width }: { titulo: string; seg
       <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 5 }}>
         {segmentos.map((s, i) => (
           <View key={s.etiqueta} style={{ flexDirection: "row", marginRight: 8 }}>
-            {i > 0 && <Text style={{ fontFamily: "DMMono", fontSize: 8, color: GRIS_OSCURO, marginRight: 8 }}>·</Text>}
-            <Text style={{ fontFamily: "DMMono", fontSize: 8, color: s.color }}>{s.etiqueta}</Text>
-            <Text style={{ fontFamily: "DMMono", fontSize: 8, color: TINTA, marginLeft: 3 }}>
+            {i > 0 && <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS_OSCURO, marginRight: 8 }}>·</Text>}
+            <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: s.color }}>{s.etiqueta}</Text>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: TINTA, marginLeft: 3 }}>
               {s.pct.toLocaleString("es-MX")}%
             </Text>
           </View>
@@ -401,7 +394,7 @@ export function PillTactica({
       <View style={{ paddingTop: destacada ? 10 : 16, paddingLeft: 18, paddingRight: 18 }}>
         {destacada && (
           <Text
-            style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 6.5, letterSpacing: 1.4, color: MAGENTA, marginBottom: 4 }}
+            style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 6.5, letterSpacing: 0.8, color: MAGENTA, marginBottom: 4 }}
           >
             RECOMENDADA PARA ESTE TERRITORIO
           </Text>
@@ -721,18 +714,18 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
   const altura = estimarAltura(d, titulo);
 
   const celdaTh = {
-    fontFamily: "DMMono" as const,
+    fontFamily: "Montserrat" as const,
     fontWeight: 500 as const,
     fontSize: 7,
-    letterSpacing: 1.3,
+    letterSpacing: 0.8,
     color: GRIS_OSCURO,
   };
   const celdaTd = { fontFamily: "Montserrat" as const, fontSize: 8, color: TINTA };
   const labelCol = {
-    fontFamily: "DMMono" as const,
+    fontFamily: "Montserrat" as const,
     fontWeight: 500 as const,
     fontSize: 7.5,
-    letterSpacing: 1.8,
+    letterSpacing: 0.8,
     color: GRIS,
     marginBottom: 8,
   };
@@ -744,14 +737,14 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
         <Neon height={150} />
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
           <Firma height={26} />
-          <Text style={{ fontFamily: "DMMono", fontSize: 8, letterSpacing: 1.4, color: GRIS }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 8, letterSpacing: 0.8, color: GRIS }}>
             powered by linkstudio
           </Text>
         </View>
 
         <View style={{ marginTop: 26 }}>
           <Text
-            style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 9.5, letterSpacing: 3, color: MAGENTA }}
+            style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 9.5, letterSpacing: 0.8, color: MAGENTA }}
           >
             PLAN TERRITORIAL
           </Text>
@@ -761,7 +754,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
           <Text style={{ fontFamily: "Montserrat", fontSize: 11, color: GRIS, marginTop: 8 }}>
             Conectamos intención con visitas.
           </Text>
-          <Text style={{ fontFamily: "DMMono", fontSize: 8.5, color: GRIS_OSCURO, marginTop: 10 }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS_OSCURO, marginTop: 10 }}>
             {fechaLarga} · Generado por {d.usuario}
           </Text>
         </View>
@@ -783,10 +776,10 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
             {capasDoc.map((c, i) => (
               <View key={c.nombre} style={{ flexDirection: "row", alignItems: "center", marginRight: 10 }}>
                 {i > 0 && (
-                  <Text style={{ fontFamily: "DMMono", fontSize: 9, color: GRIS_OSCURO, marginRight: 10 }}>·</Text>
+                  <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: GRIS_OSCURO, marginRight: 10 }}>·</Text>
                 )}
                 <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.color, marginRight: 5 }} />
-                <Text style={{ fontFamily: "DMMono", fontSize: 9, color: TINTA }}>
+                <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: TINTA }}>
                   {c.nombre}: <Text style={{ color: BLANCO }}>{fmt(c.pois.length)}</Text>
                 </Text>
               </View>
@@ -804,7 +797,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
             <BarraApilada titulo="Edades · % del universo 18+ (25-64: estimación con estructura nacional)" segmentos={edades} width={CONT} />
           </View>
         )}
-        <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 12 }}>
+        <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 12 }}>
           {u
             ? `Censo 2020 INEGI · ${fmt(u.agebs ?? 0)} zonas censales${(u.rurales ?? 0) > 0 ? ` · ${fmt(u.rurales!)} localidades rurales (ITER)` : ""}${d.criterio ? ` · ${d.criterio}` : ""}`
             : "Universos demográficos no disponibles para esta zona"}
@@ -827,7 +820,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
                 {capasDoc.map((c, i) => (
                   <View key={c.nombre} style={{ flexDirection: "row", alignItems: "center", marginRight: 12 }}>
                     <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.color, marginRight: 4 }} />
-                    <Text style={{ fontFamily: "DMMono", fontSize: 8, color: GRIS }}>{c.nombre}</Text>
+                    <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS }}>{c.nombre}</Text>
                   </View>
                 ))}
               </View>
@@ -888,7 +881,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
                       <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 12.5, color: BLANCO }}>
                         {sec.nombre}
                       </Text>
-                      <Text style={{ fontFamily: "DMMono", fontSize: 8.5, color: GRIS, marginLeft: 8 }}>
+                      <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS, marginLeft: 8 }}>
                         {fmt(sec.pois.length)} puntos
                         {topZonaSec && d.nombresOrigen.length > 1
                           ? ` · concentrados en ${topZonaSec[0]} (${Math.round((100 * topZonaSec[1]) / sec.pois.length)}%)`
@@ -917,10 +910,10 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
                           <Text style={[celdaTd, { width: 250, color: BLANCO }]}>
                             {m.marca.length > 42 ? m.marca.slice(0, 41) + "…" : m.marca}
                           </Text>
-                          <Text style={[celdaTd, { width: 58, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
+                          <Text style={[celdaTd, { width: 58, textAlign: "right", fontFamily: "Montserrat", color: CIAN }]}>
                             {fmt(m.n)}
                           </Text>
-                          <Text style={[celdaTd, { width: 46, textAlign: "right", fontFamily: "DMMono", color: GRIS }]}>
+                          <Text style={[celdaTd, { width: 46, textAlign: "right", fontFamily: "Montserrat", color: GRIS }]}>
                             {m.pct}%
                           </Text>
                           <Text style={[celdaTd, { flex: 1, paddingLeft: 18, color: GRIS }]}>
@@ -929,7 +922,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
                         </View>
                       ))}
                       {rankingCompleto.length > filasRank.length && (
-                        <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
+                        <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
                           +{fmt(rankingCompleto.length - filasRank.length)} marcas más — detalle completo en el Export data (CSV).
                         </Text>
                       )}
@@ -983,14 +976,14 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
                             {etiquetaZona(p)}
                           </Text>
                           {modoTabla === "distancia" && (
-                            <Text style={[celdaTd, { width: 48, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
+                            <Text style={[celdaTd, { width: 48, textAlign: "right", fontFamily: "Montserrat", color: CIAN }]}>
                               {fmt(p.distancia)}
                             </Text>
                           )}
                         </View>
                       ))}
                       {sec.pois.length > filas.length && (
-                        <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
+                        <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
                           +{fmt(sec.pois.length - filas.length)} registros más — detalle completo en el Export data (CSV).
                         </Text>
                       )}
@@ -1011,7 +1004,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
                 </Text>
                 {porGeocerca.map((g) => (
                   <View key={g.id} style={{ flexDirection: "row", alignItems: "center", marginBottom: 5 }}>
-                    <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: TINTA, width: 94 }}>
+                    <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: TINTA, width: 94 }}>
                       {(d.modo === "cp" ? `CP ${g.id}` : g.id).slice(0, 15)}
                     </Text>
                     <View style={{ flex: 1, height: 8, backgroundColor: PANEL, borderRadius: 4 }}>
@@ -1024,7 +1017,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
                         }}
                       />
                     </View>
-                    <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: BLANCO, width: 56, textAlign: "right" }}>
+                    <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: BLANCO, width: 56, textAlign: "right" }}>
                       {fmt(g.poblacion)}
                     </Text>
                   </View>
@@ -1112,7 +1105,7 @@ function PlanDocumento({ d }: { d: PlanDatos }) {
           <Divisor />
         </View>
         <Text
-          style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 7.5, letterSpacing: 2.2, color: GRIS_OSCURO, marginBottom: 10 }}
+          style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 7.5, letterSpacing: 0.8, color: GRIS_OSCURO, marginBottom: 10 }}
         >
           METODOLOGÍA · RESPALDO TÉCNICO
         </Text>

@@ -51,7 +51,7 @@ export default function ResultsTable({
         onClick={onToggle}
         className="flex w-full items-center justify-between px-4 py-2 text-left"
       >
-        <span className="font-body text-xs font-semibold uppercase tracking-widest text-texto-secundario">
+        <span className="font-body text-xs font-semibold uppercase tracking-[0.08em] text-texto-secundario">
           Resultados{" "}
           <span className="text-magenta">{pois.length} POIs</span>
         </span>

@@ -111,7 +111,7 @@ export default function GuardarEnPlanModal({
       }}
     >
       <div className="tarjeta-elevada w-full max-w-md px-6 py-6">
-        <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-violeta">
+        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-violeta">
           Planner
         </p>
         <h2 className="mt-1 font-display text-xl font-extrabold tracking-tight text-texto-primario">
@@ -122,7 +122,7 @@ export default function GuardarEnPlanModal({
             `Esta búsqueda (${pois.length.toLocaleString("es-MX")} puntos${capas ? ` en ${capas.length} capas — cada capa será su propio levantamiento` : ""}) se guarda como levantamiento del plan que elijas.`}
         </p>
 
-        <label className="mt-4 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+        <label className="mt-4 block font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
           Plan
         </label>
         {proyectos.length === 0 ? (
@@ -146,7 +146,7 @@ export default function GuardarEnPlanModal({
           </select>
         )}
 
-        <label className="mt-3 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+        <label className="mt-3 block font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
           Rol del levantamiento
         </label>
         <div className="mt-1.5 flex gap-1.5">

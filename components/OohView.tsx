@@ -756,7 +756,7 @@ export default function OohView({
   const inputCls =
     "w-full rounded-md border border-linea bg-panel2 px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-cian focus:outline-none";
   const labelCls =
-    "mb-2 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500";
+    "mb-2 block font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500";
   const pasoCls = "border-b border-linea px-5 py-4";
 
   const chip = (activo: boolean, color = "cian") =>
@@ -813,7 +813,7 @@ export default function OohView({
             <label className={labelCls}>01 · PDVs del cliente</label>
             {planner && surveysFuente.length > 0 && (
               <div className="mb-3 rounded-md border border-violeta/40 bg-violeta/5 p-2.5">
-                <p className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-violeta">
+                <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-violeta">
                   Usar puntos del proyecto
                 </p>
                 <div className="flex gap-1.5">
@@ -970,7 +970,7 @@ export default function OohView({
             )}
             {tiposDisponibles.length > 0 && (
               <div className="mb-2">
-                <p className="mb-1 font-mono text-[9px] uppercase tracking-widest text-zinc-600">
+                <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.08em] text-zinc-600">
                   Tipo
                 </p>
                 <div className="flex flex-wrap gap-1.5">
@@ -993,7 +993,7 @@ export default function OohView({
             )}
             {ciudadesDisponibles.length > 1 && (
               <div className="mb-2">
-                <p className="mb-1 font-mono text-[9px] uppercase tracking-widest text-zinc-600">
+                <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.08em] text-zinc-600">
                   Ciudad
                 </p>
                 <div className="flex max-h-20 flex-wrap gap-1.5 overflow-y-auto">
@@ -1011,7 +1011,7 @@ export default function OohView({
             )}
             {mediosDisponibles.length > 1 && (
               <div className="mb-2">
-                <p className="mb-1 font-mono text-[9px] uppercase tracking-widest text-zinc-600">
+                <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.08em] text-zinc-600">
                   Medio / vendor
                 </p>
                 <div className="flex max-h-20 flex-wrap gap-1.5 overflow-y-auto">
@@ -1029,7 +1029,7 @@ export default function OohView({
             )}
             {pantallas.some((p) => p.digital !== null) && (
               <div>
-                <p className="mb-1 font-mono text-[9px] uppercase tracking-widest text-zinc-600">
+                <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.08em] text-zinc-600">
                   Tecnología
                 </p>
                 <div className="flex flex-wrap gap-1.5">
@@ -1204,7 +1204,7 @@ export default function OohView({
                   key={t.etiqueta}
                   className="min-w-[150px] flex-1 rounded-lg border border-linea bg-panel2 px-4 py-2"
                 >
-                  <p className="font-mono text-[9px] uppercase tracking-[0.18em] text-zinc-500">
+                  <p className="font-mono text-[9px] uppercase tracking-[0.08em] text-zinc-500">
                     {t.etiqueta}
                   </p>
                   <p className={`font-display text-xl font-extrabold ${t.color}`}>
@@ -1271,7 +1271,7 @@ export default function OohView({
                 <div className="flex w-full items-center justify-between px-4 py-2">
                   <button
                     onClick={() => setTablaColapsada(!tablaColapsada)}
-                    className="text-left font-mono text-xs uppercase tracking-widest text-zinc-400"
+                    className="text-left font-mono text-xs uppercase tracking-[0.08em] text-zinc-400"
                   >
                     Cruce{" "}
                     <span className="text-violeta">

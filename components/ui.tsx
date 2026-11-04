@@ -174,7 +174,15 @@ export function CifraAnimada({
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [valor, duracionMs]);
-  return <span className={className}>{formato(mostrado)}</span>;
+  // cifras: Semibold 600 + dígitos tabulares (alinean entre tarjetas)
+  return (
+    <span
+      className={`font-semibold tabular-nums ${className}`}
+      style={{ fontVariantNumeric: "tabular-nums" }}
+    >
+      {formato(mostrado)}
+    </span>
+  );
 }
 
 // ------------------------------------------------------------------
@@ -209,7 +217,7 @@ export function EstadoVacio({
 
 // ------------------------------------------------------------------
 // MENSAJE DE ERROR — componente propio (icono, mensaje, acción); no
-// texto rojo monospace crudo.
+// texto rojo crudo.
 // ------------------------------------------------------------------
 export function MensajeError({
   mensaje,

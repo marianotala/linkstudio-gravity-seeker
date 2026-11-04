@@ -74,7 +74,7 @@ export default function NuevoPlanModal({
       }}
     >
       <div className="tarjeta-elevada w-full max-w-md px-6 py-6">
-        <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-violeta">
+        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-violeta">
           Planner
         </p>
         <h2 className="mt-1 font-display text-xl font-extrabold tracking-tight text-texto-primario">
@@ -86,7 +86,7 @@ export default function NuevoPlanModal({
           Todo se guarda automáticamente y lo ve todo el equipo.
         </p>
 
-        <label className="mt-4 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+        <label className="mt-4 block font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
           Cliente
         </label>
         <input
@@ -102,7 +102,7 @@ export default function NuevoPlanModal({
           className="mt-1.5 w-full rounded-md border border-linea bg-panel2 px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-violeta focus:outline-none"
         />
 
-        <label className="mt-3 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+        <label className="mt-3 block font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
           Título del plan (opcional)
         </label>
         <input

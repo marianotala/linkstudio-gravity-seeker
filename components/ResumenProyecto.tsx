@@ -434,7 +434,7 @@ export default function ResumenProyecto({
 
       {/* selector de surveys que entran al consolidado */}
       <div className="mt-3 rounded-lg border border-linea bg-panel2/50 p-3">
-        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
           Qué levantamientos entran al consolidado
           <span className="ml-2 normal-case tracking-normal text-zinc-600">
             (a veces la competencia no debe sumar al alcance — tú decides)
@@ -476,7 +476,7 @@ export default function ResumenProyecto({
       {consolidado && (
         <div className="mt-4">
           <div className="mb-1.5 flex items-center gap-2 font-mono text-[10px] text-zinc-500">
-            <span className="uppercase tracking-[0.2em]">Universo consolidado</span>
+            <span className="uppercase tracking-[0.08em]">Universo consolidado</span>
             <span>
               · calculado el{" "}
               {new Date(consolidado.created_at).toLocaleString("es-MX", {
@@ -515,7 +515,7 @@ export default function ResumenProyecto({
       {/* desglose por survey */}
       {seleccionados.length > 0 && (
         <div className="mt-5">
-          <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+          <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
             Cuánto aporta cada capa
           </p>
           <div className="overflow-hidden rounded-lg border border-linea">
@@ -566,7 +566,7 @@ export default function ResumenProyecto({
       {/* comparativo NSE + edades entre surveys */}
       {seleccionados.filter((s) => universoDe(s)?.perfil?.nseDist).length >= 2 && (
         <div className="mt-5">
-          <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+          <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
             Comparativo entre capas · NSE y edades
             <span className="ml-2 normal-case tracking-normal text-zinc-600">
               ¿el territorio de la competencia tiene mejor NSE que el tuyo?
@@ -601,7 +601,7 @@ export default function ResumenProyecto({
                 </div>
               );
             })}
-            <div className="grid grid-cols-[220px_1fr_1fr] gap-3 font-mono text-[9px] uppercase tracking-widest text-zinc-600">
+            <div className="grid grid-cols-[220px_1fr_1fr] gap-3 font-mono text-[9px] uppercase tracking-[0.08em] text-zinc-600">
               <span />
               <span>NSE (proxy censal)</span>
               <span>Edades · % del universo 18+</span>
@@ -613,7 +613,7 @@ export default function ResumenProyecto({
       {/* traslapes entre roles */}
       <div className="mt-5">
         <div className="flex items-center justify-between gap-3">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
             Traslape entre capas
             <span className="ml-2 normal-case tracking-normal text-zinc-600">
               población en zona propia que TAMBIÉN está en zona de competencia —

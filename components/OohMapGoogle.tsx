@@ -20,7 +20,7 @@ const MAX_ETIQUETAS_FIJAS = 80;
 const htmlPantalla = (c: CrucePantalla) => {
   const p = c.pantalla;
   const partes = [
-    `<div style="font-family:monospace;font-size:12px"><strong>${escaparHtml(p.nombre ?? p.clave)}</strong>`,
+    `<div style="font-family:var(--font-sans),sans-serif;font-size:12px"><strong>${escaparHtml(p.nombre ?? p.clave)}</strong>`,
     `<div>${escaparHtml(etiquetaTipoPantalla(p.tipo))}${p.digital !== null ? ` · ${p.digital ? "digital" : "estática"}` : ""}</div>`,
   ];
   if (p.medio) partes.push(`<div>Medio: ${escaparHtml(p.medio)}</div>`);
@@ -118,7 +118,7 @@ export default function OohMapGoogle({
         fill: "#ffffff",
         fillOpacity: 1,
         radioPx: 5.5,
-        popupHtml: `<div style="font-family:monospace;font-size:12px"><strong>${escaparHtml(etiquetaOrigen(o, i))}</strong>${o.direccion ? `<div>${escaparHtml(o.direccion)}</div>` : ""}${sinCobertura ? `<div style="color:${MAGENTA}">SIN cobertura: ninguna pantalla dentro del radio</div>` : ""}</div>`,
+        popupHtml: `<div style="font-family:var(--font-sans),sans-serif;font-size:12px"><strong>${escaparHtml(etiquetaOrigen(o, i))}</strong>${o.direccion ? `<div>${escaparHtml(o.direccion)}</div>` : ""}${sinCobertura ? `<div style="color:${MAGENTA}">SIN cobertura: ninguna pantalla dentro del radio</div>` : ""}</div>`,
         zIndex: 200,
       });
     });

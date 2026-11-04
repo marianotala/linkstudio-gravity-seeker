@@ -176,7 +176,7 @@ export default function AdminOoh() {
         </h1>
         <div className="mt-3 flex flex-wrap items-end gap-x-8 gap-y-2">
           <div>
-            <p className="font-body text-[10px] font-semibold uppercase tracking-[0.18em] text-texto-terciario">
+            <p className="font-body text-[10px] font-semibold uppercase tracking-[0.08em] text-texto-terciario">
               Pantallas
             </p>
             <p className="font-display text-2xl font-bold leading-none text-texto-primario">

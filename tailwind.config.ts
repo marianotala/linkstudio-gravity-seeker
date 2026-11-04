@@ -54,17 +54,20 @@ const config: Config = {
         amber: { 300: "#92400e", 400: "#b45309", 500: "#b45309" },
         teal: { 400: "#0f766e", 500: "#0f766e" },
       },
-      // Brand V2: el énfasis máximo es Semibold 600 (nada de pesos
-      // pesados); los font-bold/extrabold existentes bajan a 600.
+      // Jerarquía Montserrat: títulos de sección en 700 — los
+      // font-bold/extrabold existentes resuelven a Bold real.
       fontWeight: {
-        bold: "600",
-        extrabold: "600",
+        bold: "700",
+        extrabold: "700",
       },
+      // TIPOGRAFÍA ÚNICA: todo cuelga de --font-sans (Montserrat).
+      // font-mono conserva su semántica de datos vía tabular-nums
+      // (globals.css), ya sin familia monospace.
       fontFamily: {
-        display: ["var(--fuente-titulos)", "sans-serif"],
-        body: ["var(--fuente-cuerpo)", "sans-serif"],
-        sans: ["var(--fuente-cuerpo)", "sans-serif"],
-        mono: ["var(--fuente-datos)", "monospace"], // SOLO datos
+        display: ["var(--font-sans)", "sans-serif"],
+        body: ["var(--font-sans)", "sans-serif"],
+        sans: ["var(--font-sans)", "sans-serif"],
+        mono: ["var(--font-sans)", "sans-serif"],
       },
       borderRadius: {
         tarjeta: "var(--radio-tarjeta)",

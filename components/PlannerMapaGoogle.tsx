@@ -19,7 +19,7 @@ const htmlPunto = (
   capa: string,
   color: string
 ) =>
-  `<div style="font-family:monospace;font-size:12px"><strong>${escaparHtml(nombre)}</strong>${direccion ? `<div>${escaparHtml(direccion)}</div>` : ""}<div style="color:${color}">${escaparHtml(capa)}</div></div>`;
+  `<div style="font-family:var(--font-sans),sans-serif;font-size:12px"><strong>${escaparHtml(nombre)}</strong>${direccion ? `<div>${escaparHtml(direccion)}</div>` : ""}<div style="color:${color}">${escaparHtml(capa)}</div></div>`;
 
 export default function PlannerMapaGoogle({
   capas,

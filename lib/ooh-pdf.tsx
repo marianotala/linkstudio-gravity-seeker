@@ -133,18 +133,18 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
   const sinCob = d.sinCobertura.slice(0, MAX_SIN_COBERTURA);
 
   const celdaTh = {
-    fontFamily: "DMMono" as const,
+    fontFamily: "Montserrat" as const,
     fontWeight: 500 as const,
     fontSize: 7,
-    letterSpacing: 1.3,
+    letterSpacing: 0.8,
     color: GRIS_OSCURO,
   };
   const celdaTd = { fontFamily: "Montserrat" as const, fontSize: 8, color: TINTA };
   const labelCol = {
-    fontFamily: "DMMono" as const,
+    fontFamily: "Montserrat" as const,
     fontWeight: 500 as const,
     fontSize: 7.5,
-    letterSpacing: 1.8,
+    letterSpacing: 0.8,
     color: GRIS,
     marginBottom: 8,
   };
@@ -156,13 +156,13 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
         <Neon height={150} />
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
           <Firma height={26} />
-          <Text style={{ fontFamily: "DMMono", fontSize: 8, letterSpacing: 1.4, color: GRIS }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 8, letterSpacing: 0.8, color: GRIS }}>
             powered by linkstudio
           </Text>
         </View>
 
         <View style={{ marginTop: 26 }}>
-          <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 9.5, letterSpacing: 3, color: MAGENTA }}>
+          <Text style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 9.5, letterSpacing: 0.8, color: MAGENTA }}>
             PLAN GEO-PDOOH · PANTALLAS × PUNTOS DE VENTA
           </Text>
           <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 28, color: BLANCO, marginTop: 8 }}>
@@ -171,7 +171,7 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
           <Text style={{ fontFamily: "Montserrat", fontSize: 11, color: GRIS, marginTop: 8 }}>
             El exterior, ahora medible.
           </Text>
-          <Text style={{ fontFamily: "DMMono", fontSize: 8.5, color: GRIS_OSCURO, marginTop: 10 }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: GRIS_OSCURO, marginTop: 10 }}>
             {fechaLarga} · Generado por {d.usuario}
           </Text>
         </View>
@@ -206,7 +206,7 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
             <BarraApilada titulo="Edades · % del universo 18+ (25-64: estimación con estructura nacional)" segmentos={edades} width={CONT} />
           </View>
         )}
-        <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 12 }}>
+        <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 12 }}>
           {u
             ? `Universo alrededor del plan de pantallas: ${fmt(u.residencial!.adultos18)} adultos 18+ · Censo 2020 INEGI · ${fmt(u.agebs ?? 0)} zonas censales${(u.rurales ?? 0) > 0 ? ` · ${fmt(u.rurales!)} localidades rurales (ITER)` : ""}`
             : `Cruce por proximidad: radio ${d.radioTexto} · ${d.alcance}`}
@@ -228,14 +228,14 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
               {tiposPresentes.map((t) => (
                 <View key={t} style={{ flexDirection: "row", alignItems: "center", marginRight: 12 }}>
                   <View style={{ width: 6, height: 6, backgroundColor: colorTipoPantalla(t), marginRight: 4 }} />
-                  <Text style={{ fontFamily: "DMMono", fontSize: 8, color: GRIS }}>
+                  <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS }}>
                     {etiquetaTipoPantalla(t)}
                   </Text>
                 </View>
               ))}
               <View style={{ flexDirection: "row", alignItems: "center", marginRight: 12 }}>
                 <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: CIAN, marginRight: 4 }} />
-                <Text style={{ fontFamily: "DMMono", fontSize: 8, color: GRIS }}>PDV cubierto</Text>
+                <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS }}>PDV cubierto</Text>
               </View>
               {d.sinCobertura.length > 0 && (
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -249,7 +249,7 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
                       marginRight: 4,
                     }}
                   />
-                  <Text style={{ fontFamily: "DMMono", fontSize: 8, color: GRIS }}>PDV sin cobertura</Text>
+                  <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS }}>PDV sin cobertura</Text>
                 </View>
               )}
             </View>
@@ -292,20 +292,20 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
                   <Text style={[celdaTd, { width: 70, color: GRIS }]}>
                     {(c.pantalla.medio ?? "—").slice(0, 12)}
                   </Text>
-                  <Text style={[celdaTd, { width: 36, textAlign: "right", fontFamily: "DMMono", color: CIAN }]}>
+                  <Text style={[celdaTd, { width: 36, textAlign: "right", fontFamily: "Montserrat", color: CIAN }]}>
                     {c.pdvs.length}
                   </Text>
                   <Text style={[celdaTd, { flex: 1, paddingLeft: 14, color: GRIS }]}>
                     {lineaPdvs(c, d.nombresPdv)}
                   </Text>
-                  <Text style={[celdaTd, { width: 58, textAlign: "right", fontFamily: "DMMono", color: GRIS }]}>
+                  <Text style={[celdaTd, { width: 58, textAlign: "right", fontFamily: "Montserrat", color: GRIS }]}>
                     {c.pantalla.impresiones != null ? fmt(c.pantalla.impresiones) : "—"}
                   </Text>
                 </View>
               );
             })}
             {d.cruces.length > filas.length && (
-              <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
+              <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 6 }}>
                 +{fmt(d.cruces.length - filas.length)} pantallas más — detalle completo en el Export data (CSV).
               </Text>
             )}
@@ -336,7 +336,7 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
                 </Text>
               ))}
               {d.sinCobertura.length > sinCob.length && (
-                <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO }}>
+                <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO }}>
                   +{fmt(d.sinCobertura.length - sinCob.length)} más en el Export data (CSV).
                 </Text>
               )}
@@ -394,7 +394,7 @@ function OohDocumento({ d }: { d: PlanOohDatos }) {
         <View style={{ marginTop: 26, marginBottom: 12 }}>
           <Divisor />
         </View>
-        <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 7.5, letterSpacing: 2.2, color: GRIS_OSCURO, marginBottom: 10 }}>
+        <Text style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 7.5, letterSpacing: 0.8, color: GRIS_OSCURO, marginBottom: 10 }}>
           METODOLOGÍA · RESPALDO TÉCNICO
         </Text>
         <View style={{ flexDirection: "row" }}>

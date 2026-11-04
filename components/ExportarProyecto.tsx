@@ -1056,7 +1056,7 @@ export default function ExportarProyecto({
 
       {/* título del plan */}
       <div className="mt-4">
-        <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+        <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
           Título del plan (portada del PDF)
         </label>
         <input
@@ -1069,7 +1069,7 @@ export default function ExportarProyecto({
 
       {/* formato del PDF */}
       <div className="mt-4">
-        <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+        <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
           Formato del Export plan
         </label>
         <div className="flex flex-wrap gap-1.5">
@@ -1100,7 +1100,7 @@ export default function ExportarProyecto({
 
       {/* qué entra al PDF (la composición del consolidado F4) */}
       <div className="mt-4 rounded-lg border border-linea bg-panel2/50 p-3">
-        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
           Qué capas protagonizan el PDF
           <span className="ml-2 normal-case tracking-normal text-zinc-600">
             (las seleccionadas en el consolidado del Resumen — ahí se cambian)
@@ -1143,7 +1143,7 @@ export default function ExportarProyecto({
 
       {/* tácticas destacadas */}
       <div className="mt-4 rounded-lg border border-linea bg-panel2/50 p-3">
-        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
           Tácticas destacadas del proyecto
           <span className="ml-2 normal-case tracking-normal text-zinc-600">
             las 7 salen en el PDF; las marcadas van primero, con su sustento

@@ -71,11 +71,14 @@
   --radio-chip: 999px;
   --sombra-elevada: 0 8px 24px rgba(17, 17, 17, 0.1);
 
-  /* ---- tipografía (brand book V2): Montserrat en todo; mono SOLO
-     datos. Medium 500 titulares · Semibold 600 énfasis/cifras/CTAs ·
-     Regular 400 cuerpo (interlineado 145%). */
-  --fuente-titulos: var(--fuente-montserrat);
-  --fuente-cuerpo: var(--fuente-montserrat);
+  /* ---- TIPOGRAFÍA ÚNICA: Montserrat. --font-sans (next/font) es EL
+     token; los nombres legados cuelgan de él para no tocar cada uso.
+     Jerarquía: títulos 700 · etiquetas 600 (mayúsculas, tracking
+     0.08em) · cuerpo 400 (interlineado 145%) · cifras 600 con
+     tabular-nums (obligatorio en columnas numéricas). */
+  --fuente-titulos: var(--font-sans);
+  --fuente-cuerpo: var(--font-sans);
+  --fuente-datos: var(--font-sans);
 
   /* ---- movimiento */
   --transicion-rapida: 150ms ease;
@@ -88,6 +91,17 @@ body {
   background: var(--fondo-profundo);
   /* cuerpo Montserrat Regular con interlineado 145% (brand book) */
   line-height: 1.45;
+}
+
+/* La clase legada .font-mono ahora es Montserrat (tipografía única):
+   conserva su SEMÁNTICA de datos — dígitos tabulares para que montos
+   y coordenadas alineen en toda columna numérica. */
+.font-mono {
+  font-variant-numeric: tabular-nums;
+}
+/* Etiquetas tipo "HOY / CACHÉ MES": Semibold 600 en mayúsculas. */
+.font-mono.uppercase {
+  font-weight: 600;
 }
 
 /* Scrollbars discretos, acorde al panel */
@@ -275,7 +289,7 @@ body {
 }
 .leaflet-container {
   background: var(--fondo-profundo);
-  font-family: var(--fuente-cuerpo), sans-serif;
+  font-family: var(--font-sans), sans-serif;
 }
 
 /* TEMA CLARO: los tiles base se muestran tal cual (solo se bajan un
@@ -316,7 +330,7 @@ body {
   border-radius: var(--radio-chip);
   box-shadow: none;
   color: var(--texto-secundario);
-  font-family: var(--fuente-datos), monospace;
+  font-family: var(--font-sans), sans-serif;
   font-size: 10px;
   padding: 1px 6px;
 }
@@ -335,7 +349,7 @@ body {
   background: rgba(39, 181, 226, 0.22);
   border: 2px solid #27b5e2;
   color: #111111;
-  font-family: var(--fuente-datos), ui-monospace, monospace;
+  font-family: var(--font-sans), sans-serif;
   font-size: 11px;
   font-weight: 600;
 }
@@ -351,25 +365,25 @@ body {
    la misma tipografía/semántica que el resto de la app.
    ================================================================== */
 .gmap-popup {
-  font-family: var(--fuente-datos), ui-monospace, monospace;
+  font-family: var(--font-sans), sans-serif;
   color: var(--texto-primario);
 }
 .gmap-cluster-label {
   color: #111111 !important;
-  font-family: var(--fuente-datos), ui-monospace, monospace !important;
+  font-family: var(--font-sans), sans-serif !important;
   font-size: 11px !important;
   font-weight: 600 !important;
 }
 .gmap-etiqueta-cp {
   color: #6d3fc4 !important;
-  font-family: var(--fuente-datos), ui-monospace, monospace !important;
+  font-family: var(--font-sans), sans-serif !important;
   font-size: 11px !important;
   font-weight: 700 !important;
   text-shadow: 0 1px 3px rgba(255, 255, 255, 0.9);
 }
 .gmap-etiqueta-linea {
   color: var(--texto-secundario) !important;
-  font-family: var(--fuente-datos), ui-monospace, monospace !important;
+  font-family: var(--font-sans), sans-serif !important;
   font-size: 10px !important;
   background: rgba(255, 255, 255, 0.82);
   border-radius: 999px;

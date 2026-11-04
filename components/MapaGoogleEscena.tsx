@@ -269,7 +269,7 @@ export default function MapaGoogleEscena({ escena }: { escena: EscenaGoogle }) {
         } else {
           o.addListener("click", () =>
             abrirPopup(
-              `<span style="font-family:monospace;font-size:11px">${l.etiqueta}</span>`,
+              `<span style="font-family:var(--font-sans),sans-serif;font-size:11px">${l.etiqueta}</span>`,
               medio
             )
           );

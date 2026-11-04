@@ -2,7 +2,7 @@
 
 // Header compartido: GravityMark + tagline, navegación global, estatus
 // animado (opcional), usuario y cerrar sesión. Migrado al sistema de
-// tokens v2: navegación y botones en sans; monospace solo para datos.
+// tipografía única Montserrat: los datos alinean con tabular-nums.
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";

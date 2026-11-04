@@ -106,7 +106,7 @@ export default function LoginPage() {
             <div>
               <label
                 htmlFor="email"
-                className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500"
+                className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500"
               >
                 Correo
               </label>
@@ -123,7 +123,7 @@ export default function LoginPage() {
             <div>
               <label
                 htmlFor="password"
-                className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500"
+                className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500"
               >
                 Contraseña
               </label>
@@ -152,7 +152,7 @@ export default function LoginPage() {
 
             <div className="flex items-center gap-3 py-1">
               <span className="h-px flex-1 bg-linea" />
-              <span className="font-mono text-[10px] uppercase tracking-widest text-zinc-600">
+              <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-600">
                 o
               </span>
               <span className="h-px flex-1 bg-linea" />

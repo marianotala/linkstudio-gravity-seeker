@@ -110,7 +110,7 @@ function TituloLamina({ etiqueta, titulo }: { etiqueta: string; titulo: string }
   return (
     <View style={{ marginBottom: 8 }}>
       <View style={{ flexDirection: "row", alignItems: "center" }}>
-        <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 9, letterSpacing: 2.6, color: MAGENTA }}>
+        <Text style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 9, letterSpacing: 0.8, color: MAGENTA }}>
           {etiqueta.toUpperCase()}
         </Text>
         <View style={{ flexDirection: "row", marginLeft: 10 }}>
@@ -140,14 +140,14 @@ function MiniNsePorMarca({
   return (
     <View style={{ marginTop: 8, width: ancho }}>
       <Text
-        style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 6.5, letterSpacing: 1.2, color: GRIS_OSCURO, marginBottom: 4 }}
+        style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 6.5, letterSpacing: 0.8, color: GRIS_OSCURO, marginBottom: 4 }}
       >
         NSE POR MARCA (PROXY CENSAL) — MISMA ESCALA
       </Text>
       {conNse.map((c) => (
         <View key={c.id} style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
           <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: c.color, marginRight: 4 }} />
-          <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: TINTA, width: 84 }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 6.5, color: TINTA, width: 84 }}>
             {c.nombre.length > 14 ? c.nombre.slice(0, 13) + "…" : c.nombre}
           </Text>
           <View style={{ flex: 1, flexDirection: "row", height: 7, borderRadius: 3.5, overflow: "hidden", backgroundColor: FONDO }}>
@@ -160,7 +160,7 @@ function MiniNsePorMarca({
           </View>
         </View>
       ))}
-      <Text style={{ fontFamily: "DMMono", fontSize: 6, color: GRIS_OSCURO }}>
+      <Text style={{ fontFamily: "Montserrat", fontSize: 6, color: GRIS_OSCURO }}>
         ← DE · D+ · C- · C · C+ · AB → (violeta = niveles altos)
       </Text>
     </View>
@@ -208,18 +208,18 @@ function FilaDetalle({
   return (
     <View style={{ flexDirection: "row", paddingTop: 1, paddingBottom: 1 }}>
       {/* maxLines 1: una fila = una línea, sin wraps que "peguen" filas */}
-      <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: TINTA, width: anchoNombre, paddingRight: 4, maxLines: 1, textOverflow: "ellipsis" }}>
+      <Text style={{ fontFamily: "Montserrat", fontSize: 6.5, color: TINTA, width: anchoNombre, paddingRight: 4, maxLines: 1, textOverflow: "ellipsis" }}>
         {nombre.length > maxN ? nombre.slice(0, maxN - 1) + "…" : nombre}
       </Text>
       {conCiudad && (
-        <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS, width: 58, maxLines: 1, textOverflow: "ellipsis" }}>
+        <Text style={{ fontFamily: "Montserrat", fontSize: 6.5, color: GRIS, width: 58, maxLines: 1, textOverflow: "ellipsis" }}>
           {ciudad.length > 13 ? ciudad.slice(0, 12) + "…" : ciudad}
         </Text>
       )}
-      <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: CIAN, width: 46, textAlign: "right" }}>
+      <Text style={{ fontFamily: "Montserrat", fontSize: 6.5, color: CIAN, width: 46, textAlign: "right" }}>
         {uni}
       </Text>
-      <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS, width: 22, textAlign: "right" }}>
+      <Text style={{ fontFamily: "Montserrat", fontSize: 6.5, color: GRIS, width: 22, textAlign: "right" }}>
         {nse}
       </Text>
     </View>
@@ -239,10 +239,10 @@ function PieLamina({ cliente, n, total }: { cliente: string; n: number; total: n
         justifyContent: "space-between",
       }}
     >
-      <Text style={{ fontFamily: "DMMono", fontSize: 7, letterSpacing: 1.4, color: GRIS_OSCURO }}>
+      <Text style={{ fontFamily: "Montserrat", fontSize: 7, letterSpacing: 0.8, color: GRIS_OSCURO }}>
         GRAVITY · PLAN TERRITORIAL — {cliente.toUpperCase()}
       </Text>
-      <Text style={{ fontFamily: "DMMono", fontSize: 7, color: GRIS_OSCURO }}>
+      <Text style={{ fontFamily: "Montserrat", fontSize: 7, color: GRIS_OSCURO }}>
         {n} / {total}
       </Text>
     </View>
@@ -305,7 +305,7 @@ function PillLamina({
       </Svg>
       <View style={{ paddingTop: destacada ? 8 : 12, paddingLeft: 14, paddingRight: 14 }}>
         {destacada && (
-          <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 5.8, letterSpacing: 1.2, color: MAGENTA, marginBottom: 3 }}>
+          <Text style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 5.8, letterSpacing: 0.8, color: MAGENTA, marginBottom: 3 }}>
             RECOMENDADA PARA ESTE TERRITORIO
           </Text>
         )}
@@ -324,10 +324,10 @@ function PillLamina({
 function CifraLamina({ valor, descriptor }: { valor: string; descriptor: string }) {
   return (
     <View style={{ flex: 1, paddingRight: 10 }}>
-      <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 22, color: BLANCO }}>
+      <Text style={{ fontFamily: "Montserrat", fontWeight: 600, fontSize: 22, color: BLANCO }}>
         {valor}
       </Text>
-      <Text style={{ fontFamily: "DMMono", fontSize: 6.6, letterSpacing: 1.1, color: GRIS, marginTop: 2, lineHeight: 1.4 }}>
+      <Text style={{ fontFamily: "Montserrat", fontSize: 6.6, letterSpacing: 0.8, color: GRIS, marginTop: 2, lineHeight: 1.4 }}>
         {descriptor.toUpperCase()}
       </Text>
     </View>
@@ -355,7 +355,7 @@ function MapaTactica({ dataUrl, leyenda }: { dataUrl: string | null | undefined;
             justifyContent: "center",
           }}
         >
-          <Text style={{ fontFamily: "DMMono", fontSize: 8, color: GRIS_OSCURO }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 8, color: GRIS_OSCURO }}>
             mapa no disponible
           </Text>
         </View>
@@ -364,7 +364,7 @@ function MapaTactica({ dataUrl, leyenda }: { dataUrl: string | null | undefined;
         {leyenda.slice(0, 5).map((l) => (
           <View key={l.texto} style={{ flexDirection: "row", alignItems: "center", marginRight: 10 }}>
             <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: l.color, marginRight: 3 }} />
-            <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 6.5, color: GRIS }}>
               {l.texto.length > 24 ? l.texto.slice(0, 23) + "…" : l.texto}
             </Text>
           </View>
@@ -518,10 +518,10 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
   const n = () => ++folio;
 
   const celdaTh = {
-    fontFamily: "DMMono" as const,
+    fontFamily: "Montserrat" as const,
     fontWeight: 500 as const,
     fontSize: 6.5,
-    letterSpacing: 1.2,
+    letterSpacing: 0.8,
     color: GRIS_OSCURO,
   };
   const celdaTd = { fontFamily: "Montserrat" as const, fontSize: 8, color: TINTA };
@@ -569,16 +569,16 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
               <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 10, color: BLANCO, flex: 1 }}>
                 {c.nombre.length > 22 ? c.nombre.slice(0, 21) + "…" : c.nombre}
               </Text>
-              <Text style={{ fontFamily: "DMMono", fontSize: 9, color: MAGENTA, width: 54, textAlign: "right" }}>
+              <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: MAGENTA, width: 54, textAlign: "right" }}>
                 {fmt(c.pois.length)}
               </Text>
-              <Text style={{ fontFamily: "DMMono", fontSize: 9, color: CIAN, width: 92, textAlign: "right" }}>
+              <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: CIAN, width: 92, textAlign: "right" }}>
                 {adultos(c.universo) > 0 ? fmt(adultos(c.universo)) : "—"}
               </Text>
             </View>
           ))}
           {capasRol.length > MAX_FILAS_DESGLOSE && (
-            <Text style={{ fontFamily: "DMMono", fontSize: 7, color: GRIS_OSCURO }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 7, color: GRIS_OSCURO }}>
               +{capasRol.length - MAX_FILAS_DESGLOSE} capas más en el Export data (Excel).
             </Text>
           )}
@@ -658,7 +658,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
             }}
           >
             <Text style={[celdaTh, { marginBottom: 3 }]}>DESGLOSE POR MARCA</Text>
-            <Text style={{ fontFamily: "DMMono", fontSize: 8.5, color: TINTA, lineHeight: 1.6 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: TINTA, lineHeight: 1.6 }}>
               {desgloseMarcas.length > 180
                 ? desgloseMarcas.slice(0, 179) + "…"
                 : desgloseMarcas}
@@ -709,7 +709,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                 />
               ))}
               {totalFilas > filasDer && (
-                <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS_OSCURO, marginTop: 2 }}>
+                <Text style={{ fontFamily: "Montserrat", fontSize: 6.5, color: GRIS_OSCURO, marginTop: 2 }}>
                   +{fmt(totalFilas - filasDer)} pantallas más en la lámina de detalle.
                 </Text>
               )}
@@ -750,7 +750,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                 })}
               </View>
               {totalFilas > filasDer && (
-                <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS_OSCURO, marginTop: 2 }}>
+                <Text style={{ fontFamily: "Montserrat", fontSize: 6.5, color: GRIS_OSCURO, marginTop: 2 }}>
                   +{fmt(totalFilas - filasDer)} puntos más en la lámina de detalle (universo y NSE de su radio individual).
                 </Text>
               )}
@@ -778,12 +778,12 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
         <Neon height={200} />
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
           <Firma height={26} />
-          <Text style={{ fontFamily: "DMMono", fontSize: 8, letterSpacing: 1.4, color: GRIS }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 8, letterSpacing: 0.8, color: GRIS }}>
             powered by linkstudio
           </Text>
         </View>
         <View style={{ flex: 1, justifyContent: "center" }}>
-          <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 10, letterSpacing: 3, color: MAGENTA }}>
+          <Text style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 10, letterSpacing: 0.8, color: MAGENTA }}>
             PLAN TERRITORIAL — {d.cliente.toUpperCase()}
           </Text>
           <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 34, color: BLANCO, marginTop: 10 }}>
@@ -795,7 +795,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
           <View style={{ marginTop: 18, width: 320 }}>
             <Divisor width={320} />
           </View>
-          <Text style={{ fontFamily: "DMMono", fontSize: 9, color: GRIS_OSCURO, marginTop: 14 }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: GRIS_OSCURO, marginTop: 14 }}>
             {fechaLarga} · Generado por {d.usuario}
           </Text>
         </View>
@@ -822,7 +822,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
         </View>
         <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 14 }}>
           {conteosRol.map((texto, i) => (
-            <Text key={i} style={{ fontFamily: "DMMono", fontSize: 9, color: TINTA, marginRight: 10, marginBottom: 3 }}>
+            <Text key={i} style={{ fontFamily: "Montserrat", fontSize: 9, color: TINTA, marginRight: 10, marginBottom: 3 }}>
               {i > 0 ? "· " : ""}
               {texto}
             </Text>
@@ -852,7 +852,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
             ? `: la suma simple daría ${fmt(d.sumaSimple)} adultos 18+; el consolidado real es ${fmt(adultos(u))} (−${fmt(d.sumaSimple - adultos(u))} por traslapes entre capas).`
             : "."}
         </Text>
-        <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 8 }}>
+        <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS_OSCURO, marginTop: 8 }}>
           {u
             ? `Censo 2020 INEGI · ${fmt(u.agebs ?? 0)} zonas censales${(u.rurales ?? 0) > 0 ? ` · ${fmt(u.rurales!)} localidades rurales (ITER)` : ""}${u.criterio ? ` · ${u.criterio}` : ""}`
             : "Universo consolidado no disponible"}
@@ -873,7 +873,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
               etiqueta={TITULO_TACTICA[lam.rol][0]}
               titulo={`${TITULO_TACTICA[lam.rol][1]} · detalle (${lam.pagina})`}
             />
-            <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS_OSCURO, marginTop: -4, marginBottom: 6 }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 6.5, color: GRIS_OSCURO, marginTop: -4, marginBottom: 6 }}>
               {lam.rol === "ooh"
                 ? "CADA PANTALLA CON LOS PDVS QUE CUBRE Y SU DISTANCIA MÍNIMA"
                 : "CADA PUNTO CON EL UNIVERSO 18+ Y EL NSE DOMINANTE DE SU RADIO INDIVIDUAL"}
@@ -1029,7 +1029,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                     paddingRight: 10,
                   }}
                 >
-                  <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 6.5, letterSpacing: 1.4, color: TEAL, marginBottom: 3 }}>
+                  <Text style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 6.5, letterSpacing: 0.8, color: TEAL, marginBottom: 3 }}>
                     BULK DE KEYWORDS — PROPUESTA IA EDITABLE
                   </Text>
                   <Text style={{ fontFamily: "Montserrat", fontSize: 8.5, color: TINTA, lineHeight: 1.5 }}>
@@ -1049,7 +1049,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                   </Text>
                 </View>
               )}
-              <Text style={{ fontFamily: "DMMono", fontSize: 6.5, color: GRIS_OSCURO, marginTop: 7 }}>
+              <Text style={{ fontFamily: "Montserrat", fontSize: 6.5, color: GRIS_OSCURO, marginTop: 7 }}>
                 CPs, keywords y polígonos (.geojson) completos en el Export
                 data del proyecto.
               </Text>
@@ -1102,7 +1102,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
                       {c.nombre.length > 26 ? c.nombre.slice(0, 25) + "…" : c.nombre}
                     </Text>
                   </View>
-                  <Text style={{ fontFamily: "DMMono", fontSize: 7.5, color: GRIS, marginTop: 3 }}>
+                  <Text style={{ fontFamily: "Montserrat", fontSize: 7.5, color: GRIS, marginTop: 3 }}>
                     {NOMBRE_ROL[c.rol]} ·{" "}
                     <Text style={{ color: CIAN }}>{fmt(adultos(c.universo))}</Text>{" "}
                     adultos 18+ · {fmt(c.pois.length)} puntos
@@ -1132,7 +1132,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
             );
           })}
           {comparables.length > MAX_FILAS_COMPARATIVO && (
-            <Text style={{ fontFamily: "DMMono", fontSize: 7, color: GRIS_OSCURO }}>
+            <Text style={{ fontFamily: "Montserrat", fontSize: 7, color: GRIS_OSCURO }}>
               +{comparables.length - MAX_FILAS_COMPARATIVO} capas más en el one-pager y el Export data.
             </Text>
           )}
@@ -1148,7 +1148,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
           />
           {traslapeEstrella ? (
             <View style={{ flex: 1, justifyContent: "center", marginBottom: 12 }}>
-              <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 8.5, letterSpacing: 2.4, color: MAGENTA }}>
+              <Text style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 8.5, letterSpacing: 0.8, color: MAGENTA }}>
                 TRASLAPE {traslapeEstrella.etiquetaA.toUpperCase()} × {traslapeEstrella.etiquetaB.toUpperCase()} — LA AUDIENCIA DE CONQUISTA
               </Text>
               <Text style={{ fontFamily: "Montserrat", fontWeight: 800, fontSize: 52, color: BLANCO, marginTop: 10 }}>
@@ -1230,7 +1230,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
               con visitas.
             </Text>
           </View>
-          <Text style={{ fontFamily: "DMMono", fontSize: 9, color: GRIS, marginTop: 26 }}>
+          <Text style={{ fontFamily: "Montserrat", fontSize: 9, color: GRIS, marginTop: 26 }}>
             www.linkstudio.mx · hello@linkstudio.mx · {fechaLarga}
           </Text>
         </View>
@@ -1239,7 +1239,7 @@ function SlidesDocumento({ d }: { d: PlanProyectoDatos }) {
 
       {/* ============ Ln+4 · METODOLOGÍA (discreta) ============ */}
       <Lamina cliente={d.cliente} n={n()} total={totalLaminas}>
-        <Text style={{ fontFamily: "DMMono", fontWeight: 500, fontSize: 8, letterSpacing: 2.2, color: GRIS_OSCURO, marginBottom: 14 }}>
+        <Text style={{ fontFamily: "Montserrat", fontWeight: 500, fontSize: 8, letterSpacing: 0.8, color: GRIS_OSCURO, marginBottom: 14 }}>
           METODOLOGÍA · RESPALDO TÉCNICO DEL PROYECTO
         </Text>
         <View style={{ flexDirection: "row" }}>

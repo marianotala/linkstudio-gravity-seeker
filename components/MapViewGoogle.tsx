@@ -58,10 +58,10 @@ function agrupar<T extends { lat: number; lng: number }>(
 }
 
 const htmlOrigen = (o: Origin, i: number) =>
-  `<div style="font-family:monospace;font-size:12px"><strong>${escaparHtml(etiquetaOrigen(o, i))}</strong>${o.direccion ? `<div>${escaparHtml(o.direccion)}</div>` : ""}<div>${o.lat.toFixed(6)}, ${o.lng.toFixed(6)}</div></div>`;
+  `<div style="font-family:var(--font-sans),sans-serif;font-size:12px"><strong>${escaparHtml(etiquetaOrigen(o, i))}</strong>${o.direccion ? `<div>${escaparHtml(o.direccion)}</div>` : ""}<div>${o.lat.toFixed(6)}, ${o.lng.toFixed(6)}</div></div>`;
 
 const htmlPoi = (p: Poi) =>
-  `<div style="font-family:monospace;font-size:12px;max-width:220px"><strong>${escaparHtml(p.nombre)}</strong><div>${escaparHtml(p.direccion)}</div><div>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)} · ${p.distancia} m</div><div>fuente: ${escaparHtml(p.fuente.toUpperCase())}${p.estrato ? ` · ${escaparHtml(p.estrato)}` : ""}</div>${p.capa ? `<div>capa: ${escaparHtml(p.capa)}</div>` : ""}${p.actividad ? `<div>${escaparHtml(p.actividad)}</div>` : ""}</div>`;
+  `<div style="font-family:var(--font-sans),sans-serif;font-size:12px;max-width:220px"><strong>${escaparHtml(p.nombre)}</strong><div>${escaparHtml(p.direccion)}</div><div>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)} · ${p.distancia} m</div><div>fuente: ${escaparHtml(p.fuente.toUpperCase())}${p.estrato ? ` · ${escaparHtml(p.estrato)}` : ""}</div>${p.capa ? `<div>capa: ${escaparHtml(p.capa)}</div>` : ""}${p.actividad ? `<div>${escaparHtml(p.actividad)}</div>` : ""}</div>`;
 
 /** Popup del polígono de CP (mismo contenido que el Leaflet). */
 function popupCp(c: CpPoligono, poblacion?: number): string {
@@ -69,7 +69,7 @@ function popupCp(c: CpPoligono, poblacion?: number): string {
   const total = c.total_colonias ?? colonias.length;
   const extra = total - colonias.length;
   const partes = [
-    `<div style="font-family:monospace;font-size:12px;min-width:170px;max-width:230px">`,
+    `<div style="font-family:var(--font-sans),sans-serif;font-size:12px;min-width:170px;max-width:230px">`,
     `<div style="font-size:20px;font-weight:800;letter-spacing:0.04em">${escaparHtml(c.codigo_postal)}</div>`,
   ];
   if (colonias.length > 0) {
@@ -193,7 +193,7 @@ export default function MapViewGoogle(props: MapViewProps) {
           fill: VIOLETA,
           fillOpacity: 0.08 + 0.45 * ((a.nse_proxy ?? 30) / 100),
         },
-        tooltipHtml: `<div style="font-family:monospace;font-size:11px">AGEB ${escaparHtml(a.cvegeo)}<br/>población: ${a.pobtot?.toLocaleString("es-MX") ?? "—"}<br/>NSE proxy: ${a.nse_proxy ?? "—"}</div>`,
+        tooltipHtml: `<div style="font-family:var(--font-sans),sans-serif;font-size:11px">AGEB ${escaparHtml(a.cvegeo)}<br/>población: ${a.pobtot?.toLocaleString("es-MX") ?? "—"}<br/>NSE proxy: ${a.nse_proxy ?? "—"}</div>`,
       });
     });
 
@@ -281,7 +281,7 @@ export default function MapViewGoogle(props: MapViewProps) {
           fill: "#ffffff",
           fillOpacity: 1,
           radioPx: 7,
-          popupHtml: `<div style="font-family:monospace;font-size:12px"><strong>${escaparHtml(z.nombre ?? `Zona ${i + 1}`)}</strong><div>${z.lat.toFixed(6)}, ${z.lng.toFixed(6)}</div></div>`,
+          popupHtml: `<div style="font-family:var(--font-sans),sans-serif;font-size:12px"><strong>${escaparHtml(z.nombre ?? `Zona ${i + 1}`)}</strong><div>${z.lat.toFixed(6)}, ${z.lng.toFixed(6)}</div></div>`,
         });
       });
     }
@@ -309,7 +309,7 @@ export default function MapViewGoogle(props: MapViewProps) {
         fill: "#ffffff",
         fillOpacity: 1,
         radioPx: 7,
-        popupHtml: `<div style="font-family:monospace;font-size:12px"><strong>${escaparHtml(zona.nombre ?? "Zona")}</strong><div>${zona.lat.toFixed(6)}, ${zona.lng.toFixed(6)}</div></div>`,
+        popupHtml: `<div style="font-family:var(--font-sans),sans-serif;font-size:12px"><strong>${escaparHtml(zona.nombre ?? "Zona")}</strong><div>${zona.lat.toFixed(6)}, ${zona.lng.toFixed(6)}</div></div>`,
       });
     }
 

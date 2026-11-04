@@ -205,7 +205,7 @@ function popupCp(c: CpPoligono, poblacion?: number): string {
   const total = c.total_colonias ?? colonias.length;
   const extra = total - colonias.length;
   const partes = [
-    `<div style="font-family:monospace;font-size:12px;min-width:170px;max-width:230px">`,
+    `<div style="font-family:var(--font-sans),sans-serif;font-size:12px;min-width:170px;max-width:230px">`,
     `<div style="font-size:20px;font-weight:800;letter-spacing:0.04em">${escaparHtml(c.codigo_postal)}</div>`,
   ];
   if (colonias.length > 0) {
@@ -497,7 +497,7 @@ export default function MapView(props: MapViewProps) {
           }}
           onEachFeature={(_f, layer) => {
             layer.bindTooltip(
-              `<div style="font-family:monospace;font-size:11px">AGEB ${a.cvegeo}<br/>población: ${a.pobtot?.toLocaleString("es-MX") ?? "—"}<br/>NSE proxy: ${a.nse_proxy ?? "—"}</div>`,
+              `<div style="font-family:var(--font-sans),sans-serif;font-size:11px">AGEB ${a.cvegeo}<br/>población: ${a.pobtot?.toLocaleString("es-MX") ?? "—"}<br/>NSE proxy: ${a.nse_proxy ?? "—"}</div>`,
               { sticky: true }
             );
           }}
@@ -524,7 +524,7 @@ export default function MapView(props: MapViewProps) {
                   });
                   if (etiquetasCp) {
                     layer.bindTooltip(
-                      `<span style="font-family:monospace;font-size:11px;font-weight:700">${c.codigo_postal}</span>`,
+                      `<span style="font-family:var(--font-sans),sans-serif;font-size:11px;font-weight:700">${c.codigo_postal}</span>`,
                       {
                         permanent: true,
                         direction: "center",

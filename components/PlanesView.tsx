@@ -105,7 +105,7 @@ export default function PlanesView({
         <div className="tarjeta glow-violeta mx-auto max-w-5xl px-6 py-6">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-violeta">
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-violeta">
                 Planner
               </p>
               <h1 className="mt-1 font-display text-xl font-extrabold tracking-tight text-texto-primario">

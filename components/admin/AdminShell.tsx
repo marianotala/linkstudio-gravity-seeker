@@ -91,7 +91,7 @@ export default function AdminShell({
         {/* navegación lateral de módulos */}
         <aside className="tarjeta w-[260px] shrink-0 overflow-y-auto">
           <div className="border-b border-linea px-5 py-4">
-            <p className="font-body text-[10px] font-semibold uppercase tracking-[0.25em] text-violeta">
+            <p className="font-body text-[10px] font-semibold uppercase tracking-[0.08em] text-violeta">
               Administración
             </p>
             <h1 className="mt-1 font-display text-lg font-bold tracking-tight text-texto-primario">

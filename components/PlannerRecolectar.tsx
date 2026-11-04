@@ -360,7 +360,7 @@ export function SeccionProximidad({
           placeholder="Nombre del levantamiento (opcional)"
           className={`${inputCls} max-w-xs`}
         />
-        <label className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+        <label className="font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
           Radio
         </label>
         <select
@@ -945,7 +945,7 @@ export function SeccionCompetencia({
 
       <div className="mt-4 space-y-3 border-t border-linea pt-3">
         <div className="flex items-center gap-3">
-          <label className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+          <label className="font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
             Paso 2 · Radio de cercanía
           </label>
           <select
@@ -1377,7 +1377,7 @@ export function SeccionOoh({
 
       <div className="mt-4 space-y-3 border-t border-linea pt-3">
         <div className="flex flex-wrap items-center gap-3">
-          <label className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+          <label className="font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
             Radio de cruce
           </label>
           {!radioDiferenciado && (
@@ -1434,7 +1434,7 @@ export function SeccionOoh({
 
         {tiposDisponibles.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
               Tipo
             </span>
             {tiposDisponibles.map((t) => (
@@ -1450,7 +1450,7 @@ export function SeccionOoh({
         )}
         {ciudadesDisponibles.length > 1 && (
           <div className="flex max-h-16 flex-wrap items-center gap-1.5 overflow-y-auto">
-            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
               Ciudad
             </span>
             {ciudadesDisponibles.map((c) => (
@@ -1465,7 +1465,7 @@ export function SeccionOoh({
           </div>
         )}
         <div className="flex items-center gap-1.5">
-          <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
             Medio
           </span>
           {(["todas", "digital", "estatica"] as const).map((d) => (

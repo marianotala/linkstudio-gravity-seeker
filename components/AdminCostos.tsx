@@ -351,7 +351,7 @@ export default function AdminCostos() {
                 { etiqueta: "Caché mes", valor: fmt(gasto.mes_cache), sub: "consultas gratis" },
               ].map((c) => (
                 <div key={c.etiqueta} className="rounded-lg border border-linea bg-panel p-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
                     {c.etiqueta}
                   </p>
                   <p className="mt-1 font-display text-lg font-extrabold text-texto-primario">
@@ -364,7 +364,7 @@ export default function AdminCostos() {
 
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <div>
-                <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
                   Por usuario
                 </p>
                 <table className="w-full text-left font-mono text-xs">
@@ -393,7 +393,7 @@ export default function AdminCostos() {
                 </table>
               </div>
               <div>
-                <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
                   Por método
                 </p>
                 <table className="w-full text-left font-mono text-xs">
@@ -428,7 +428,7 @@ export default function AdminCostos() {
 
             {gasto.contextos.length > 0 && (
               <div className="mt-4">
-                <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
                   Por búsqueda / plan (mes, top 25)
                 </p>
                 <div className="max-h-52 overflow-y-auto rounded-lg border border-linea">

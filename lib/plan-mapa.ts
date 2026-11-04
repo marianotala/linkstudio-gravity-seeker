@@ -318,7 +318,7 @@ export async function capturarMapaPlan(o: OpcionesMapa): Promise<string | null> 
     ctx.fillStyle = "rgba(255,255,255,0.8)";
     ctx.fillRect(ANCHO - 170, ALTO - 22, 170, 22);
     ctx.fillStyle = "#4a4a4a";
-    ctx.font = "11px monospace";
+    ctx.font = "11px Montserrat, sans-serif";
     ctx.fillText("© OpenStreetMap", ANCHO - 158, ALTO - 7);
 
     return canvas.toDataURL("image/jpeg", 0.85);

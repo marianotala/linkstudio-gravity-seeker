@@ -219,7 +219,7 @@ export default function RecolectorPuntos({
       {puntos.length > 0 && (
         <div className="mt-3">
           <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
               {puntos.length.toLocaleString("es-MX")}{" "}
               {puntos.length === 1 ? etiquetaPunto : etiquetaPuntos} recolectados
             </span>

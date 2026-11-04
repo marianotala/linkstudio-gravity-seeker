@@ -28,7 +28,7 @@ function Tarjeta({
 }) {
   return (
     <div className="min-w-[180px] flex-1 border-r border-linea px-4 py-2 last:border-r-0">
-      <p className="font-body text-[10px] font-semibold uppercase tracking-[0.18em] text-texto-terciario">
+      <p className="font-body text-[10px] font-semibold uppercase tracking-[0.08em] text-texto-terciario">
         {etiqueta}
       </p>
       {children}

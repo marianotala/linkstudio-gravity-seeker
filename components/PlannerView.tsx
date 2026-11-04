@@ -1201,7 +1201,7 @@ export default function PlannerView({
         {/* ---------- menú lateral ---------- */}
         <aside className="tarjeta w-[300px] shrink-0 overflow-y-auto">
           <div className="border-b border-linea px-5 py-4">
-            <p className="font-body text-[10px] font-semibold uppercase tracking-[0.25em] text-violeta">
+            <p className="font-body text-[10px] font-semibold uppercase tracking-[0.08em] text-violeta">
               Planner
             </p>
             <h1 className="mt-1 truncate font-display text-lg font-bold tracking-tight text-texto-primario">
@@ -1448,7 +1448,7 @@ export default function PlannerView({
                         " Esta corrida no guardó descartados (previa a esta versión): solo se puede QUITAR; para rescatar lo descartado, re-córrela — las consultas repetidas salen del caché ($0 dentro de 36 h)."}
                     </p>
                     <div className="mt-2">
-                      <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                      <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
                         Términos de marca
                       </p>
                       <ChipsTerminos
@@ -1458,7 +1458,7 @@ export default function PlannerView({
                       />
                     </div>
                     <div className="mt-2">
-                      <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                      <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
                         Exclusiones
                       </p>
                       <ChipsTerminos
@@ -1853,7 +1853,7 @@ export default function PlannerView({
               {/* detalle por PDV (Proximidad): presupuesto por tienda */}
               {seccion === "proximidad" && surveySeleccionado && (
                 <div className="shrink-0 px-5 pt-3">
-                  <p className="mb-1.5 font-body text-[10px] font-semibold uppercase tracking-[0.2em] text-texto-terciario">
+                  <p className="mb-1.5 font-body text-[10px] font-semibold uppercase tracking-[0.08em] text-texto-terciario">
                     Detalle por PDV de “{nombreDe(surveySeleccionado)}”
                     <span className="ml-2 font-normal normal-case tracking-normal">
                       universo del radio individual — base de la asignación de
@@ -1870,7 +1870,7 @@ export default function PlannerView({
               {/* universo del levantamiento seleccionado */}
               {universoSeleccionado && surveySeleccionado && (
                 <div className="shrink-0 px-5 pt-3">
-                  <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                  <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
                     Universo de “{nombreDe(surveySeleccionado)}”
                     <span className="ml-2 normal-case tracking-normal text-zinc-600">
                       (el consolidado del plan vive en Resumen del proyecto)

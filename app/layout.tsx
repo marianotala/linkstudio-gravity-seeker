@@ -1,21 +1,15 @@
 import type { Metadata } from "next";
-import { Montserrat, JetBrains_Mono } from "next/font/google";
+import { Montserrat } from "next/font/google";
 import "./globals.css";
 
-// Tipografía del brand book V2: Montserrat para TODO (Regular 400
-// lectura, Medium 500 titulares, Semibold 600 énfasis/cifras/CTAs —
-// evitar Light en lecturas pequeñas) y monospace SOLO para datos
-// (números, coordenadas, códigos) en JetBrains Mono.
+// TIPOGRAFÍA ÚNICA: Montserrat para TODO (títulos 700, etiquetas 600,
+// cuerpo 400, cifras 600 con tabular-nums). Un solo token --font-sans
+// del que cuelga toda la app; las columnas numéricas alinean con
+// font-variant-numeric: tabular-nums (Montserrat es proporcional).
 const montserrat = Montserrat({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--fuente-montserrat",
-});
-
-const datos = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--fuente-datos",
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-sans",
 });
 
 export const metadata: Metadata = {
@@ -30,7 +24,7 @@ export default function RootLayout({
   return (
     <html lang="es-MX">
       <body
-        className={`${montserrat.variable} ${datos.variable} font-body bg-fondo text-texto-primario antialiased`}
+        className={`${montserrat.variable} font-body bg-fondo text-texto-primario antialiased`}
       >
         {children}
       </body>
