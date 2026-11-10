@@ -30,6 +30,7 @@ import {
 import {
   actualizarRunPlanner,
   cargarPuntosSurveys,
+  contarExcluidos,
   crearSurveysPlanner,
   guardarUniversosPlanner,
   insertarPuntosCrudos,
@@ -159,16 +160,22 @@ export default function OohView({
         .eq("project_id", planner.proyectoId)
         .in("rol", ["poi_propio", "proximidad"])
         .order("created_at", { ascending: false });
-      const lista = ((data ?? []) as {
+      const filas = (data ?? []) as {
         id: string;
         rol: string;
         configuracion: { nombre?: string };
         survey_points: { count: number }[];
-      }[]).map((s) => ({
+      }[];
+      // los puntos borrados en revisión no son PDVs del cruce
+      const borrados = await contarExcluidos(filas.map((s) => s.id));
+      const lista = filas.map((s) => ({
         id: s.id,
         rol: s.rol,
         nombre: s.configuracion?.nombre ?? s.rol,
-        puntos: s.survey_points?.[0]?.count ?? 0,
+        puntos: Math.max(
+          0,
+          (s.survey_points?.[0]?.count ?? 0) - (borrados[s.id] ?? 0)
+        ),
       }));
       setSurveysFuente(lista.filter((s) => s.puntos > 0));
     })();

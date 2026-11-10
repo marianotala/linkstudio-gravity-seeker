@@ -220,11 +220,16 @@ export async function reescribirPuntosPlanner(
 ): Promise<void> {
   try {
     const supabase = createClient();
+    const ids = Array.from(run.surveys.values());
+    // los BORRADOS en revisión sobreviven a la reescritura: solo se
+    // reemplazan los activos y un borrado jamás re-entra como activo
+    const excluidos = await placeIdsExcluidos(ids);
     await supabase
       .from("survey_points")
       .delete()
-      .in("survey_id", Array.from(run.surveys.values()));
-    run.guardados = new Set();
+      .in("survey_id", ids)
+      .eq("estado", "activo");
+    run.guardados = new Set(excluidos);
     await guardarPuntosPlanner(run, lista);
   } catch (e) {
     console.error("No se pudieron reescribir los puntos finales:", e);
@@ -428,6 +433,13 @@ export async function marcarUniversosActualizados(
 /** Puntos de un survey convertidos de vuelta a Poi (semilla de
  * reanudación y mapa del proyecto). */
 export interface PuntoSurvey {
+  /** id de la fila (llave de borrar/restaurar en la vista Puntos). */
+  id?: number;
+  /** 'excluido' = borrado en revisión: no cuenta para nada, pero el
+   * registro se conserva con usuario y fecha para poder restaurarlo. */
+  estado?: "activo" | "excluido";
+  excluido_por?: string | null;
+  excluido_en?: string | null;
   place_id: string;
   nombre: string;
   direccion: string | null;
@@ -509,15 +521,20 @@ export async function insertarPuntosCrudos(
 /** Puntos CRUDOS de un survey (con metadata completa — p. ej. las
  * relaciones pantalla→PDV de un cruce OOH), paginado. */
 export async function cargarPuntosCrudosSurvey(
-  surveyId: string
+  surveyId: string,
+  /** Default 'activo': los borrados en revisión no cuentan para nada.
+   * Solo la vista Puntos pide 'excluido' (pestaña Borrados) o 'todos'. */
+  estado: "activo" | "excluido" | "todos" = "activo"
 ): Promise<PuntoSurvey[]> {
   const supabase = createClient();
   const filas: PuntoSurvey[] = [];
   for (let desde = 0; ; desde += 1000) {
-    const { data, error } = await supabase
+    let q = supabase
       .from("survey_points")
-      .select("place_id, nombre, direccion, lat, lng, cp, municipio, entidad, categoria, metadata, universo_individual, nse_dominante")
-      .eq("survey_id", surveyId)
+      .select("id, estado, excluido_por, excluido_en, place_id, nombre, direccion, lat, lng, cp, municipio, entidad, categoria, metadata, universo_individual, nse_dominante")
+      .eq("survey_id", surveyId);
+    if (estado !== "todos") q = q.eq("estado", estado);
+    const { data, error } = await q
       .order("id")
       .range(desde, desde + 999);
     if (error) break;
@@ -642,6 +659,7 @@ export async function cargarPuntosSurveys(
         .from("survey_points")
         .select("place_id, nombre, direccion, lat, lng, cp, categoria, metadata, survey_id")
         .eq("survey_id", id)
+        .eq("estado", "activo")
         .order("id")
         .range(desde, desde + 999);
       if (error) break;
@@ -651,6 +669,106 @@ export async function cargarPuntosSurveys(
     salida.set(id, puntos);
   }
   return salida;
+}
+
+// ------------------------------------------------------------------
+// BORRAR PUNTOS EN REVISIÓN — para el usuario la acción es "Borrar";
+// internamente el punto queda como estado 'excluido' con usuario y
+// fecha (el registro NO se elimina) y deja de contar para TODO:
+// universos, consolidado, traslapes, mapa, PDF y Excel leen solo los
+// activos. "Restaurar" lo regresa tal cual. Cero consultas a Google.
+// ------------------------------------------------------------------
+
+/** place_ids borrados en revisión de una lista de surveys. Nunca lanza. */
+async function placeIdsExcluidos(surveyIds: string[]): Promise<string[]> {
+  if (surveyIds.length === 0) return [];
+  try {
+    const supabase = createClient();
+    const salida: string[] = [];
+    for (let desde = 0; ; desde += 1000) {
+      const { data, error } = await supabase
+        .from("survey_points")
+        .select("place_id")
+        .in("survey_id", surveyIds)
+        .eq("estado", "excluido")
+        .order("id")
+        .range(desde, desde + 999);
+      if (error) break;
+      (data ?? []).forEach((r) => salida.push((r as { place_id: string }).place_id));
+      if (!data || data.length < 1000) break;
+    }
+    return salida;
+  } catch {
+    return [];
+  }
+}
+
+/** Conteo de puntos BORRADOS por survey (pestaña "Borrados (N)" y la
+ * línea de metodología del PDF). Nunca lanza. */
+export async function contarExcluidos(
+  surveyIds: string[]
+): Promise<Record<string, number>> {
+  const conteo: Record<string, number> = {};
+  try {
+    const supabase = createClient();
+    for (let i = 0; i < surveyIds.length; i += 80) {
+      const tanda = surveyIds.slice(i, i + 80);
+      for (let desde = 0; ; desde += 1000) {
+        const { data, error } = await supabase
+          .from("survey_points")
+          .select("survey_id")
+          .in("survey_id", tanda)
+          .eq("estado", "excluido")
+          .order("id")
+          .range(desde, desde + 999);
+        if (error) break;
+        for (const r of (data ?? []) as { survey_id: string }[]) {
+          conteo[r.survey_id] = (conteo[r.survey_id] ?? 0) + 1;
+        }
+        if (!data || data.length < 1000) break;
+      }
+    }
+  } catch (e) {
+    console.error("No se pudieron contar los puntos borrados:", e);
+  }
+  return conteo;
+}
+
+/**
+ * Cambia el estado de puntos de UN survey (borrar = 'excluido',
+ * restaurar = 'activo') por id de fila, y marca el survey como
+ * modificado: su universo y el consolidado quedan desactualizados
+ * hasta que el recálculo automático del plan los repone.
+ */
+export async function cambiarEstadoPuntos(
+  surveyId: string,
+  ids: number[],
+  estado: "activo" | "excluido",
+  usuarioId: string | null
+): Promise<void> {
+  if (ids.length === 0) return;
+  const supabase = createClient();
+  const campos =
+    estado === "excluido"
+      ? {
+          estado,
+          excluido_por: usuarioId,
+          excluido_en: new Date().toISOString(),
+        }
+      : { estado, excluido_por: null, excluido_en: null };
+  for (let i = 0; i < ids.length; i += 200) {
+    const { error } = await supabase
+      .from("survey_points")
+      .update(campos)
+      .eq("survey_id", surveyId)
+      .in("id", ids.slice(i, i + 200));
+    if (error) {
+      throw new Error(
+        `No se pudieron ${estado === "excluido" ? "borrar" : "restaurar"} los puntos: ${error.message}`
+      );
+    }
+  }
+  await marcarSurveysModificados([surveyId]);
 }
 
 // ------------------------------------------------------------------
@@ -1119,8 +1237,10 @@ export async function dividirSurveyEnCapas(
   const cfg = (s.configuracion ?? {}) as Record<string, unknown>;
 
   onEstado?.("Cargando los puntos del levantamiento…");
-  const crudos = await cargarPuntosCrudosSurvey(surveyId);
-  if (crudos.length === 0) {
+  // con los BORRADOS en revisión: viajan a la capa de su marca (el
+  // survey original se elimina al final y se los llevaría el cascade)
+  const crudos = await cargarPuntosCrudosSurvey(surveyId, "todos");
+  if (!crudos.some((p) => p.estado !== "excluido")) {
     throw new Error("El levantamiento no tiene puntos que dividir");
   }
 
@@ -1174,7 +1294,9 @@ export async function dividirSurveyEnCapas(
   const entradas = Array.from(grupos.entries());
   const capas: ResultadoDivision["capas"] = [];
   for (let i = 0; i < entradas.length; i++) {
-    const [etiqueta, puntos] = entradas[i];
+    const [etiqueta, todos] = entradas[i];
+    // conteos y universo: solo los activos de la capa
+    const puntos = todos.filter((p) => p.estado !== "excluido");
     onEstado?.(
       `Creando la capa "${etiqueta}" (${i + 1} de ${entradas.length}) · ${puntos.length.toLocaleString("es-MX")} puntos…`
     );
@@ -1200,7 +1322,7 @@ export async function dividirSurveyEnCapas(
       throw new Error(`No se pudo crear la capa "${etiqueta}": ${errN?.message}`);
     }
     // REASIGNAR los puntos ya pagados (por place_id, en tandas)
-    const ids = puntos.map((p) => p.place_id);
+    const ids = todos.map((p) => p.place_id);
     for (let j = 0; j < ids.length; j += 150) {
       const { error: errM } = await supabase
         .from("survey_points")
@@ -1218,6 +1340,11 @@ export async function dividirSurveyEnCapas(
     onEstado?.(
       `Universo de "${etiqueta}" (${i + 1} de ${entradas.length})…`
     );
+    if (puntos.length === 0) {
+      // capa solo con borrados en revisión: sin universo que calcular
+      capas.push({ etiqueta, puntos: 0 });
+      continue;
+    }
     const geocercas = geocercasDeSurvey(
       { id: nuevo.id, rol: s.rol as RolLevantamiento, configuracion: cfgNueva },
       puntos
@@ -1281,7 +1408,11 @@ export async function cargarRunParaReanudar(surveyId: string): Promise<{
   if (surveys.size === 0) surveys.set(null, s.id);
   const porSurvey = await cargarPuntosSurveys(Array.from(surveys.values()));
   const puntos: Poi[] = [];
-  const guardados = new Set<string>();
+  // los borrados en revisión cuentan como "ya guardados": si Google los
+  // vuelve a regresar al reanudar, el autosave no los re-inserta
+  const guardados = new Set<string>(
+    await placeIdsExcluidos(Array.from(surveys.values()))
+  );
   porSurvey.forEach((lista) => {
     for (const p of lista) {
       if (!guardados.has(p.placeId)) {

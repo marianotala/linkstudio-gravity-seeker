@@ -17,6 +17,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import AppHeader from "./AppHeader";
 import ExportarProyecto from "./ExportarProyecto";
+import PuntosSurvey, { type SurveyDePuntos } from "./PuntosSurvey";
 import ResumenProyecto from "./ResumenProyecto";
 import UniversosPanel from "./UniversosPanel";
 import {
@@ -35,6 +36,7 @@ import {
   cargarPuntosSurveys,
   colorCapaEstable,
   contarDescartados,
+  contarExcluidos,
   dividirSurveyEnCapas,
   ETIQUETA_REVISAR,
   ETIQUETA_ROL,
@@ -47,7 +49,9 @@ import {
   type DescarteGuardado,
   type PuntoSurvey,
 } from "@/lib/planner";
+import { recalcularPlanTrasCambios } from "@/lib/recalculo-plan";
 import { reFiltrarRun } from "@/lib/refiltrado";
+import { estadoNegocio } from "@/lib/senales-puntos";
 import { circlePolygon } from "@/lib/geo";
 import PanelDescartados from "./PanelDescartados";
 import PlannerGeotargeting, {
@@ -103,9 +107,21 @@ interface SurveyFila {
   status: "en_progreso" | "completado" | "interrumpido";
   progreso: Record<string, unknown> | null;
   created_at: string;
+  /** Puntos ACTIVOS: los borrados en revisión se descuentan al cargar. */
   survey_points: { count: number }[];
+  /** Puntos borrados en revisión (pestaña "Borrados (N)"). */
+  excluidos?: number;
   survey_universes: { resultados: Universos }[];
 }
+
+/** Secciones cuyos levantamientos tienen vista Puntos (PDVs que se
+ * pueden borrar/restaurar). OOH y Geo-Targeting no: sus filas son
+ * pantallas de un cruce y CPs, no puntos revisables. */
+const ROLES_CON_PUNTOS: RolLevantamiento[] = [
+  "poi_propio",
+  "proximidad",
+  "competencia",
+];
 
 const SECCIONES: {
   clave: SeccionPlanner;
@@ -348,6 +364,18 @@ export default function PlannerView({
   const [refiltrando, setRefiltrando] = useState<string | null>(null);
   const [renombrando, setRenombrando] = useState<{ id: string; texto: string } | null>(null);
   const estadoListoRef = useRef(false);
+  /** Vista de la sección: sus levantamientos o la tabla de Puntos. */
+  const [vista, setVista] = useState<"seccion" | "puntos">("seccion");
+  const [puntosSurveyId, setPuntosSurveyId] = useState<string | null>(null);
+  /** RECÁLCULO AUTOMÁTICO del plan tras borrar/restaurar puntos: texto
+   * de progreso (indicador "Recalculando…") y contador de refresco para
+   * que Resumen/Exportar recarguen el consolidado al terminar. */
+  const [recalculoPlan, setRecalculoPlan] = useState<string | null>(null);
+  const [refrescoPlan, setRefrescoPlan] = useState(0);
+  const pendientesRecalculo = useRef(new Set<string>());
+  const timerRecalculo = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recalculoCorriendo = useRef(false);
+  const secuenciaPuntos = useRef<Record<string, number>>({});
 
   const cargar = useCallback(async () => {
     const supabase = createClient();
@@ -371,7 +399,24 @@ export default function PlannerView({
       )
       .eq("project_id", proyectoId)
       .order("created_at", { ascending: false });
-    setSurveys(((s ?? []) as unknown as SurveyFila[]) ?? []);
+    const lista = ((s ?? []) as unknown as SurveyFila[]) ?? [];
+    // los borrados en revisión no cuentan: "Puntos" son los ACTIVOS
+    const borrados =
+      lista.length > 0 ? await contarExcluidos(lista.map((x) => x.id)) : {};
+    setSurveys(
+      lista.map((x) => ({
+        ...x,
+        excluidos: borrados[x.id] ?? 0,
+        survey_points: [
+          {
+            count: Math.max(
+              0,
+              (x.survey_points?.[0]?.count ?? 0) - (borrados[x.id] ?? 0)
+            ),
+          },
+        ],
+      }))
+    );
     // conteo de descartados persistidos (badge "Descartados (N)")
     if (s && s.length > 0) {
       setDescPorSurvey(await contarDescartados(s.map((x) => (x as { id: string }).id)));
@@ -408,6 +453,76 @@ export default function PlannerView({
   useEffect(() => {
     cargar();
   }, [cargar]);
+
+  /** Corre el recálculo de todo lo pendiente; lo que se toque mientras
+   * corre entra a la siguiente vuelta del mismo ciclo. */
+  async function ejecutarRecalculo() {
+    if (recalculoCorriendo.current) return;
+    recalculoCorriendo.current = true;
+    try {
+      while (pendientesRecalculo.current.size > 0) {
+        const ids = Array.from(pendientesRecalculo.current);
+        pendientesRecalculo.current.clear();
+        setRecalculoPlan("preparando…");
+        const r = await recalcularPlanTrasCambios(
+          proyectoId,
+          ids,
+          setRecalculoPlan
+        );
+        await cargar();
+        setRefrescoPlan((n) => n + 1);
+        if (r.errores.length > 0) {
+          setAvisoDivision({
+            tipo: "error",
+            texto: `El recálculo automático no terminó completo (${r.errores.join(" · ")}) — lo pendiente quedó marcado con ⚠; recalcúlalo con ⟳ Universo o en el Resumen.`,
+          });
+        }
+      }
+    } finally {
+      recalculoCorriendo.current = false;
+      setRecalculoPlan(null);
+    }
+  }
+
+  /** Programa el recálculo con debounce de 2 s: borrar varios puntos
+   * seguidos dispara UN solo recálculo. */
+  function programarRecalculo(surveyId: string) {
+    pendientesRecalculo.current.add(surveyId);
+    setRecalculoPlan((prev) => prev ?? "en un momento…");
+    if (timerRecalculo.current) clearTimeout(timerRecalculo.current);
+    timerRecalculo.current = setTimeout(() => {
+      timerRecalculo.current = null;
+      void ejecutarRecalculo();
+    }, 2000);
+  }
+
+  // al salir del plan con un recálculo en espera: se lanza de una vez
+  // (sin él, los universos quedarían marcados ⚠ hasta recalcular a mano)
+  useEffect(() => {
+    const pendientes = pendientesRecalculo.current;
+    return () => {
+      if (timerRecalculo.current) {
+        clearTimeout(timerRecalculo.current);
+        timerRecalculo.current = null;
+        if (pendientes.size > 0 && !recalculoCorriendo.current) {
+          void recalcularPlanTrasCambios(proyectoId, Array.from(pendientes));
+          pendientes.clear();
+        }
+      }
+    };
+  }, [proyectoId]);
+
+  /** Se borraron o restauraron puntos de un levantamiento: el mapa y
+   * los conteos se actualizan al momento y el plan recalcula solo. */
+  async function alCambiarPuntos(surveyId: string) {
+    programarRecalculo(surveyId);
+    const turno = (secuenciaPuntos.current[surveyId] ?? 0) + 1;
+    secuenciaPuntos.current[surveyId] = turno;
+    const mapa = await cargarPuntosSurveys([surveyId]);
+    if (turno !== secuenciaPuntos.current[surveyId]) return;
+    setPuntosCache((prev) => ({ ...prev, [surveyId]: mapa.get(surveyId) ?? [] }));
+    await cargar();
+  }
 
   // persistir la vista (sección + visibilidad) en plan_state
   useEffect(() => {
@@ -973,10 +1088,17 @@ export default function PlannerView({
     const filas = crudos.map((r) => ({
       nombre: r.nombre,
       direccion: r.direccion ?? "",
+      municipio: r.municipio ?? "",
+      entidad: r.entidad ?? "",
       lat: r.lat,
       lng: r.lng,
       cp: r.cp ?? "",
       categoria: r.categoria ?? "",
+      estado_negocio_google: (() => {
+        const e = estadoNegocio(r.metadata?.business_status).etiqueta;
+        return e === "—" ? "" : e;
+      })(),
+      tipos: ((r.metadata?.types as string[] | undefined) ?? []).join(", "),
       universo_18_radio_individual: r.universo_individual ?? null,
       nse_dominante: r.nse_dominante ?? "",
       pct_del_universo:
@@ -988,10 +1110,14 @@ export default function PlannerView({
     hoja["!cols"] = [
       { wch: 32 },
       { wch: 42 },
+      { wch: 20 },
+      { wch: 18 },
       { wch: 11 },
       { wch: 11 },
       { wch: 8 },
       { wch: 22 },
+      { wch: 18 },
+      { wch: 30 },
       { wch: 22 },
       { wch: 13 },
       { wch: 15 },
@@ -1161,6 +1287,29 @@ export default function PlannerView({
       ? porRol(seccion as RolLevantamiento)
       : [];
 
+  // vista PUNTOS: levantamientos de la sección con filas revisables
+  const surveysPuntos: SurveyDePuntos[] = ROLES_CON_PUNTOS.includes(
+    seccion as RolLevantamiento
+  )
+    ? filasSeccion
+        .filter((s) => puntosDe(s) + (s.excluidos ?? 0) > 0)
+        .map((s) => ({
+          id: s.id,
+          nombre: nombreDe(s),
+          rol: s.rol,
+          color: colorDe(s),
+          configuracion: s.configuracion,
+          activos: puntosDe(s),
+          excluidos: s.excluidos ?? 0,
+        }))
+    : [];
+  const enPuntos = vista === "puntos" && surveysPuntos.length > 0;
+  const puntosActivoId = enPuntos
+    ? (surveysPuntos.find((s) => s.id === puntosSurveyId)?.id ??
+      surveysPuntos.find((s) => s.id === seleccionado)?.id ??
+      surveysPuntos[0].id)
+    : null;
+
   const chipStatus = (s: SurveyFila) =>
     s.status === "completado" ? (
       <span className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[9px] uppercase tracking-wider text-emerald-400">
@@ -1217,7 +1366,10 @@ export default function PlannerView({
             {SECCIONES.map((sec) => (
               <button
                 key={sec.clave}
-                onClick={() => setSeccion(sec.clave)}
+                onClick={() => {
+                  setSeccion(sec.clave);
+                  setVista("seccion");
+                }}
                 className={`mb-1 flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors ${
                   seccion === sec.clave
                     ? "border-linea bg-panel2"
@@ -1245,6 +1397,14 @@ export default function PlannerView({
                 {sec.clave !== "exportar" && sec.clave !== "resumen" && (
                   <span className="shrink-0 rounded-full border border-linea bg-fondo px-2 py-0.5 font-mono text-[10px] text-zinc-500">
                     {porRol(sec.clave as RolLevantamiento).length}
+                  </span>
+                )}
+                {sec.clave === "resumen" && recalculoPlan && (
+                  <span
+                    className="shrink-0 rounded-full border border-violeta/50 bg-violeta/10 px-2 py-0.5 font-mono text-[10px] text-violeta"
+                    title={`Recalculando universos, consolidado y traslapes: ${recalculoPlan}`}
+                  >
+                    ⟳ Recalculando…
                   </span>
                 )}
               </button>
@@ -1275,6 +1435,8 @@ export default function PlannerView({
             <ResumenProyecto
               proyectoId={proyectoId}
               surveys={surveys.filter((s) => s.rol !== "exploracion")}
+              recalculando={recalculoPlan}
+              refresco={refrescoPlan}
             />
           ) : seccion === "exportar" ? (
             <ExportarProyecto
@@ -1286,6 +1448,8 @@ export default function PlannerView({
               tacticas={tacticasPlan}
               onTacticas={setTacticasPlan}
               irAResumen={() => setSeccion("resumen")}
+              recalculando={recalculoPlan}
+              refresco={refrescoPlan}
             />
           ) : !activa.activa ? (
             <div className="m-auto max-w-lg px-6 py-10 text-center">
@@ -1310,11 +1474,71 @@ export default function PlannerView({
                   es el Buscador completo embebido: trae su propio mapa,
                   así que su sección ocupa todo el alto y no pinta el
                   mapa del proyecto. */}
+              {surveysPuntos.length > 0 && (
+                <div className="flex shrink-0 items-center gap-2 border-b border-linea px-5 py-2">
+                  <div className="inline-flex overflow-hidden rounded-control border border-linea">
+                    <button
+                      onClick={() => setVista("seccion")}
+                      className={`px-3 py-1.5 font-body text-xs font-semibold transition-colors ${
+                        !enPuntos
+                          ? "bg-superficie-hover text-texto-primario"
+                          : "bg-panel text-texto-terciario hover:text-texto-secundario"
+                      }`}
+                    >
+                      {activa.nombre}
+                    </button>
+                    <button
+                      onClick={() => setVista("puntos")}
+                      className={`border-l border-linea px-3 py-1.5 font-body text-xs font-semibold transition-colors ${
+                        enPuntos
+                          ? "bg-superficie-hover text-texto-primario"
+                          : "bg-panel text-texto-terciario hover:text-texto-secundario"
+                      }`}
+                      title="La tabla de puntos de cada levantamiento: revisa, borra los que no van y el plan recalcula solo"
+                    >
+                      Puntos (
+                      {fmt(surveysPuntos.reduce((t, x) => t + x.activos, 0))})
+                    </button>
+                  </div>
+                  {recalculoPlan && (
+                    <span className="truncate font-mono text-[11px] text-violeta">
+                      ⟳ Recalculando… {recalculoPlan}
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* vista PUNTOS: tabla del levantamiento + mapa. La sección
+                  queda montada (oculta) para no cortar corridas en curso */}
+              {enPuntos && puntosActivoId && (
+                <div className="flex h-[58%] min-h-0 shrink-0 flex-col px-5 py-3">
+                  <PuntosSurvey
+                    surveys={surveysPuntos}
+                    surveyId={puntosActivoId}
+                    onSurvey={setPuntosSurveyId}
+                    usuario={usuario}
+                    marcaCliente={proyecto?.nombre_cliente ?? null}
+                    recalculando={recalculoPlan}
+                    refresco={refrescoDetalle}
+                    onCambio={alCambiarPuntos}
+                    onFoco={(p) => {
+                      setFoco(p);
+                      setTimeout(() => setFoco(null), 800);
+                    }}
+                    onDetalle={(id) => {
+                      const s = surveys.find((x) => x.id === id);
+                      if (s) detallePorPunto(s);
+                    }}
+                    detallando={detallando?.texto ?? null}
+                  />
+                </div>
+              )}
               <div
                 className={
-                  seccion === "poi_propio"
-                    ? "min-h-0 flex-1 overflow-y-auto px-5 py-3"
-                    : "max-h-[62%] shrink-0 overflow-y-auto border-b border-linea px-5 py-3"
+                  enPuntos
+                    ? "hidden"
+                    : seccion === "poi_propio"
+                      ? "min-h-0 flex-1 overflow-y-auto px-5 py-3"
+                      : "max-h-[62%] shrink-0 overflow-y-auto border-b border-linea px-5 py-3"
                 }
               >
                 <div className="mb-3">
@@ -1645,6 +1869,22 @@ export default function PlannerView({
                                     className="inline-flex gap-1"
                                     onClick={(e) => e.stopPropagation()}
                                   >
+                                    {ROLES_CON_PUNTOS.includes(s.rol) &&
+                                      puntosDe(s) + (s.excluidos ?? 0) > 0 && (
+                                        <button
+                                          onClick={() => {
+                                            setPuntosSurveyId(s.id);
+                                            setVista("puntos");
+                                          }}
+                                          className="rounded border border-violeta/60 bg-violeta/10 px-2 py-0.5 text-[10px] text-violeta hover:bg-violeta/20"
+                                          title="Tabla de puntos del levantamiento: revisa, borra los que no van (se pueden restaurar) y el plan recalcula solo — 0 consultas a Google"
+                                        >
+                                          Puntos
+                                          {(s.excluidos ?? 0) > 0
+                                            ? ` · ${fmt(s.excluidos ?? 0)} borrados`
+                                            : ""}
+                                        </button>
+                                      )}
                                     {/* reclasificar sin re-pagar: el rol
                                         cambia, los puntos/descartados/
                                         universos se conservan tal cual */}
@@ -1851,7 +2091,7 @@ export default function PlannerView({
               </div>
 
               {/* detalle por PDV (Proximidad): presupuesto por tienda */}
-              {seccion === "proximidad" && surveySeleccionado && (
+              {!enPuntos && seccion === "proximidad" && surveySeleccionado && (
                 <div className="shrink-0 px-5 pt-3">
                   <p className="mb-1.5 font-body text-[10px] font-semibold uppercase tracking-[0.08em] text-texto-terciario">
                     Detalle por PDV de “{nombreDe(surveySeleccionado)}”
@@ -1868,7 +2108,7 @@ export default function PlannerView({
               )}
 
               {/* universo del levantamiento seleccionado */}
-              {universoSeleccionado && surveySeleccionado && (
+              {!enPuntos && universoSeleccionado && surveySeleccionado && (
                 <div className="shrink-0 px-5 pt-3">
                   <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500">
                     Universo de “{nombreDe(surveySeleccionado)}”
@@ -1882,7 +2122,7 @@ export default function PlannerView({
 
               {/* mapa del proyecto: todos los levantamientos visibles
                   (el Buscador embebido trae su propio mapa) */}
-              {seccion !== "poi_propio" && (
+              {(seccion !== "poi_propio" || enPuntos) && (
                 <div className="relative m-4 min-h-0 flex-1 overflow-hidden rounded-lg border border-linea">
                   <PlannerMapa capas={capasMapa} foco={foco} />
                   {capasMapa.length > 0 && (

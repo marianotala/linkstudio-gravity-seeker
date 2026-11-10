@@ -61,7 +61,10 @@ interface SurveyExportar {
   configuracion: Record<string, unknown>;
   status: string;
   created_at: string;
+  /** Puntos ACTIVOS (los borrados en revisión ya vienen descontados). */
   survey_points: { count: number }[];
+  /** Puntos borrados en revisión (no entran a ningún export). */
+  excluidos?: number;
   survey_universes: { resultados: Universos }[];
 }
 
@@ -98,6 +101,8 @@ export default function ExportarProyecto({
   tacticas,
   onTacticas,
   irAResumen,
+  recalculando = null,
+  refresco = 0,
 }: {
   proyectoId: string;
   cliente: string;
@@ -107,6 +112,11 @@ export default function ExportarProyecto({
   tacticas: TacticaClave[] | null;
   onTacticas: (t: TacticaClave[]) => void;
   irAResumen: () => void;
+  /** Recálculo automático del plan en curso (se borraron/restauraron
+   * puntos): los exports esperan a que termine. */
+  recalculando?: string | null;
+  /** Sube al terminar el recálculo: se recarga el consolidado. */
+  refresco?: number;
 }) {
   /** Formato del Export plan: one-pager vertical (WhatsApp/scroll) o
    * presentación en láminas 16:9 (para proyectar). */
@@ -165,7 +175,7 @@ export default function ExportarProyecto({
       );
       setCargado(true);
     })();
-  }, [proyectoId]);
+  }, [proyectoId, refresco]);
 
   /** Las capas del PDF = la composición del consolidado (F4). */
   const seleccionados = useMemo(() => {
@@ -705,6 +715,19 @@ export default function ExportarProyecto({
               ]
             : [];
         })(),
+        // revisión manual de puntos: encontrados · borrados · activos
+        ...(() => {
+          const activos = normales.reduce((t, s) => t + puntosDe(s), 0);
+          const borrados = normales.reduce(
+            (t, s) => t + (s.excluidos ?? 0),
+            0
+          );
+          return activos + borrados > 0
+            ? [
+                `${fmt(activos + borrados)} puntos encontrados · ${fmt(borrados)} borrados en revisión · ${fmt(activos)} activos`,
+              ]
+            : [];
+        })(),
         // transparencia de configuración: el radio usado POR CAPA
         ...(() => {
           const radios = normales
@@ -800,6 +823,8 @@ export default function ExportarProyecto({
         Status: s.status,
         Puntos:
           s.rol === "geotargeting" ? `${cpsDe(s)} CPs` : puntosDe(s),
+        "Borrados en revisión":
+          s.rol === "geotargeting" ? "" : (s.excluidos ?? 0),
         "Universo 18+": universoDe(s)?.residencial?.adultos18 ?? null,
         Fecha: new Date(s.created_at).toLocaleDateString("es-MX"),
         "En el consolidado": consolidado?.survey_ids.some((x) => x.id === s.id)
@@ -976,6 +1001,20 @@ export default function ExportarProyecto({
           {
             Nota: "El % del universo se calcula por levantamiento: universo individual del punto / suma de individuales de su capa.",
           },
+          ...(() => {
+            const conFilas = conPuntos.filter((s) => s.rol !== "geotargeting");
+            const activos = conFilas.reduce((t, s) => t + puntosDe(s), 0);
+            const borrados = surveys
+              .filter((s) => s.rol !== "geotargeting")
+              .reduce((t, s) => t + (s.excluidos ?? 0), 0);
+            return borrados > 0
+              ? [
+                  {
+                    Nota: `${fmt(activos + borrados)} puntos encontrados · ${fmt(borrados)} borrados en revisión · ${fmt(activos)} activos — las hojas traen solo los puntos activos.`,
+                  },
+                ]
+              : [];
+          })(),
           ...(conPuntos.some((s) => s.rol === "geotargeting")
             ? [{ Nota: `Geo-Targeting: ${NOTA_PESOS_GEO}` }]
             : []),
@@ -1205,7 +1244,7 @@ export default function ExportarProyecto({
       <div className="mt-5 flex flex-wrap items-center gap-3">
         <button
           onClick={exportarPlanProyecto}
-          disabled={!listoParaPdf || ocupado !== null}
+          disabled={!listoParaPdf || ocupado !== null || recalculando !== null}
           title={
             listoParaPdf
               ? "PDF con branding Gravity: la historia completa del territorio"
@@ -1217,7 +1256,7 @@ export default function ExportarProyecto({
         </button>
         <button
           onClick={exportarDataProyecto}
-          disabled={totalPuntos === 0 || ocupado !== null}
+          disabled={totalPuntos === 0 || ocupado !== null || recalculando !== null}
           title="Excel con una hoja por levantamiento + hoja resumen (incluye la hoja Geo-Targeting cuando el plan tiene esa capa)"
           className="rounded-md border border-linea bg-panel2 px-5 py-2.5 font-display text-xs font-extrabold text-zinc-300 transition-colors hover:border-emerald-400 hover:text-emerald-400 disabled:opacity-40"
         >
@@ -1235,6 +1274,12 @@ export default function ExportarProyecto({
         )}
         {ocupado && (
           <span className="font-mono text-[11px] text-cian">⟳ {ocupado}</span>
+        )}
+        {recalculando && !ocupado && (
+          <span className="font-mono text-[11px] text-violeta">
+            ⟳ Recalculando el plan… {recalculando} — los exports se habilitan
+            al terminar
+          </span>
         )}
       </div>
       {error && <p className="mt-3 font-mono text-[11px] text-magenta">{error}</p>}

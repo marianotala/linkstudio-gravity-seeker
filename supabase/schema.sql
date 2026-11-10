@@ -3725,3 +3725,34 @@ $$;
 
 revoke execute on function public.municipios_de_puntos(jsonb) from public, anon;
 grant execute on function public.municipios_de_puntos(jsonb) to authenticated;
+
+-- ==================================================================
+-- PUNTOS BORRADOS EN REVISIÓN — vista "Puntos" de cada levantamiento.
+-- Aplicada en vivo como migración puntos_excluidos.
+-- Para el usuario la acción es "Borrar"; el registro NO se elimina:
+-- queda como estado 'excluido' con usuario y fecha (pestaña "Borrados"
+-- con "Restaurar"). Un punto excluido deja de contar para todo —
+-- universos, consolidado, traslapes, mapa, PDF y Excel leen solo los
+-- 'activo' — y el plan recalcula con la maquinaria de universos
+-- existente, sin consultas a Google.
+-- ==================================================================
+
+alter table public.survey_points
+  add column if not exists estado text not null default 'activo',
+  add column if not exists excluido_por uuid references public.profiles (id) on delete set null,
+  add column if not exists excluido_en timestamptz;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'survey_points_estado_chk'
+  ) then
+    alter table public.survey_points
+      add constraint survey_points_estado_chk
+      check (estado in ('activo', 'excluido'));
+  end if;
+end;
+$$;
+
+create index if not exists survey_points_survey_estado_idx
+  on public.survey_points (survey_id, estado);

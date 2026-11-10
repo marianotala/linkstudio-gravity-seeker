@@ -12,24 +12,22 @@
 //   pob(A∩B) = pob(A) + pob(B) − pob(A∪B) — exacto con la misma
 //   maquinaria (validado en vivo). La base del argumento de conquista.
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import UniversosPanel from "./UniversosPanel";
 import { rangosEdadEstandar } from "@/lib/edades";
 import { NIVELES_NSE } from "@/lib/nse";
 import {
-  cargarPuntosCrudosSurvey,
   colorCapaEstable,
   ETIQUETA_ROL,
-  geocercasDeSurvey,
   type PuntoSurvey,
 } from "@/lib/planner";
+import {
+  calcularYGuardarConsolidado,
+  calcularYGuardarTraslapes,
+  type TraslapePlan,
+} from "@/lib/recalculo-plan";
 import { createClient } from "@/lib/supabase/client";
-import { calcularUniversosCliente } from "@/lib/universos-lotes";
-import type {
-  GeocercaUniverso,
-  RolLevantamiento,
-  Universos,
-} from "@/lib/types";
+import type { RolLevantamiento, Universos } from "@/lib/types";
 
 interface SurveyResumen {
   id: string;
@@ -47,27 +45,9 @@ interface Consolidado {
   created_at: string;
 }
 
-interface Traslape {
-  roles: [RolLevantamiento, RolLevantamiento];
-  poblacion: number;
-  /** % del universo BASE (el MENOR de los dos: una intersección jamás
-   * puede exceder a ninguno de sus conjuntos). */
-  pctBase: number;
-  base: RolLevantamiento;
-  poblacionBase: number;
-  /** Validación: la intersección excedió al universo menor (doble
-   * conteo) — visible y BLOQUEA el export hasta recalcular. */
-  advertencia?: string;
-}
+type Traslape = TraslapePlan;
 
 const fmt = (n: number) => n.toLocaleString("es-MX");
-const ORDEN_ROLES: RolLevantamiento[] = [
-  "poi_propio",
-  "competencia",
-  "proximidad",
-  "ooh",
-];
-
 /** Barra apilada compacta (misma lectura que el panel de universos). */
 function Barra({
   segmentos,
@@ -95,9 +75,17 @@ function Barra({
 export default function ResumenProyecto({
   proyectoId,
   surveys,
+  recalculando = null,
+  refresco = 0,
 }: {
   proyectoId: string;
   surveys: SurveyResumen[];
+  /** Recálculo AUTOMÁTICO en curso (borrar/restaurar puntos en la
+   * vista Puntos): texto de progreso, o null. */
+  recalculando?: string | null;
+  /** Sube cuando el recálculo automático terminó: se recargan el
+   * consolidado y los traslapes guardados. */
+  refresco?: number;
 }) {
   const [seleccion, setSeleccion] = useState<Record<string, boolean> | null>(null);
   const [consolidado, setConsolidado] = useState<Consolidado | null>(null);
@@ -105,7 +93,9 @@ export default function ResumenProyecto({
   const [fechaTraslapes, setFechaTraslapes] = useState<string | null>(null);
   const [calculando, setCalculando] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const [crudosCache, setCrudosCache] = useState<Record<string, PuntoSurvey[]>>({});
+  /** Puntos activos por survey (geometría): se vacía con cada refresco
+   * — un punto borrado no debe sobrevivir en un cálculo manual. */
+  const crudosCache = useRef(new Map<string, PuntoSurvey[]>());
 
   const nombreDe = (s: SurveyResumen) =>
     (s.configuracion?.nombre as string) ?? ETIQUETA_ROL[s.rol];
@@ -124,6 +114,7 @@ export default function ResumenProyecto({
 
   // cargar el consolidado y los traslapes guardados
   useEffect(() => {
+    crudosCache.current = new Map();
     (async () => {
       const supabase = createClient();
       const { data } = await supabase
@@ -153,7 +144,7 @@ export default function ResumenProyecto({
         setFechaTraslapes(tras[0].created_at);
       }
     })();
-  }, [proyectoId]);
+  }, [proyectoId, refresco]);
 
   // selección default: la composición del consolidado guardado, o
   // todos los surveys COMPLETADOS. Un survey creado DESPUÉS del último
@@ -202,40 +193,6 @@ export default function ResumenProyecto({
     );
   })();
 
-  const crudosDe = useCallback(
-    async (s: SurveyResumen): Promise<PuntoSurvey[]> => {
-      if (crudosCache[s.id]) return crudosCache[s.id];
-      const modo = (s.configuracion?.mode as string) ?? "census";
-      // cp/zone/orígenes-con-config no necesitan puntos para su
-      // geometría (geotargeting tampoco: sus geocercas salen de sus
-      // CPs); COMPETENCIA siempre los necesita (su territorio son
-      // SUS puntos, no los orígenes donde se buscó)
-      const necesitaPuntos =
-        s.rol !== "geotargeting" &&
-        (modo === "census" ||
-        modo === "territorial" ||
-        modo === "ooh" ||
-        s.rol === "competencia" ||
-        (modo === "origins" &&
-          !((s.configuracion?.origenes as unknown[])?.length ?? 0) &&
-          !((s.configuracion?.centers as unknown[])?.length ?? 0)));
-      if (!necesitaPuntos) return [];
-      const crudos = await cargarPuntosCrudosSurvey(s.id);
-      setCrudosCache((prev) => ({ ...prev, [s.id]: crudos }));
-      return crudos;
-    },
-    [crudosCache]
-  );
-
-  async function geocercasDe(lista: SurveyResumen[]): Promise<GeocercaUniverso[]> {
-    const salida: GeocercaUniverso[] = [];
-    for (const s of lista) {
-      const crudos = await crudosDe(s);
-      salida.push(...geocercasDeSurvey(s, crudos));
-    }
-    return salida;
-  }
-
   async function calcularConsolidado() {
     if (seleccionados.length === 0) {
       setError("Selecciona al menos un levantamiento con puntos");
@@ -244,41 +201,16 @@ export default function ResumenProyecto({
     setError("");
     setCalculando("Preparando geometrías…");
     try {
-      const geocercas = await geocercasDe(seleccionados);
-      const criterio = `unión deduplicada de ${seleccionados.length} ${seleccionados.length === 1 ? "levantamiento" : "levantamientos"} (${fmt(geocercas.length)} geocercas)`;
-      const u = await calcularUniversosCliente(geocercas, criterio, {
-        onProgreso: (lote, total) =>
-          setCalculando(`Calculando universo consolidado · lote ${lote + 1} de ${total}…`),
-      });
-      if (!u.disponible) {
-        setError(u.mensaje ?? "No se pudo calcular el consolidado");
-        return;
-      }
-      const composicion = seleccionados.map((s) => ({
-        id: s.id,
-        nombre: nombreDe(s),
-        rol: s.rol,
-      }));
-      const supabase = createClient();
-      await supabase
-        .from("project_universes")
-        .delete()
-        .eq("project_id", proyectoId)
-        .eq("tipo", "consolidado");
-      const { data } = await supabase
-        .from("project_universes")
-        .insert({
-          project_id: proyectoId,
-          tipo: "consolidado",
-          survey_ids: composicion,
-          resultados: { ...u, porAgeb: undefined, agebsGeo: undefined },
-        })
-        .select("created_at")
-        .single();
+      const r = await calcularYGuardarConsolidado(
+        proyectoId,
+        seleccionados,
+        setCalculando,
+        crudosCache.current
+      );
       setConsolidado({
-        resultados: u,
-        survey_ids: composicion,
-        created_at: data?.created_at ?? new Date().toISOString(),
+        resultados: r.universos,
+        survey_ids: r.composicion,
+        created_at: r.created_at,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al calcular el consolidado");
@@ -288,109 +220,14 @@ export default function ResumenProyecto({
   }
 
   async function calcularTraslapes() {
-    // geocercas por ROL (solo roles con surveys seleccionados)
-    const porRol = new Map<RolLevantamiento, SurveyResumen[]>();
-    for (const s of seleccionados) {
-      porRol.set(s.rol, [...(porRol.get(s.rol) ?? []), s]);
-    }
-    const roles = ORDEN_ROLES.filter((r) => porRol.has(r));
-    if (roles.length < 2) {
-      setError("Se necesitan levantamientos de al menos 2 roles para calcular traslapes");
-      return;
-    }
     setError("");
+    setCalculando("Preparando geometrías…");
     try {
-      // 1) universo por rol (unión de sus surveys)
-      const geocercasRol = new Map<RolLevantamiento, GeocercaUniverso[]>();
-      const universoRol = new Map<RolLevantamiento, number>();
-      for (let i = 0; i < roles.length; i++) {
-        const rol = roles[i];
-        setCalculando(
-          `Universo de ${ETIQUETA_ROL[rol]} (${i + 1} de ${roles.length})…`
-        );
-        const g = await geocercasDe(porRol.get(rol)!);
-        geocercasRol.set(rol, g);
-        const u = await calcularUniversosCliente(
-          g,
-          `rol ${rol}`,
-          {
-            onProgreso: (lote, total) =>
-              setCalculando(
-                `Universo de ${ETIQUETA_ROL[rol]} · lote ${lote + 1} de ${total}…`
-              ),
-          }
-        );
-        universoRol.set(rol, u.disponible ? u.residencial!.poblacion : 0);
-      }
-      // 2) pares: inclusión-exclusión con el universo de la UNIÓN
-      const resultados: Traslape[] = [];
-      for (let i = 0; i < roles.length; i++) {
-        for (let j = i + 1; j < roles.length; j++) {
-          const a = roles[i];
-          const b = roles[j];
-          setCalculando(
-            `Traslape ${ETIQUETA_ROL[a]} × ${ETIQUETA_ROL[b]}…`
-          );
-          const union = await calcularUniversosCliente(
-            [...geocercasRol.get(a)!, ...geocercasRol.get(b)!],
-            `unión ${a}+${b}`,
-            {
-              onProgreso: (lote, total) =>
-                setCalculando(
-                  `Traslape ${ETIQUETA_ROL[a]} × ${ETIQUETA_ROL[b]} · lote ${lote + 1} de ${total}…`
-                ),
-            }
-          );
-          const pobA = universoRol.get(a) ?? 0;
-          const pobB = universoRol.get(b) ?? 0;
-          const pobU = union.disponible ? union.residencial!.poblacion : pobA + pobB;
-          // inclusión-exclusión con piezas ya deduplicadas (geometría
-          // disjunta): pob(A∩B) = pob(A) + pob(B) − pob(A∪B)
-          const crudo = Math.max(0, Math.round(pobA + pobB - pobU));
-          // el % se declara contra el universo MENOR del par: una
-          // intersección no puede exceder a ninguno de sus conjuntos
-          const base = pobA <= pobB ? a : b;
-          const pobMenor = Math.min(pobA, pobB);
-          // tolerancia de redondeo de la interpolación: se acota al menor
-          const interseccion = Math.min(crudo, pobMenor);
-          const advertencia =
-            pobMenor > 0 && crudo > pobMenor * 1.005
-              ? `VALIDACIÓN: el traslape crudo (${crudo.toLocaleString("es-MX")}) excede al universo de ${ETIQUETA_ROL[base]} (${pobMenor.toLocaleString("es-MX")}) — hay doble conteo en los universos por rol; recalcula consolidado y traslapes. Este traslape NO se puede exportar.`
-              : undefined;
-          if (advertencia) {
-            console.error("[traslapes] validación:", advertencia);
-          }
-          resultados.push({
-            roles: [a, b],
-            poblacion: interseccion,
-            pctBase:
-              pobMenor > 0
-                ? Math.round((1000 * interseccion) / pobMenor) / 10
-                : 0,
-            base,
-            poblacionBase: pobMenor,
-            ...(advertencia ? { advertencia } : {}),
-          });
-        }
-      }
-      const supabase = createClient();
-      await supabase
-        .from("project_universes")
-        .delete()
-        .eq("project_id", proyectoId)
-        .eq("tipo", "traslape");
-      await supabase.from("project_universes").insert(
-        resultados.map((t) => ({
-          project_id: proyectoId,
-          tipo: "traslape",
-          survey_ids: {
-            roles: t.roles,
-            surveys: seleccionados
-              .filter((s) => t.roles.includes(s.rol))
-              .map((s) => s.id),
-          },
-          resultados: t,
-        }))
+      const resultados = await calcularYGuardarTraslapes(
+        proyectoId,
+        seleccionados,
+        setCalculando,
+        crudosCache.current
       );
       setTraslapes(resultados);
       setFechaTraslapes(new Date().toISOString());
@@ -421,7 +258,11 @@ export default function ResumenProyecto({
         </div>
         <button
           onClick={calcularConsolidado}
-          disabled={calculando !== null || seleccionados.length === 0}
+          disabled={
+            calculando !== null ||
+            recalculando !== null ||
+            seleccionados.length === 0
+          }
           className={`shrink-0 rounded-md px-4 py-2 font-display text-xs font-extrabold transition-opacity hover:opacity-90 disabled:opacity-40 ${
             desactualizado || !consolidado
               ? "bg-violeta text-white"
@@ -467,6 +308,15 @@ export default function ResumenProyecto({
         </div>
       </div>
 
+      {recalculando && (
+        <p className="mt-3 rounded-md border border-violeta/50 bg-violeta/10 px-3 py-2 font-mono text-[11px] text-violeta">
+          ⟳ Recalculando… {recalculando}
+          <span className="ml-2 text-texto-terciario">
+            cambiaron los puntos de un levantamiento — universos, consolidado
+            y traslapes se actualizan solos · 0 consultas a Google
+          </span>
+        </p>
+      )}
       {calculando && (
         <p className="mt-3 font-mono text-[11px] text-cian">⟳ {calculando}</p>
       )}
@@ -485,10 +335,16 @@ export default function ResumenProyecto({
               })}{" "}
               con {consolidado.survey_ids.length} levantamientos
             </span>
-            {desactualizado && (
-              <span className="rounded-full border border-amber-400/50 bg-amber-400/10 px-2 py-0.5 text-amber-400">
-                desactualizado — recalcula
+            {recalculando ? (
+              <span className="rounded-full border border-violeta/50 bg-violeta/10 px-2 py-0.5 text-violeta">
+                ⟳ Recalculando…
               </span>
+            ) : (
+              desactualizado && (
+                <span className="rounded-full border border-amber-400/50 bg-amber-400/10 px-2 py-0.5 text-amber-400">
+                  desactualizado — recalcula
+                </span>
+              )
             )}
           </div>
           <UniversosPanel universos={consolidado.resultados} notaTerritorio />
@@ -622,7 +478,11 @@ export default function ResumenProyecto({
           </p>
           <button
             onClick={calcularTraslapes}
-            disabled={calculando !== null || seleccionados.length === 0}
+            disabled={
+              calculando !== null ||
+              recalculando !== null ||
+              seleccionados.length === 0
+            }
             className="shrink-0 rounded-md border border-magenta bg-magenta/10 px-3 py-1.5 font-mono text-[11px] text-magenta transition-colors hover:bg-magenta/20 disabled:opacity-40"
             title="Cálculo bajo demanda (usa la maquinaria por lotes): universo por rol + inclusión-exclusión"
           >

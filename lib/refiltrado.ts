@@ -209,10 +209,13 @@ export async function reFiltrarRun(args: {
   // 4) REESCRITURA: puntos nuevos por survey + descartados nuevos
   onEstado?.("Reescribiendo los levantamientos…");
   const ids = surveys.map((s) => s.id);
+  // solo los ACTIVOS se reescriben: los borrados en revisión no son
+  // candidatos del filtro y se conservan para poder restaurarlos
   const { error: errDel } = await supabase
     .from("survey_points")
     .delete()
-    .in("survey_id", ids);
+    .in("survey_id", ids)
+    .eq("estado", "activo");
   if (errDel) throw new Error(`No se pudieron reescribir los puntos: ${errDel.message}`);
   const filasPuntos = pasan.map((p) => ({
     survey_id: surveyDeTermino(p.termino).id,
